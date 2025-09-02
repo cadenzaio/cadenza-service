@@ -21,6 +21,7 @@ import RestController from "./network/RestController";
 import SocketController from "./network/SocketController";
 import SignalController from "./signals/SignalController";
 import { DbOperationPayload, DbOperationType } from "./types/queryData";
+import TaskController from "./graph/controllers/TaskController";
 
 export type SecurityProfile = "low" | "medium" | "high";
 export type NetworkMode =
@@ -61,6 +62,7 @@ export default class CadenzaService {
     this.metaRunner = Cadenza.metaRunner;
     this.registry = Cadenza.registry;
     SignalController.instance;
+    TaskController.instance;
     this.serviceRegistry = ServiceRegistry.instance;
     RestController.instance;
     SocketController.instance;

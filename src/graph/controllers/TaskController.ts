@@ -15,6 +15,6 @@ export default class TaskController {
       };
     })
       .doOn("meta.task.created")
-      .then(Cadenza.createCadenzaDBQueryTask("task", {}));
+      .emitsAfter("meta.task_controller.task_created");
   }
 }
