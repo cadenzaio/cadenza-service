@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/cadenzaio/cadenza-service/compare/v1.0.0...v1.1.0) (2025-09-04)
+
+
+### Features
+
+* Enabled starting a service without the CadenzaDB. ([1b349d0](https://github.com/cadenzaio/cadenza-service/commit/1b349d01bcc54e4597ffcd8286bbe7f71c20d632))
+
 # 1.0.0 (2025-09-02)
 
 
