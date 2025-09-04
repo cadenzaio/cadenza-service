@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/cadenzaio/cadenza-service/compare/v1.1.0...v1.1.1) (2025-09-04)
+
+
+### Bug Fixes
+
+* Fixed issue with task options upon creation. ([2ccc203](https://github.com/cadenzaio/cadenza-service/commit/2ccc2034cc662e4ecc2f8e35a923f6e840f9bbad))
+
 # [1.1.0](https://github.com/cadenzaio/cadenza-service/compare/v1.0.0...v1.1.0) (2025-09-04)
 
 
