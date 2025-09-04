@@ -349,7 +349,7 @@ export default class RestController {
                 __error: `Error: ${e}`,
                 errored: true,
                 ...ctx,
-                ...ctx.__metaData,
+                ...ctx.__metadata,
               };
             } finally {
               emit(`meta.fetch.delegated:${ctx.__deputyExecId}`, resultContext);

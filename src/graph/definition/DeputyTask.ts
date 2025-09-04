@@ -68,6 +68,14 @@ export default class DeputyTask extends Task {
       progressCallback: (progress: number) => void,
     ): Promise<TaskResult> => {
       return new Promise((resolve, reject) => {
+        if (context.__metadata.__blockRemoteExecution) {
+          reject(new Error("Blocked remote execution"));
+        }
+
+        if (context.__metadata.__skipRemoteExecution) {
+          resolve(true);
+        }
+
         const processId = uuid();
 
         context.__deputyExecId = processId;
@@ -75,25 +83,8 @@ export default class DeputyTask extends Task {
           ...context,
         });
 
-        // Ephemeral meta-task for resolution
-        Cadenza.createEphemeralMetaTask(
-          `Resolve deputy ${this.remoteRoutineName}`,
-          (responseCtx) => {
-            if (responseCtx.errored) {
-              reject(new Error(responseCtx.__error));
-            } else {
-              resolve(responseCtx);
-            }
-          },
-          `Ephemeral resolver for deputy process ${processId}`,
-        ).doOn(
-          `meta.socket_client.delegated:${processId}`,
-          `meta.fetch.delegated:${processId}`,
-          `meta.service_registry.load_balance_failed:${processId}`,
-        );
-
         // Ephemeral meta-task for progress
-        Cadenza.createEphemeralMetaTask(
+        const progressTask = Cadenza.createEphemeralMetaTask(
           `On progress deputy ${this.remoteRoutineName}`,
           (ctx) => {
             if (ctx.progress) progressCallback(ctx.progress * ctx.weight);
@@ -104,7 +95,26 @@ export default class DeputyTask extends Task {
             destroyCondition: (ctx: AnyObject) =>
               ctx.progress === 1 || ctx.progress === undefined,
           },
-        ).doOn(`meta.socket_client.delegation_progress:${processId}`); // TODO clean up after resolve
+        ).doOn(`meta.socket_client.delegation_progress:${processId}`);
+
+        // Ephemeral meta-task for resolution
+        Cadenza.createEphemeralMetaTask(
+          `Resolve deputy ${this.remoteRoutineName}`,
+          (responseCtx) => {
+            if (responseCtx.errored) {
+              reject(new Error(responseCtx.__error));
+            } else {
+              resolve(responseCtx);
+            }
+
+            progressTask.destroy();
+          },
+          `Ephemeral resolver for deputy process ${processId}`,
+        ).doOn(
+          `meta.socket_client.delegated:${processId}`,
+          `meta.fetch.delegated:${processId}`,
+          `meta.service_registry.load_balance_failed:${processId}`,
+        );
       });
     };
 
@@ -156,15 +166,15 @@ export default class DeputyTask extends Task {
     progressCallback: (progress: number) => void,
   ): TaskResult {
     const ctx = context.getContext();
-    const metaData = context.getMetaData();
+    const metadata = context.getMetadata();
 
     const deputyContext = {
       __localTaskName: this.name,
       __remoteRoutineName: this.remoteRoutineName,
       __serviceName: this.serviceName,
-      __contractId: metaData.__contractId ?? null,
-      __metaData: {
-        ...metaData,
+      __contractId: metadata.__contractId ?? null,
+      __metadata: {
+        ...metadata,
         __deputyTaskId: this.id,
       },
       ...ctx,

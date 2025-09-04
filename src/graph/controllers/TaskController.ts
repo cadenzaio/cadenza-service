@@ -10,8 +10,10 @@ export default class TaskController {
   constructor() {
     Cadenza.createMetaTask("Add data to task creation", (ctx) => {
       return {
-        ...ctx.__task,
-        serviceName: Cadenza.serviceRegistry.serviceName,
+        data: {
+          ...ctx.__task,
+          serviceName: Cadenza.serviceRegistry.serviceName,
+        },
       };
     })
       .doOn("meta.task.created")

@@ -132,14 +132,14 @@ export default class SignalTransmissionTask extends Task {
     progressCallback: (progress: number) => void,
   ): TaskResult {
     const ctx = context.getContext();
-    const metaData = context.getMetaData();
+    const metadata = context.getMetadata();
 
     const deputyContext = {
       __localTaskName: this.name,
       __serviceName: this.serviceName,
-      __contractId: metaData.__contractId ?? null,
-      __metaData: {
-        ...metaData,
+      __contractId: metadata.__contractId ?? null,
+      __metadata: {
+        ...metadata,
         __deputyTaskId: this.id,
       },
       __signalName: this.signalName,

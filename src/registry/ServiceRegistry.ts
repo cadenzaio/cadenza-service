@@ -375,7 +375,6 @@ export default class ServiceRegistry {
         retryDelayFactor: 1.3,
       },
     )
-      .doOn("meta.create_service_requested")
       .then(
         Cadenza.createMetaTask(
           "Set service name",
@@ -471,6 +470,22 @@ export default class ServiceRegistry {
           "meta.process_signal_queue_requested",
         ),
       );
+
+    Cadenza.createMetaTask(
+      "Handle service creation",
+      (ctx) => {
+        if (!ctx.__cadenzaDBConnect) {
+          ctx.__skipRemoteExecution = true;
+        }
+
+        console.log("service creation");
+
+        return ctx;
+      },
+      "Handles the request to create a service instance",
+    )
+      .doOn("meta.create_service_requested")
+      .then(this.insertServiceTask);
   }
 
   reset() {

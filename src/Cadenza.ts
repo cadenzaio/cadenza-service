@@ -41,7 +41,8 @@ export type ServerOptions = {
   securityProfile?: SecurityProfile;
   networkMode?: NetworkMode;
   retryCount?: number;
-  cadenzaDB?: { address: string; port: number };
+  cadenzaDB?: { connect?: boolean; address?: string; port?: number };
+  relatedServices?: string[][];
 };
 
 export default class CadenzaService {
@@ -52,7 +53,7 @@ export default class CadenzaService {
   public static serviceRegistry: ServiceRegistry;
   protected static isBootstrapped = false;
 
-  protected static bootstrap(): void {
+  static bootstrap(): void {
     if (this.isBootstrapped) return;
     this.isBootstrapped = true;
 
@@ -562,10 +563,26 @@ export default class CadenzaService {
     );
   }
 
+  /**
+   * Creates a MetaTask (for meta-layer graphs) and registers it.
+   * MetaTasks suppress further meta-signal emissions to prevent loops.
+   * @param serviceName Unique identifier for the meta-task.
+   * @param description Optional description.
+   * @param options Optional service options. A service can either be connected to a database service and/or a list of related services.
+   * Example RELATED_SERVICES=serviceId123,service1,http://address:port | serviceId124,service2,http://address:port
+   * @returns The created MetaTask instance.
+   * @throws Error if name invalid or duplicate.
+   */
   static createCadenzaService(
     serviceName: string,
-    description: string,
-    options: ServerOptions = {
+    description: string = "",
+    options: ServerOptions = {},
+  ) {
+    this.bootstrap();
+    Cadenza.validateName(serviceName);
+    this.validateServiceName(serviceName);
+
+    options = {
       loadBalance: true,
       useSocket: true,
       displayName: undefined,
@@ -576,29 +593,51 @@ export default class CadenzaService {
       networkMode: (process.env.NETWORK_MODE as NetworkMode) ?? "dev",
       retryCount: 3,
       cadenzaDB: {
+        connect: true,
         address: process.env.CADENZA_DB_ADDRESS ?? "localhost",
         port: parseInt(process.env.CADENZA_DB_PORT ?? "5000"),
       },
-    },
-  ) {
-    this.bootstrap();
-    Cadenza.validateName(serviceName);
-    this.validateServiceName(serviceName);
+      relatedServices: process.env.RELATED_SERVICES
+        ? process.env.RELATED_SERVICES.split("|").map((s) =>
+            s.trim().split(","),
+          )
+        : [],
+      ...options,
+    };
 
-    Cadenza.broker.emit("meta.initializing_service", {
-      // Seed the CadenzaDB
-      serviceInstance: {
-        id: "cadenza-db",
-        serviceName: "CadenzaDB",
-        address: options.cadenzaDB?.address,
-        port: options.cadenzaDB?.port,
-        exposed: options.networkMode !== "dev",
-        numberOfRunningGraphs: 0,
-        isActive: true, // Assume it is deployed
-        isNonResponsive: false,
-        isBlocked: false,
-        health: {},
-      },
+    if (options.cadenzaDB?.connect) {
+      Cadenza.broker.emit("meta.initializing_service", {
+        // Seed the CadenzaDB
+        serviceInstance: {
+          id: "cadenza-db",
+          serviceName: "CadenzaDB",
+          address: options.cadenzaDB?.address,
+          port: options.cadenzaDB?.port,
+          exposed: options.networkMode !== "dev",
+          numberOfRunningGraphs: 0,
+          isActive: true, // Assume it is deployed
+          isNonResponsive: false,
+          isBlocked: false,
+          health: {},
+        },
+      });
+    }
+
+    options.relatedServices?.forEach((service) => {
+      Cadenza.broker.emit("meta.initializing_service", {
+        serviceInstance: {
+          id: service[0],
+          serviceName: service[1],
+          address: service[2].split(":")[0],
+          port: service[2].split(":")[1] ?? 3000,
+          exposed: options.networkMode !== "dev",
+          numberOfRunningGraphs: 0,
+          isActive: true, // Assume it is deployed
+          isNonResponsive: false,
+          isBlocked: false,
+          health: {},
+        },
+      });
     });
 
     Cadenza.broker.emit("meta.create_service_requested", {
@@ -615,6 +654,7 @@ export default class CadenzaService {
       __securityProfile: options.securityProfile,
       __networkMode: options.networkMode,
       __retryCount: options.retryCount,
+      __cadenzaDBConnect: options.cadenzaDB?.connect,
     });
 
     // TODO: restrict to one service creation per process?

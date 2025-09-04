@@ -275,7 +275,7 @@ export default class SocketController {
                 __error: `Timeout error: ${e}`,
                 errored: true,
                 ...ctx,
-                ...ctx.__metaData,
+                ...ctx.__metadata,
               };
             }
 
@@ -314,7 +314,7 @@ export default class SocketController {
                 __error: `Timeout error: ${e}`,
                 errored: true,
                 ...ctx,
-                ...ctx.__metaData,
+                ...ctx.__metadata,
               };
             }
 

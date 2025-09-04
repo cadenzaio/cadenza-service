@@ -101,7 +101,7 @@ export default class DatabaseTask extends DeputyTask {
     progressCallback: (progress: number) => void,
   ): TaskResult {
     const ctx = context.getContext();
-    const metaData = context.getMetaData();
+    const metadata = context.getMetadata();
     const dynamicQueryData = ctx.queryData;
     delete ctx.queryData;
 
@@ -109,15 +109,15 @@ export default class DatabaseTask extends DeputyTask {
       __localTaskName: this.name,
       __remoteRoutineName: this.remoteRoutineName,
       __serviceName: this.serviceName,
-      __contractId: metaData.__contractId ?? null,
-      __metaData: {
-        ...metaData,
+      __contractId: metadata.__contractId ?? null,
+      __metadata: {
+        ...metadata,
         __deputyTaskId: this.id,
       },
       queryData: {
         ...this.queryData,
         data: {
-          ...ctx,
+          ...ctx.data,
         },
         ...dynamicQueryData,
       },
