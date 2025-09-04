@@ -110,7 +110,13 @@ export default class CadenzaService {
   static createDeputyTask(
     routineName: string,
     serviceName: string | undefined = undefined,
-    options: TaskOptions = {
+    options: TaskOptions = {},
+  ): DeputyTask {
+    this.bootstrap();
+    this.validateName(routineName);
+    const name = `Deputy task for "${routineName}"`;
+
+    options = {
       concurrency: 0,
       timeout: 0,
       register: true,
@@ -127,11 +133,9 @@ export default class CadenzaService {
       retryDelay: 0,
       retryDelayMax: 0,
       retryDelayFactor: 1,
-    },
-  ): DeputyTask {
-    this.bootstrap();
-    this.validateName(routineName);
-    const name = `Deputy task for "${routineName}"`;
+      ...options,
+    };
+
     return new DeputyTask(
       name,
       routineName,
@@ -159,24 +163,7 @@ export default class CadenzaService {
   static createMetaDeputyTask(
     routineName: string,
     serviceName: string | undefined = undefined,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: true,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ): DeputyTask {
     options.isMeta = true;
     return this.createDeputyTask(routineName, serviceName, options);
@@ -185,24 +172,7 @@ export default class CadenzaService {
   static createUniqueDeputyTask(
     routineName: string,
     serviceName: string | undefined = undefined,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: true,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ) {
     options.isUnique = true;
     return this.createDeputyTask(routineName, serviceName, options);
@@ -211,24 +181,7 @@ export default class CadenzaService {
   static createUniqueMetaDeputyTask(
     routineName: string,
     serviceName: string | undefined = undefined,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: true,
-      isMeta: true,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ) {
     options.isMeta = true;
     return this.createUniqueDeputyTask(routineName, serviceName, options);
@@ -238,25 +191,9 @@ export default class CadenzaService {
     routineName: string,
     serviceName: string | undefined = undefined,
     throttledIdGetter: ThrottleTagGetter = () => "default",
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ) {
+    options.concurrency = 1;
     options.getTagCallback = throttledIdGetter;
     return this.createDeputyTask(routineName, serviceName, options);
   }
@@ -265,24 +202,7 @@ export default class CadenzaService {
     routineName: string,
     serviceName: string | undefined = undefined,
     throttledIdGetter: ThrottleTagGetter = () => "default",
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ) {
     options.isMeta = true;
     return this.createThrottledDeputyTask(
@@ -296,7 +216,13 @@ export default class CadenzaService {
   static createSignalTransmissionTask(
     signalName: string,
     serviceName: string,
-    options: TaskOptions = {
+    options: TaskOptions = {},
+  ): SignalTransmissionTask {
+    this.bootstrap();
+    Cadenza.validateName(signalName);
+    Cadenza.validateName(serviceName);
+
+    options = {
       concurrency: 0,
       timeout: 0,
       register: true,
@@ -313,12 +239,11 @@ export default class CadenzaService {
       retryDelay: 0,
       retryDelayMax: 0,
       retryDelayFactor: 1,
-    },
-  ): SignalTransmissionTask {
-    this.bootstrap();
-    Cadenza.validateName(signalName);
-    Cadenza.validateName(serviceName);
+      ...options,
+    };
+
     options.isMeta = true;
+
     const name = `SignalTransmission task for "${signalName}"`;
     return new SignalTransmissionTask(
       name,
@@ -349,7 +274,20 @@ export default class CadenzaService {
     operation: DbOperationType,
     databaseServiceName: string | undefined = undefined,
     queryData: DbOperationPayload,
-    options: TaskOptions = {
+    options: TaskOptions = {},
+  ) {
+    this.bootstrap();
+    Cadenza.validateName(tableName);
+    Cadenza.validateName(operation);
+    const tableNameFormatted = tableName
+      .split("_")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join("");
+    const name = `${operation} ${tableName} in ${databaseServiceName ?? "default database service"}`;
+    const description = `Executes a database "${operation}" on table "${tableName}" in ${databaseServiceName ?? "default database service"}`;
+    const taskName = `db${operation.charAt(0).toUpperCase() + operation.slice(1)}${tableNameFormatted}`;
+
+    options = {
       concurrency: 0,
       timeout: 0,
       register: true,
@@ -362,22 +300,12 @@ export default class CadenzaService {
       validateInputContext: false,
       outputSchema: undefined,
       validateOutputContext: false,
-      retryCount: 1,
-      retryDelay: 0,
+      retryCount: 3,
+      retryDelay: 100,
       retryDelayMax: 0,
       retryDelayFactor: 1,
-    },
-  ) {
-    this.bootstrap();
-    Cadenza.validateName(tableName);
-    Cadenza.validateName(operation);
-    const tableNameFormatted = tableName
-      .split("_")
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join("");
-    const name = `${operation} ${tableName} in ${databaseServiceName ?? "default database service"}`;
-    const description = `Executes a database "${operation}" on table "${tableName}" in ${databaseServiceName ?? "default database service"}`;
-    const taskName = `db${operation.charAt(0).toUpperCase() + operation.slice(1)}${tableNameFormatted}`;
+      ...options,
+    };
 
     return new DatabaseTask(
       name,
@@ -408,24 +336,7 @@ export default class CadenzaService {
     tableName: string,
     databaseServiceName: string | undefined = undefined,
     queryData: DbOperationPayload = {},
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 1,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ) {
     return this.createDatabaseTask(
       tableName,
@@ -440,24 +351,7 @@ export default class CadenzaService {
     tableName: string,
     databaseServiceName: string | undefined = undefined,
     queryData: DbOperationPayload,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 1,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ) {
     return this.createDatabaseTask(
       tableName,
@@ -472,24 +366,7 @@ export default class CadenzaService {
     tableName: string,
     operation: DbOperationType,
     queryData: DbOperationPayload,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: true,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 1,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ) {
     options.isMeta = true;
     return this.createDatabaseTask(
@@ -504,24 +381,7 @@ export default class CadenzaService {
   static createCadenzaDBInsertTask(
     tableName: string,
     queryData: DbOperationPayload = {},
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: true,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 1,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ) {
     options.isMeta = true;
     return this.createDatabaseInertTask(
@@ -535,24 +395,7 @@ export default class CadenzaService {
   static createCadenzaDBQueryTask(
     tableName: string,
     queryData: DbOperationPayload,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: true,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 1,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ) {
     options.isMeta = true;
     return this.createDatabaseQueryTask(
@@ -663,18 +506,7 @@ export default class CadenzaService {
   static createCadenzaMetaService(
     serviceName: string,
     description: string,
-    options: ServerOptions = {
-      loadBalance: false,
-      useSocket: false,
-      log: false,
-      displayName: undefined,
-      isMeta: true,
-      port: parseInt(process.env.HTTP_PORT ?? "3000"),
-      securityProfile:
-        (process.env.SECURITY_PROFILE as SecurityProfile) ?? "medium",
-      networkMode: (process.env.NETWORK_MODE as NetworkMode) ?? "auto",
-      retryCount: 3,
-    },
+    options: ServerOptions = {},
   ) {
     options.isMeta = true;
     this.createCadenzaService(serviceName, description, options);
@@ -693,24 +525,7 @@ export default class CadenzaService {
     name: string,
     func: TaskFunction,
     description?: string,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ): Task {
     this.bootstrap();
     return Cadenza.createTask(name, func, description, options);
@@ -730,24 +545,7 @@ export default class CadenzaService {
     name: string,
     func: TaskFunction,
     description?: string,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: true,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ): Task {
     this.bootstrap();
     return Cadenza.createMetaTask(name, func, description, options);
@@ -767,24 +565,7 @@ export default class CadenzaService {
     name: string,
     func: TaskFunction,
     description?: string,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: true,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ): Task {
     this.bootstrap();
     return Cadenza.createUniqueTask(name, func, description, options);
@@ -802,24 +583,7 @@ export default class CadenzaService {
     name: string,
     func: TaskFunction,
     description?: string,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: true,
-      isMeta: true,
-      isSubMeta: false,
-      isHidden: false,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ): Task {
     this.bootstrap();
     return Cadenza.createUniqueMetaTask(name, func, description, options);
@@ -840,23 +604,7 @@ export default class CadenzaService {
     func: TaskFunction,
     throttledIdGetter: ThrottleTagGetter = () => "default",
     description?: string,
-    options: TaskOptions = {
-      concurrency: 1,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ): Task {
     this.bootstrap();
     return Cadenza.createThrottledTask(
@@ -882,23 +630,7 @@ export default class CadenzaService {
     func: TaskFunction,
     throttledIdGetter: ThrottleTagGetter,
     description?: string,
-    options: TaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      isUnique: false,
-      isMeta: true,
-      isSubMeta: false,
-      isHidden: false,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions = {},
   ): Task {
     this.bootstrap();
     return Cadenza.createThrottledMetaTask(
@@ -925,26 +657,7 @@ export default class CadenzaService {
     func: TaskFunction,
     description?: string,
     debounceTime: number = 1000,
-    options: TaskOptions & DebounceOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      leading: false,
-      trailing: true,
-      maxWait: 0,
-      isUnique: false,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions & DebounceOptions = {},
   ): DebounceTask {
     this.bootstrap();
     return Cadenza.createDebounceTask(
@@ -970,26 +683,7 @@ export default class CadenzaService {
     func: TaskFunction,
     description?: string,
     debounceTime: number = 1000,
-    options: TaskOptions & DebounceOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: true,
-      leading: false,
-      trailing: true,
-      maxWait: 0,
-      isUnique: false,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions & DebounceOptions = {},
   ): DebounceTask {
     this.bootstrap();
     return Cadenza.createDebounceMetaTask(
@@ -1015,26 +709,7 @@ export default class CadenzaService {
     name: string,
     func: TaskFunction,
     description?: string,
-    options: TaskOptions & EphemeralTaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: false,
-      isUnique: false,
-      isMeta: false,
-      isSubMeta: false,
-      isHidden: false,
-      once: true,
-      destroyCondition: () => true,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions & EphemeralTaskOptions = {},
   ): EphemeralTask {
     this.bootstrap();
     return Cadenza.createEphemeralTask(name, func, description, options);
@@ -1052,26 +727,7 @@ export default class CadenzaService {
     name: string,
     func: TaskFunction,
     description?: string,
-    options: TaskOptions & EphemeralTaskOptions = {
-      concurrency: 0,
-      timeout: 0,
-      register: false,
-      isUnique: false,
-      isMeta: true,
-      isSubMeta: false,
-      isHidden: false,
-      once: true,
-      destroyCondition: () => true,
-      getTagCallback: undefined,
-      inputSchema: undefined,
-      validateInputContext: false,
-      outputSchema: undefined,
-      validateOutputContext: false,
-      retryCount: 0,
-      retryDelay: 0,
-      retryDelayMax: 0,
-      retryDelayFactor: 1,
-    },
+    options: TaskOptions & EphemeralTaskOptions = {},
   ): EphemeralTask {
     this.bootstrap();
     return Cadenza.createEphemeralMetaTask(name, func, description, options);
