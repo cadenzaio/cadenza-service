@@ -25,7 +25,7 @@ export interface SubOperation {
   filter?: AnyObject; // For query
   fields?: string[]; // For query
   return?: "id" | "single" | "array" | "full"; // What to return (e.g., 'id' for insert ID)
-  // No __joins in sub-ops to limit depth/complexity
+  // No joins in sub-ops to limit depth/complexity
 }
 
 export type OpEffect = "increment" | "decrement" | "set";
@@ -42,6 +42,6 @@ export interface DbOperationPayload {
   limit?: number; // For query
   offset?: number; // For query
   transaction?: boolean; // Wrap in transaction (default true for nested)
-  batch?: boolean; // For array __data
-  // Future expansions: __groupBy, __having, __batchSize, etc.
+  batch?: boolean; // For array data
+  // Future expansions: groupBy, having, batchSize, etc.
 }
