@@ -1,3 +1,10 @@
+## [1.2.3](https://github.com/cadenzaio/cadenza-service/compare/v1.2.2...v1.2.3) (2025-09-10)
+
+
+### Bug Fixes
+
+* Added more exports for extensions. ([ac77b0c](https://github.com/cadenzaio/cadenza-service/commit/ac77b0ccc33d40e1f6d771b1af30fa3212310686))
+
 ## [1.2.2](https://github.com/cadenzaio/cadenza-service/compare/v1.2.1...v1.2.2) (2025-09-10)
 
 
