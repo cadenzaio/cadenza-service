@@ -187,7 +187,7 @@ export default class RestController {
               Cadenza.createMetaTask(
                 "Configure network",
                 (ctx) => {
-                  let address: string = "";
+                  let address: string = "localhost";
                   let port: number = ctx.__port;
                   let exposed: boolean = false;
 
@@ -267,7 +267,10 @@ export default class RestController {
                       .emitsAfter("meta.rest.shutdown:https");
                   };
 
-                  if (ctx.__networkMode === "internal") {
+                  if (
+                    ctx.__networkMode === "internal" ||
+                    ctx.__networkMode === "dev"
+                  ) {
                     createHttpServer(ctx);
                   } else if (ctx.__networkMode === "exposed") {
                     createHttpServer(ctx);
