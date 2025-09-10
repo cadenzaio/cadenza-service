@@ -126,8 +126,9 @@ export default class ServiceRegistry {
       )
       .then(
         Cadenza.createMetaTask("Split service instances", function* (ctx) {
-          const { __serviceInstances } = ctx;
-          for (const serviceInstance of __serviceInstances) {
+          const { serviceInstances } = ctx;
+          if (!serviceInstances) return;
+          for (const serviceInstance of serviceInstances) {
             yield serviceInstance;
           }
         }).then(this.handleInstanceUpdateTask),
@@ -455,11 +456,12 @@ export default class ServiceRegistry {
         Cadenza.createMetaTask(
           "Setup service",
           (ctx) => {
-            const { serviceInstance, __useSocket, __retryCount } = ctx;
-            this.serviceInstanceId = serviceInstance.id;
-            this.instances.set(serviceInstance.serviceName, [
-              { ...serviceInstance },
-            ]);
+            const { serviceInstance, data, __useSocket, __retryCount } = ctx;
+            this.serviceInstanceId = data?.id ?? serviceInstance?.id;
+            this.instances.set(
+              data?.service_name ?? serviceInstance?.serviceName,
+              [{ ...(data ?? serviceInstance) }],
+            );
             this.useSocket = __useSocket;
             this.retryCount = __retryCount;
             return true;

@@ -280,12 +280,18 @@ export default class RestController {
                     // createHttpsServer(ctx);
                   }
 
-                  ctx.id = uuid();
-                  ctx.address = address;
-                  ctx.port = port;
-                  ctx.exposed = exposed;
-                  ctx.process_pid = process.pid;
-                  ctx.service_name = ctx.__serviceName;
+                  ctx.data = {
+                    id: uuid(),
+                    address: address,
+                    port: port,
+                    exposed: exposed,
+                    process_pid: process.pid,
+                    service_name: ctx.__serviceName,
+                    is_active: true,
+                    is_non_responsive: false,
+                    is_blocked: false,
+                    health: {},
+                  };
 
                   return ctx;
                 },
