@@ -3,7 +3,18 @@ import CadenzaService, {
   SecurityProfile,
   ServerOptions,
 } from "./Cadenza";
-import { AnyObject } from "@cadenza.io/core";
+import {
+  AnyObject,
+  DebounceOptions,
+  DebounceTask,
+  EphemeralTask,
+  EphemeralTaskOptions,
+  GraphRoutine,
+  Task,
+  TaskFunction,
+  TaskOptions,
+  ThrottleTagGetter,
+} from "@cadenza.io/core";
 import TaskController from "./graph/controllers/TaskController";
 import DatabaseTask from "./graph/definition/DatabaseTask";
 import DeputyTask from "./graph/definition/DeputyTask";
@@ -50,4 +61,13 @@ export {
   NetworkMode,
   ServerOptions,
   AnyObject,
+  TaskOptions,
+  ThrottleTagGetter,
+  TaskFunction,
+  Task,
+  DebounceOptions,
+  DebounceTask,
+  EphemeralTaskOptions,
+  EphemeralTask,
+  GraphRoutine,
 };
