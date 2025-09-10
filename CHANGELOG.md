@@ -1,3 +1,10 @@
+## [1.2.2](https://github.com/cadenzaio/cadenza-service/compare/v1.2.1...v1.2.2) (2025-09-10)
+
+
+### Bug Fixes
+
+* Fixed bug with running server in dev mode. ([b9ff3c4](https://github.com/cadenzaio/cadenza-service/commit/b9ff3c46b55a56326dcf0f8c6367bcca6dfab660))
+
 ## [1.2.1](https://github.com/cadenzaio/cadenza-service/compare/v1.2.0...v1.2.1) (2025-09-10)
 
 
