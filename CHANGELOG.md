@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/cadenzaio/cadenza-service/compare/v1.1.2...v1.2.0) (2025-09-10)
+
+
+### Features
+
+* new support for AsyncGenerators ([1ff61e0](https://github.com/cadenzaio/cadenza-service/commit/1ff61e0717f864d1c041d7e62989b2264140eb26))
+
 ## [1.1.2](https://github.com/cadenzaio/cadenza-service/compare/v1.1.1...v1.1.2) (2025-09-09)
 
 
