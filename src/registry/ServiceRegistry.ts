@@ -435,7 +435,7 @@ export default class ServiceRegistry {
             "exposed",
           ],
         },
-        validateInputContext: true,
+        // validateInputContext: true,
         outputSchema: {
           type: "object",
           properties: {
@@ -445,7 +445,7 @@ export default class ServiceRegistry {
           },
           required: ["id"],
         },
-        validateOutputContext: true,
+        // validateOutputContext: true,
         retryCount: 5,
         retryDelay: 1000,
       },
