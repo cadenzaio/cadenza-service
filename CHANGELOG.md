@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/cadenzaio/cadenza-service/compare/v1.2.0...v1.2.1) (2025-09-10)
+
+
+### Bug Fixes
+
+* Fixed some bugs when cadenzaDB should not connect. ([2b95931](https://github.com/cadenzaio/cadenza-service/commit/2b95931817876f4f7a3d065b6e8f96e9da748097))
+
 # [1.2.0](https://github.com/cadenzaio/cadenza-service/compare/v1.1.2...v1.2.0) (2025-09-10)
 
 
