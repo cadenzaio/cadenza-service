@@ -64,8 +64,8 @@ export interface FieldDefinition {
   items?: FieldDefinition;
   description?: string;
   generated?: "uuid" | "timestamp" | "now" | "autoIncrement"; // Added autoIncrement
-  onDelete?: "cascade" | "set_null" | "no_action";
-  onUpdate?: "cascade" | "set_null" | "no_action"; // Added for constraint cascade
+  onDelete?: "cascade" | "set null" | "no action" | "set default" | "restrict";
+  onUpdate?: "cascade" | "set null" | "no action" | "set default"; // Added for constraint cascade
 }
 
 export type DbOperationType = "query" | "insert" | "update" | "delete";
@@ -82,6 +82,7 @@ export interface TableDefinition {
   };
   indexes?: string[][];
   uniqueConstraints?: string[][];
+  primaryKey?: string[];
   fullTextIndexes?: string[][];
   triggers?: Record<
     string,
@@ -105,7 +106,9 @@ export interface TableDefinition {
       )[];
     }; // Signals to emit after action
   };
+  initialData?: { fields: string[]; data: any[][] };
 }
+
 export interface SchemaDefinition {
   version?: number;
   tables: Record<string, TableDefinition>;

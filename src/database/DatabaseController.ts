@@ -136,8 +136,7 @@ export default class DatabaseController {
                   }
                 }
               }
-
-              console.log("VALIDATED");
+              console.log("SCHEMA VALIDATED");
               return true;
             },
             "Validates database schema structure and content",
@@ -194,11 +193,15 @@ export default class DatabaseController {
                       string,
                       FieldDefinition,
                     ];
-                    let def = `${fieldName} ${field.type}`;
+                    let def = `${fieldName} ${field.type.toUpperCase()}`;
+                    if (field.type === "varchar")
+                      def += `(${field.constraints?.maxLength ?? 255})`;
+                    if (field.type === "decimal")
+                      def += `(${field.constraints?.precision ?? 10},${field.constraints?.scale ?? 2})`;
                     if (field.primary) def += " PRIMARY KEY";
                     if (field.unique) def += " UNIQUE";
                     if (field.default !== undefined)
-                      def += ` DEFAULT ${field.default}`;
+                      def += ` DEFAULT ${field.default || "''"}`;
                     if (field.required && !field.nullable) def += " NOT NULL";
                     if (field.nullable) def += " NULL";
                     if (field.generated)
@@ -206,6 +209,10 @@ export default class DatabaseController {
                     if (field.references)
                       def += ` REFERENCES ${field.references} ON DELETE ${field.onDelete || "NO_ACTION"}`;
                     if (field.encrypted) def += " ENCRYPTED"; // Pseudo, handle via app-side
+
+                    if (field.constraints?.check) {
+                      def += ` CHECK (${field.constraints.check})`;
+                    }
                     return def;
                   })
                   .join(", ");
@@ -257,34 +264,54 @@ export default class DatabaseController {
 
                       return { ddl, table, tableName, schema, options };
                     }).then(
-                      Cadenza.createUniqueMetaTask("Join DDL", (ctx) => {
-                        const { joinedContexts } = ctx;
-                        const ddl: string[] = [];
-                        for (const joinedContext of joinedContexts) {
-                          ddl.push(...joinedContext.ddl);
-                        }
-                        ddl.flat();
-                        return {
-                          ddl,
-                          schema: joinedContexts[0].schema,
-                          options: joinedContexts[0].options,
-                        };
-                      }).then(
-                        Cadenza.createMetaTask(
-                          "meta.applyDatabaseChanges",
-                          async (ctx) => {
-                            const { ddl } = ctx;
-                            if (ddl && ddl.length > 0) {
-                              for (const sql of ddl) {
-                                console.log("Applying SQL", sql);
-                                await this.dbClient.query(sql);
+                      Cadenza.createMetaTask(
+                        "Generate initial data DDL",
+                        (ctx) => {
+                          const { ddl, table, tableName, schema, options } =
+                            ctx;
+                          if (table.initialData) {
+                            ddl.push(
+                              `INSERT INTO ${tableName} (${table.initialData.fields.join(", ")}) VALUES ${table.initialData.data
+                                .map(
+                                  (row: any[]) =>
+                                    `(${row.map((value) => (value === undefined ? "NULL" : value)).join(", ")})`,
+                                )
+                                .join(", ")};`,
+                            );
+                          }
+
+                          return { ddl, table, tableName, schema, options };
+                        },
+                      ).then(
+                        Cadenza.createUniqueMetaTask("Join DDL", (ctx) => {
+                          const { joinedContexts } = ctx;
+                          const ddl: string[] = [];
+                          for (const joinedContext of joinedContexts) {
+                            ddl.push(...joinedContext.ddl);
+                          }
+                          ddl.flat();
+                          return {
+                            ddl,
+                            schema: joinedContexts[0].schema,
+                            options: joinedContexts[0].options,
+                          };
+                        }).then(
+                          Cadenza.createMetaTask(
+                            "meta.applyDatabaseChanges",
+                            async (ctx) => {
+                              const { ddl } = ctx;
+                              if (ddl && ddl.length > 0) {
+                                for (const sql of ddl) {
+                                  console.log("Applying SQL", sql);
+                                  await this.dbClient.query(sql);
+                                }
                               }
-                            }
-                            console.log("DDL applied");
-                            return ctx;
-                          },
-                          "Applies generated DDL to the database",
-                        ).emitsAfter("meta.database.setup_done"),
+                              console.log("DDL applied");
+                              return ctx;
+                            },
+                            "Applies generated DDL to the database",
+                          ).emitsAfter("meta.database.setup_done"),
+                        ),
                       ),
                     ),
                   ),
