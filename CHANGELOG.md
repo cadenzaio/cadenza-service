@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/cadenzaio/cadenza-service/compare/v1.3.0...v1.4.0) (2025-09-11)
+
+
+### Features
+
+* added more options for on delete. ([035d62a](https://github.com/cadenzaio/cadenza-service/commit/035d62a0264af3b96945c8c06d5b32137ac3db7e))
+
 # [1.3.0](https://github.com/cadenzaio/cadenza-service/compare/v1.2.3...v1.3.0) (2025-09-11)
 
 
