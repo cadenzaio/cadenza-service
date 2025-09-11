@@ -1,3 +1,15 @@
+# [1.3.0](https://github.com/cadenzaio/cadenza-service/compare/v1.2.3...v1.3.0) (2025-09-11)
+
+
+### Bug Fixes
+
+* Fixed build error ([48aeb40](https://github.com/cadenzaio/cadenza-service/commit/48aeb40b50026988473f3c6d787a404dd6c99cf1))
+
+
+### Features
+
+* Added database service support WIP ([ccf59c5](https://github.com/cadenzaio/cadenza-service/commit/ccf59c5de369d166448ef04a0d689c9feedae761))
+
 ## [1.2.3](https://github.com/cadenzaio/cadenza-service/compare/v1.2.2...v1.2.3) (2025-09-10)
 
 
