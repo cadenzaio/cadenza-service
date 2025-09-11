@@ -22,6 +22,9 @@ import SocketController from "./network/SocketController";
 import SignalController from "./signals/SignalController";
 import { DbOperationPayload, DbOperationType } from "./types/queryData";
 import TaskController from "./graph/controllers/TaskController";
+import { SchemaDefinition } from "./types/database";
+import { snakeCase } from "lodash-es";
+import DatabaseController from "./database/DatabaseController";
 
 export type SecurityProfile = "low" | "medium" | "high";
 export type NetworkMode =
@@ -45,6 +48,12 @@ export type ServerOptions = {
   relatedServices?: string[][];
 };
 
+export interface DatabaseOptions {
+  type?: "postgres";
+  databaseName?: string;
+  poolSize?: number;
+}
+
 export default class CadenzaService {
   public static broker: SignalBroker;
   public static runner: GraphRunner;
@@ -52,6 +61,7 @@ export default class CadenzaService {
   public static registry: GraphRegistry;
   public static serviceRegistry: ServiceRegistry;
   protected static isBootstrapped = false;
+  protected static serviceCreated = false;
 
   static bootstrap(): void {
     if (this.isBootstrapped) return;
@@ -421,6 +431,7 @@ export default class CadenzaService {
     description: string = "",
     options: ServerOptions = {},
   ) {
+    if (this.serviceCreated) return;
     this.bootstrap();
     Cadenza.validateName(serviceName);
     this.validateServiceName(serviceName);
@@ -500,7 +511,7 @@ export default class CadenzaService {
       __cadenzaDBConnect: options.cadenzaDB?.connect,
     });
 
-    // TODO: restrict to one service creation per process?
+    this.serviceCreated = true;
   }
 
   static createCadenzaMetaService(
@@ -510,6 +521,58 @@ export default class CadenzaService {
   ) {
     options.isMeta = true;
     this.createCadenzaService(serviceName, description, options);
+  }
+
+  static createDatabaseService(
+    name: string,
+    schema: SchemaDefinition,
+    description: string = "",
+    options: ServerOptions & DatabaseOptions = {},
+  ) {
+    if (this.serviceCreated) return;
+    this.bootstrap();
+    DatabaseController.instance; // Ensure DB controller is created
+
+    options = {
+      loadBalance: true,
+      useSocket: true,
+      displayName: undefined,
+      isMeta: false,
+      port: parseInt(process.env.HTTP_PORT ?? "3000"),
+      securityProfile:
+        (process.env.SECURITY_PROFILE as SecurityProfile) ?? "medium",
+      networkMode: (process.env.NETWORK_MODE as NetworkMode) ?? "dev",
+      retryCount: 3,
+      cadenzaDB: {
+        connect: true,
+        address: process.env.CADENZA_DB_ADDRESS ?? "localhost",
+        port: parseInt(process.env.CADENZA_DB_PORT ?? "5000"),
+      },
+      type: "postgres",
+      databaseName: snakeCase(name),
+      poolSize: parseInt(process.env.DATABASE_POOL_SIZE ?? "10"),
+      ...options,
+    };
+
+    Cadenza.broker.emit("meta.database_init_requested", {
+      schema,
+      databaseName: options.databaseName,
+    });
+
+    Cadenza.createEphemeralMetaTask("Set database connection", () => {
+      this.createCadenzaService(name, description, options);
+    }).doOn("meta.database.setup_done");
+  }
+
+  static createMetaDatabaseService(
+    name: string,
+    schema: SchemaDefinition,
+    description: string = "",
+    options: ServerOptions = {},
+  ) {
+    this.bootstrap();
+    options.isMeta = true;
+    this.createDatabaseService(name, schema, description, options);
   }
 
   /**
