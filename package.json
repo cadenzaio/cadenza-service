@@ -79,7 +79,7 @@
     "vitest": "^3.2.3"
   },
   "dependencies": {
-    "@cadenza.io/core": "^1.12.0",
+    "@cadenza.io/core": "^3.0.0",
     "@socket.io/cluster-adapter": "^0.2.2",
     "@socket.io/sticky": "^1.0.4",
     "@types/pg": "^8.11.6",

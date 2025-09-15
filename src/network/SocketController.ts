@@ -104,7 +104,7 @@ export default class SocketController {
                       .doOn(
                         `meta.node.ended_routine_execution:${ctx.__routineExecId}`,
                       )
-                      .emitsAfter(
+                      .emits(
                         `meta.socket.delegation_resolved:${ctx.__routineExecId}`,
                       );
 
@@ -196,7 +196,7 @@ export default class SocketController {
                 "Shuts down the socket server",
               )
                 .doOn("meta.socket_server_shutdown_requested")
-                .emitsAfter("meta.socket.shutdown");
+                .emits("meta.socket.shutdown");
 
               return true;
             },
@@ -335,7 +335,7 @@ export default class SocketController {
           "Shuts down the socket client",
         )
           .doOn("meta.socket_shutdown_requested") // TODO destroy tasks on close or instance removed? Also in fetch client
-          .emitsAfter("meta.socket_client_shutdown_complete");
+          .emits("meta.socket_client_shutdown_complete");
 
         return true;
       },

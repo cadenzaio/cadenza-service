@@ -78,7 +78,7 @@ export default class ServiceRegistry {
       },
       "Handles instance update from DB signal",
     )
-      .emitsAfter("meta.service_registry.service_discovered")
+      .emits("meta.service_registry.service_discovered")
       .doOn(
         "meta.initializing_service",
         "CadenzaDB.meta.service_instance.inserted",
@@ -386,7 +386,7 @@ export default class ServiceRegistry {
           "Sets service name after insertion",
         ),
       )
-      .emitsAfter("meta.service_registry.service_inserted")
+      .emits("meta.service_registry.service_inserted")
       .emitsOnFail("meta.service_registry.service_insertion_failed");
 
     this.insertServiceInstanceTask = Cadenza.createCadenzaDBInsertTask(
@@ -467,10 +467,7 @@ export default class ServiceRegistry {
             return true;
           },
           "Sets service instance id after insertion",
-        ).emitsAfter(
-          "meta.service_registry.instance_inserted",
-          "meta.process_signal_queue_requested",
-        ),
+        ).emits("meta.service_registry.instance_inserted"),
       );
 
     Cadenza.createMetaTask(

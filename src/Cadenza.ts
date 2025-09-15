@@ -21,7 +21,7 @@ import RestController from "./network/RestController";
 import SocketController from "./network/SocketController";
 import SignalController from "./signals/SignalController";
 import { DbOperationPayload, DbOperationType } from "./types/queryData";
-import TaskController from "./graph/controllers/TaskController";
+import GraphMetadataController from "./graph/controllers/GraphMetadataController";
 import { SchemaDefinition } from "./types/database";
 import { snakeCase } from "lodash-es";
 import DatabaseController from "./database/DatabaseController";
@@ -49,7 +49,7 @@ export type ServerOptions = {
 };
 
 export interface DatabaseOptions {
-  type?: "postgres";
+  databaseType?: "postgres";
   databaseName?: string;
   poolSize?: number;
 }
@@ -73,7 +73,6 @@ export default class CadenzaService {
     this.metaRunner = Cadenza.metaRunner;
     this.registry = Cadenza.registry;
     SignalController.instance;
-    TaskController.instance;
     this.serviceRegistry = ServiceRegistry.instance;
     RestController.instance;
     SocketController.instance;
@@ -511,6 +510,13 @@ export default class CadenzaService {
       __cadenzaDBConnect: options.cadenzaDB?.connect,
     });
 
+    Cadenza.createEphemeralMetaTask("Initiate controllers", () => {
+      GraphMetadataController.instance;
+      console.log("META CONTROLLERS INITIATED");
+    })
+      .doOn("meta.service_registry.instance_inserted")
+      .emits("meta.process_signal_queue_requested");
+
     this.serviceCreated = true;
   }
 
@@ -548,7 +554,7 @@ export default class CadenzaService {
         address: process.env.CADENZA_DB_ADDRESS ?? "localhost",
         port: parseInt(process.env.CADENZA_DB_PORT ?? "5000"),
       },
-      type: "postgres",
+      databaseType: "postgres",
       databaseName: snakeCase(name),
       poolSize: parseInt(process.env.DATABASE_POOL_SIZE ?? "10"),
       ...options,
@@ -568,7 +574,7 @@ export default class CadenzaService {
     name: string,
     schema: SchemaDefinition,
     description: string = "",
-    options: ServerOptions = {},
+    options: ServerOptions & DatabaseOptions = {},
   ) {
     this.bootstrap();
     options.isMeta = true;

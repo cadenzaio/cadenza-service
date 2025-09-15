@@ -15,7 +15,7 @@ import {
   TaskOptions,
   ThrottleTagGetter,
 } from "@cadenza.io/core";
-import TaskController from "./graph/controllers/TaskController";
+import GraphMetadataController from "./graph/controllers/GraphMetadataController";
 import DatabaseTask from "./graph/definition/DatabaseTask";
 import DeputyTask from "./graph/definition/DeputyTask";
 import SignalTransmissionTask from "./graph/definition/SignalTransmissionTask";
@@ -39,7 +39,7 @@ import {
 
 export default CadenzaService;
 export {
-  TaskController,
+  GraphMetadataController,
   DeputyTask,
   DatabaseTask,
   SignalTransmissionTask,

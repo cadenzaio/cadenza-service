@@ -145,6 +145,7 @@ export default class DeputyTask extends Task {
 
     this.emit("meta.deputy.created", {
       __localTaskName: this.name,
+      __localTaskVersion: this.version,
       __remoteRoutineName: this.remoteRoutineName,
       __serviceName: this.serviceName,
     });
@@ -172,10 +173,10 @@ export default class DeputyTask extends Task {
       __localTaskName: this.name,
       __remoteRoutineName: this.remoteRoutineName,
       __serviceName: this.serviceName,
-      __contractId: metadata.__contractId ?? null,
+      __executionTraceId: metadata.__executionTraceId ?? null,
       __metadata: {
         ...metadata,
-        __deputyTaskId: this.id,
+        __deputyTaskName: this.name,
       },
       ...ctx,
     };

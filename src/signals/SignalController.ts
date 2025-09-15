@@ -80,25 +80,15 @@ export default class SignalController {
             data: ctx,
             service_name: Cadenza.serviceRegistry.serviceName,
             service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
-            signal_id: {
-              subOperation: "query",
-              table: "signal_registry",
-              filter: {
-                name: ctx.__signalLog.signal_name,
-                service_name: Cadenza.serviceRegistry.serviceName,
-              },
-              fields: ["id"],
-              return: "id",
-            },
           },
           transaction: true,
         };
       },
       "",
-      { isSubMeta: true, concurrency: 50 },
+      { isSubMeta: true, concurrency: 100 },
     )
       .doOn(".*")
-      .emitsAfter("sub_meta.signal_controller.signal_emitted");
+      .emits("sub_meta.signal_controller.signal_emitted");
 
     Cadenza.createMetaTask(
       "Add metadata to signal consumption",
@@ -108,23 +98,13 @@ export default class SignalController {
             ...ctx.__data,
             serviceName: Cadenza.serviceRegistry.serviceName,
             serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-            signalId: {
-              subOperation: "query",
-              table: "signal_registry",
-              filter: {
-                name: ctx.__data.signalName,
-                serviceName: Cadenza.serviceRegistry.serviceName,
-              },
-              fields: ["id"],
-              return: "id",
-            },
           },
         };
       },
       "",
-      { isSubMeta: true, concurrency: 50 },
+      { isSubMeta: true, concurrency: 100 },
     )
       .doOn("meta.node.consumed_signal")
-      .emitsAfter("sub_meta.signal_controller.signal_consumed");
+      .emits("sub_meta.signal_controller.signal_consumed");
   }
 }

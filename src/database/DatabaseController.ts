@@ -310,7 +310,7 @@ export default class DatabaseController {
                               return ctx;
                             },
                             "Applies generated DDL to the database",
-                          ).emitsAfter("meta.database.setup_done"),
+                          ).emits("meta.database.setup_done"),
                         ),
                       ),
                     ),
@@ -447,7 +447,7 @@ export default class DatabaseController {
     tableName: string,
     context: DbOperationPayload,
   ): Promise<any> {
-    const { data, transaction = true, fields = [] } = context;
+    const { data, transaction = true, fields = [], onConflict } = context;
 
     if (!data || (Array.isArray(data) && data.length === 0)) {
       return { errored: true, __error: "No data provided for insert" };
@@ -485,8 +485,34 @@ export default class DatabaseController {
         .join(", ");
       const params = rows.flatMap((row) => Object.values(row));
 
+      let onConflictSql = "";
+      if (onConflict) {
+        const { target, action } = onConflict;
+        onConflictSql += ` ON CONFLICT (${target.join(", ")})`;
+        if (action.do === "update") {
+          if (!action.set || Object.keys(action.set).length === 0) {
+            throw new Error("Update action requires 'set' fields");
+          }
+          const setClauses = Object.entries(action.set)
+            .map(
+              ([field, value]) =>
+                `${field} = ${value === "excluded" ? "excluded." + field : `$${params.length + 1}`}`,
+            )
+            .join(", ");
+          params.push(
+            ...Object.values(action.set).filter(
+              (v) => typeof v !== "string" || !v.startsWith("excluded."),
+            ),
+          );
+          onConflictSql += ` DO UPDATE SET ${setClauses}`;
+          if (action.where) onConflictSql += ` WHERE ${action.where}`;
+        } else {
+          onConflictSql += ` DO NOTHING`;
+        }
+      }
+
       const result = await client.query(
-        `${sql} ${values} RETURNING ${fields.length ? fields.join(", ") : "*"}`,
+        `${sql} ${values}${onConflictSql} RETURNING ${fields.length ? fields.join(", ") : "*"}`,
         params,
       );
       if (transaction) await client.query("COMMIT");
@@ -495,7 +521,6 @@ export default class DatabaseController {
           ? result.rows
           : result.rows[0],
         rowCount: result.rowCount,
-        id: result.rows[0]?.id,
         __inserted: true,
       };
     } catch (error: any) {
@@ -656,8 +681,16 @@ export default class DatabaseController {
           resolvedData,
         )
           .map((_, i) => `$${i + 1}`)
-          .join(", ")}) RETURNING ${op.return === "id" ? "id" : "*"}`;
-        result = (await client.query(sql, Object.values(resolvedData))).rows[0];
+          .join(
+            ", ",
+          )}) ON CONFLICT DO NOTHING RETURNING ${op.return === "id" ? "id" : "*"}`;
+        result =
+          ((await client.query(sql, Object.values(resolvedData))).rows[0] ??
+          op.return === "id")
+            ? resolvedData.id
+              ? { id: resolvedData.id }
+              : undefined
+            : undefined;
       } else if (op.subOperation === "query") {
         const params: any[] = [];
         const whereClause = this.buildWhereClause(op.filter || {}, params);
@@ -725,7 +758,14 @@ export default class DatabaseController {
       `Auto-generated ${op} task for ${tableName}`,
       {
         isMeta: options.isMeta,
+        concurrency: 50,
         validateInputContext: false, // TODO
+        getTagCallback: (
+          context?: AnyObject, // TODO more granular tags
+        ) =>
+          context?.__metadata?.__executionTraceId ??
+          context?.__executionTraceId ??
+          "default",
         inputSchema: {
           // TODO
           type: "object",
@@ -743,6 +783,6 @@ export default class DatabaseController {
           return typeof signal === "string" ? signal : signal.signal;
         }) ?? []),
       )
-      .emitsAfter(defaultSignal);
+      .emits(defaultSignal);
   }
 }

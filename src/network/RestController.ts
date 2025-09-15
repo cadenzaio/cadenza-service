@@ -136,7 +136,7 @@ export default class RestController {
                   "Resolves a delegation request",
                 )
                   .doOn(`meta.node.ended_routine_execution:${routineExecId}`)
-                  .emitsAfter(`meta.rest.delegation_resolved:${routineExecId}`);
+                  .emits(`meta.rest.delegation_resolved:${routineExecId}`);
 
                 Cadenza.createEphemeralMetaTask(
                   "Delegation progress update",
@@ -219,7 +219,7 @@ export default class RestController {
                       "Shuts down the HTTP server",
                     )
                       .doOn("meta.server_shutdown_requested")
-                      .emitsAfter("meta.rest.shutdown:http");
+                      .emits("meta.rest.shutdown:http");
                   };
 
                   const createHttpsServer = (ctx: any) => {
@@ -264,7 +264,7 @@ export default class RestController {
                       "Shuts down the HTTPS server",
                     )
                       .doOn("meta.server_shutdown_requested")
-                      .emitsAfter("meta.rest.shutdown:https");
+                      .emits("meta.rest.shutdown:https");
                   };
 
                   if (
@@ -300,7 +300,7 @@ export default class RestController {
                 },
                 "Configures network mode",
               )
-                .emitsAfter("meta.rest.network_configured")
+                .emits("meta.rest.network_configured")
                 .emitsOnFail("meta.rest.network_configuration_failed"),
             )
             .emitsOnFail("meta.rest.failed"),
@@ -337,7 +337,7 @@ export default class RestController {
           "Sends handshake request",
         )
           .doOn("meta.fetch.handshake_requested")
-          .emitsAfter("meta.fetch.handshake_complete");
+          .emits("meta.fetch.handshake_complete");
 
         Cadenza.createMetaTask(
           "Delegate flow to REST server",
@@ -431,7 +431,7 @@ export default class RestController {
           "Requests status",
         )
           .doOn("meta.fetch.status_check_requested")
-          .emitsAfter("meta.fetch.status_checked")
+          .emits("meta.fetch.status_checked")
           .emitsOnFail("meta.fetch.status_check_failed");
 
         return true;

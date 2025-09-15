@@ -137,10 +137,10 @@ export default class SignalTransmissionTask extends Task {
     const deputyContext = {
       __localTaskName: this.name,
       __serviceName: this.serviceName,
-      __contractId: metadata.__contractId ?? null,
+      __executionTraceId: metadata.__executionTraceId ?? null,
       __metadata: {
         ...metadata,
-        __deputyTaskId: this.id,
+        __deputyTaskName: this.name,
       },
       __signalName: this.signalName,
       ...ctx,

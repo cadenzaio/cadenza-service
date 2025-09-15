@@ -28,6 +28,12 @@ export interface SubOperation {
   // No joins in sub-ops to limit depth/complexity
 }
 
+export interface OnConflictAction {
+  do: "nothing" | "update"; // Action on conflict
+  set?: Record<string, any>; // Fields to update (for DO UPDATE)
+  where?: string; // Optional WHERE clause for conditional update (e.g., "excluded.created > context.created")
+}
+
 export type OpEffect = "increment" | "decrement" | "set";
 
 export type ValueOrSubOp = any | SubOperation | OpEffect; // Field value or nested op
@@ -43,5 +49,9 @@ export interface DbOperationPayload {
   offset?: number; // For query
   transaction?: boolean; // Wrap in transaction (default true for nested)
   batch?: boolean; // For array data
+  onConflict?: {
+    target: string[]; // Target table
+    action: OnConflictAction;
+  };
   // Future expansions: groupBy, having, batchSize, etc.
 }
