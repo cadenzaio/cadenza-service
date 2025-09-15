@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/cadenzaio/cadenza-service/compare/v1.4.0...v1.4.1) (2025-09-15)
+
+
+### Bug Fixes
+
+* adapted to cadenza core breaking changes. ([0e3484f](https://github.com/cadenzaio/cadenza-service/commit/0e3484f8ff2533d3b133c8904d140c9312066735))
+
 # [1.4.0](https://github.com/cadenzaio/cadenza-service/compare/v1.3.0...v1.4.0) (2025-09-11)
 
 
