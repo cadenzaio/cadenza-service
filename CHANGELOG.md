@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/cadenzaio/cadenza-service/compare/v1.5.2...v1.6.0) (2025-09-17)
+
+
+### Features
+
+* Tables are now sorted by dependencies ([900845c](https://github.com/cadenzaio/cadenza-service/commit/900845c374222cc4681e510dfc2a14cf6e02efd9))
+
 ## [1.5.2](https://github.com/cadenzaio/cadenza-service/compare/v1.5.1...v1.5.2) (2025-09-17)
 
 
