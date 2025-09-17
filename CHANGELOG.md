@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/cadenzaio/cadenza-service/compare/v1.6.0...v1.6.1) (2025-09-17)
+
+
+### Bug Fixes
+
+* better error handling ([48efe05](https://github.com/cadenzaio/cadenza-service/commit/48efe05fe8cde74f5300475f0a8090f2f761f379))
+
 # [1.6.0](https://github.com/cadenzaio/cadenza-service/compare/v1.5.2...v1.6.0) (2025-09-17)
 
 
