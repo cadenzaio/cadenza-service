@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/cadenzaio/cadenza-service/compare/v1.5.0...v1.5.1) (2025-09-17)
+
+
+### Bug Fixes
+
+* added some logs ([60536a9](https://github.com/cadenzaio/cadenza-service/commit/60536a9b0331a6c88306a30b4fb0ba0a83047d2a))
+
 # [1.5.0](https://github.com/cadenzaio/cadenza-service/compare/v1.4.1...v1.5.0) (2025-09-17)
 
 
