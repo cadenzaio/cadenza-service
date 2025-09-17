@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/cadenzaio/cadenza-service/compare/v1.4.1...v1.5.0) (2025-09-17)
+
+
+### Features
+
+* Added handshake functionality and service communication registration WIP ([1dcdf15](https://github.com/cadenzaio/cadenza-service/commit/1dcdf15f1508f91a8a6e8178afe942172dc19c77))
+
 ## [1.4.1](https://github.com/cadenzaio/cadenza-service/compare/v1.4.0...v1.4.1) (2025-09-15)
 
 
