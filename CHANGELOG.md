@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/cadenzaio/cadenza-service/compare/v1.5.1...v1.5.2) (2025-09-17)
+
+
+### Bug Fixes
+
+* added missing schema field type "bigint" ([1eefe30](https://github.com/cadenzaio/cadenza-service/commit/1eefe30179388fa12245c77a84556aa15a7d436d))
+
 ## [1.5.1](https://github.com/cadenzaio/cadenza-service/compare/v1.5.0...v1.5.1) (2025-09-17)
 
 
