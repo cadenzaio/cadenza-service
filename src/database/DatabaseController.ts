@@ -86,16 +86,25 @@ export default class DatabaseController {
               }
               for (const [tableName, table] of Object.entries(schema.tables)) {
                 if (!table.fields || typeof table.fields !== "object") {
+                  console.log(tableName, "missing fields");
                   throw new Error(`Invalid table ${tableName}: missing fields`);
                 }
+
                 // Validate FieldDefinition constraints and customSignals
                 for (const [fieldName, field] of Object.entries(table.fields)) {
                   if (!fieldName.split("").every((c) => /[a-z_]/.test(c))) {
+                    console.log(tableName, "field not lowercase", fieldName);
                     throw new Error(
                       `Invalid field name ${fieldName} for ${tableName}. Field names must only contain lowercase alphanumeric characters and underscores`,
                     );
                   }
                   if (!Object.values(SCHEMA_TYPES).includes(field.type)) {
+                    console.log(
+                      tableName,
+                      "field invalid type",
+                      fieldName,
+                      field.type,
+                    );
                     throw new Error(
                       `Invalid type ${field.type} for ${tableName}.${fieldName}`,
                     );
@@ -104,6 +113,12 @@ export default class DatabaseController {
                     field.references &&
                     !field.references.match(/^[\w]+[(\w)]+$/)
                   ) {
+                    console.log(
+                      tableName,
+                      "invalid reference",
+                      fieldName,
+                      field.references,
+                    );
                     throw new Error(
                       `Invalid reference ${field.references} for ${tableName}.${fieldName}`,
                     );
@@ -119,6 +134,12 @@ export default class DatabaseController {
                         !Array.isArray(triggers) &&
                         typeof triggers !== "object"
                       ) {
+                        console.log(
+                          tableName,
+                          "invalid triggers",
+                          op,
+                          triggers,
+                        );
                         throw new Error(
                           `Invalid triggers for ${tableName}.${op}`,
                         );
@@ -128,6 +149,12 @@ export default class DatabaseController {
                         !Array.isArray(emissions) &&
                         typeof emissions !== "object"
                       ) {
+                        console.log(
+                          tableName,
+                          "invalid emissions",
+                          op,
+                          emissions,
+                        );
                         throw new Error(
                           `Invalid emissions for ${tableName}.${op}`,
                         );
