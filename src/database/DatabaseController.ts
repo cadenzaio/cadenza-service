@@ -339,9 +339,14 @@ export default class DatabaseController {
                               async (ctx) => {
                                 const { ddl } = ctx;
                                 if (ddl && ddl.length > 0) {
-                                  for (const sql of ddl) {
-                                    console.log("Applying SQL", sql);
-                                    await this.dbClient.query(sql);
+                                  try {
+                                    for (const sql of ddl) {
+                                      console.log("Applying SQL", sql);
+                                      await this.dbClient.query(sql);
+                                    }
+                                  } catch (error: any) {
+                                    console.error("Error applying DDL", error);
+                                    throw error;
                                   }
                                 }
                                 console.log("DDL applied");
