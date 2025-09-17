@@ -1,3 +1,10 @@
+## [1.6.3](https://github.com/cadenzaio/cadenza-service/compare/v1.6.2...v1.6.3) (2025-09-17)
+
+
+### Bug Fixes
+
+* boolean as default now works. ([1486a41](https://github.com/cadenzaio/cadenza-service/commit/1486a41f2954478d5e4433364f236085a83efb46))
+
 ## [1.6.2](https://github.com/cadenzaio/cadenza-service/compare/v1.6.1...v1.6.2) (2025-09-17)
 
 
