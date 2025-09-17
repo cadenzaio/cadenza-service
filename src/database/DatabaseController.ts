@@ -429,27 +429,28 @@ export default class DatabaseController {
     // Initialize graph with all tables
     allTables.forEach((table) => graph.set(table, new Set()));
 
-    // Populate dependencies
+    // Populate dependencies, skipping self-references for cycle detection
     for (const [tableName, table] of Object.entries(schema.tables)) {
       for (const field of Object.values(table.fields)) {
         if (field.references) {
-          const [refTable] = field.references.split("("); // Extract referenced table
-          if (allTables.includes(refTable)) {
+          const [refTable] = field.references.split("."); // Extract referenced table
+          if (refTable !== tableName && allTables.includes(refTable)) {
             graph.get(refTable)?.add(tableName); // refTable depends on tableName
           }
         }
       }
     }
 
-    // Topological sort using DFS
+    // Topological sort using DFS with cycle detection
     const visited: Set<string> = new Set();
     const tempMark: Set<string> = new Set(); // For cycle detection
     const sorted: string[] = [];
+    let hasCycles = false;
 
     function visit(table: string) {
       if (tempMark.has(table)) {
-        console.log("Circular reference detected involving table", table);
-        throw new Error(`Circular reference detected involving table ${table}`);
+        hasCycles = true; // Mark cycle but continue
+        return;
       }
       if (visited.has(table)) return;
 
@@ -462,14 +463,23 @@ export default class DatabaseController {
       sorted.push(table);
     }
 
-    // Visit each table
+    // Visit each unvisited table
     for (const table of allTables) {
       if (!visited.has(table)) {
         visit(table);
       }
     }
 
-    return { ...ctx, sortedTables: sorted };
+    // Handle unvisited tables (e.g., no dependencies)
+    for (const table of allTables) {
+      if (!visited.has(table)) {
+        sorted.push(table);
+      }
+    }
+
+    console.log("sorted tables", sorted, "has cycles", hasCycles);
+
+    return { ...ctx, sortedTables: sorted, hasCycles };
   }
 
   async *splitTables(ctx: any) {
