@@ -433,7 +433,7 @@ export default class DatabaseController {
     for (const [tableName, table] of Object.entries(schema.tables)) {
       for (const field of Object.values(table.fields)) {
         if (field.references) {
-          const [refTable] = field.references.split("."); // Extract referenced table
+          const [refTable] = field.references.split("("); // Extract referenced table
           if (allTables.includes(refTable)) {
             graph.get(refTable)?.add(tableName); // refTable depends on tableName
           }
