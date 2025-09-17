@@ -1,3 +1,10 @@
+## [1.6.2](https://github.com/cadenzaio/cadenza-service/compare/v1.6.1...v1.6.2) (2025-09-17)
+
+
+### Bug Fixes
+
+* null as default now works. ([5561416](https://github.com/cadenzaio/cadenza-service/commit/55614165dbd892534189cc36faaf862015cdb707))
+
 ## [1.6.1](https://github.com/cadenzaio/cadenza-service/compare/v1.6.0...v1.6.1) (2025-09-17)
 
 
