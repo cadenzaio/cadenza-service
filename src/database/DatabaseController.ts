@@ -39,7 +39,7 @@ export default class DatabaseController {
       "DatabaseServiceInit",
       [
         // Database health check
-        // Create database roll
+        // Create database role
         // Create schema version table
         Cadenza.createMetaTask(
           "Create database",
@@ -102,7 +102,7 @@ export default class DatabaseController {
                   }
                   if (
                     field.references &&
-                    !field.references.match(/^[\w]+\.[\w]+$/)
+                    !field.references.match(/^[\w]+[(\w)]+$/)
                   ) {
                     throw new Error(
                       `Invalid reference ${field.references} for ${tableName}.${fieldName}`,
@@ -784,5 +784,6 @@ export default class DatabaseController {
         }) ?? []),
       )
       .emits(defaultSignal);
+    console.log("Created database task", op, tableName);
   }
 }

@@ -12,12 +12,15 @@ export interface ServiceInstanceDescriptor {
   isBlocked: boolean;
   health: AnyObject;
   exposed: boolean;
+  clientCreated?: boolean;
 }
 
 export interface DeputyDescriptor {
-  __serviceName: string;
-  __remoteRoutineName: string;
-  __localTaskName: string;
+  serviceName: string;
+  remoteRoutineName?: string;
+  signalName?: string;
+  localTaskName: string;
+  communicationType: string;
 }
 
 export default class ServiceRegistry {
@@ -28,7 +31,7 @@ export default class ServiceRegistry {
   }
 
   private instances: Map<string, ServiceInstanceDescriptor[]> = new Map();
-  private deputies: Map<string, DeputyDescriptor> = new Map();
+  private deputies: Map<string, DeputyDescriptor[]> = new Map();
   serviceName: string | null = null;
   serviceInstanceId: string | null = null;
   useSocket: boolean = false;
@@ -63,14 +66,39 @@ export default class ServiceRegistry {
           Object.assign(existing, serviceInstance); // Update
         } else {
           if (this.deputies.has(serviceName)) {
+            const communicationTypes = Array.from(
+              new Set(
+                this.deputies
+                  .get(serviceName)!
+                  .map((d) => d.communicationType) ?? [],
+              ),
+            );
+
             emit("meta.service_registry.dependee_registered", {
-              __serviceName: serviceName,
-              __serviceInstanceId: id,
-              __serviceAddress: address,
-              __servicePort: port,
-              __protocol: exposed ? "https" : "http",
+              serviceName: serviceName,
+              serviceInstanceId: id,
+              serviceAddress: address,
+              servicePort: port,
+              protocol: exposed ? "https" : "http",
+              communicationTypes,
             });
+
+            serviceInstance.clientCreated = true;
+
+            for (const instance of this.instances.get(serviceName)!) {
+              if (instance.clientCreated) continue;
+              instance.clientCreated = true;
+              emit("meta.service_registry.dependee_registered", {
+                serviceName: serviceName,
+                serviceInstanceId: id,
+                serviceAddress: address,
+                servicePort: port,
+                protocol: exposed ? "https" : "http",
+                communicationTypes,
+              });
+            }
           }
+
           instances.push(serviceInstance); // Insert
         }
 
@@ -129,7 +157,7 @@ export default class ServiceRegistry {
           const { serviceInstances } = ctx;
           if (!serviceInstances) return;
           for (const serviceInstance of serviceInstances) {
-            yield serviceInstance;
+            yield { serviceInstance };
           }
         }).then(this.handleInstanceUpdateTask),
       );
@@ -178,23 +206,17 @@ export default class ServiceRegistry {
     this.handleDeputyRegistrationTask = Cadenza.createMetaTask(
       "Handle Deputy Registration",
       (ctx, emit) => {
-        const { __serviceName } = ctx;
+        const { serviceName } = ctx;
 
-        this.deputies.set(__serviceName, {
-          __serviceName,
-          __remoteRoutineName: ctx.__remoteRoutineName,
-          __localTaskName: ctx.__localTaskName,
+        if (!this.deputies.has(serviceName)) this.deputies.set(serviceName, []);
+
+        this.deputies.get(serviceName)!.push({
+          serviceName,
+          remoteRoutineName: ctx.remoteRoutineName,
+          signalName: ctx.signalName,
+          localTaskName: ctx.localTaskName,
+          communicationType: ctx.communicationType,
         });
-
-        for (const instance of this.instances.get(__serviceName)!) {
-          emit(`meta.service_registry.dependee_registered:${instance.id}`, {
-            __serviceName,
-            __serviceInstanceId: instance.id,
-            __serviceAddress: instance.address,
-            __servicePort: instance.port,
-            __protocol: instance.exposed ? "https" : "http",
-          });
-        }
       },
     ).doOn("meta.deputy.created");
 

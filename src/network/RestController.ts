@@ -118,6 +118,7 @@ export default class RestController {
               // TODO: add body validation based on profile
 
               app.post("/handshake", (req: Request, res: Response) => {
+                // TODO
                 Cadenza.broker.emit("meta.rest.handshake", req.body);
                 res.send({ __status: "success" });
               });
@@ -310,33 +311,57 @@ export default class RestController {
     ).doOn("meta.service_registry.service_inserted");
 
     Cadenza.createMetaTask(
-      "FetchClient",
-      (ctx) => {
+      "Setup fetch client",
+      (ctx, emit) => {
         const {
-          __serviceName,
-          __serviceInstanceId,
-          __serviceAddress,
-          __servicePort,
-          __protocol,
+          serviceName,
+          serviceInstanceId,
+          serviceAddress,
+          servicePort,
+          protocol,
         } = ctx;
 
-        const port = __protocol === "https" ? 443 : __servicePort;
-        const URL = `${__protocol}://${__serviceAddress}:${port}`;
+        const port = protocol === "https" ? 443 : servicePort;
+        const URL = `${protocol}://${serviceAddress}:${port}`;
 
         Cadenza.createMetaTask(
           "Send Handshake",
-          async (ctx) => {
+          async (ctx, emit) => {
             const response = await fetch(`${URL}/handshake`, {
               method: "POST",
               body: JSON.stringify(ctx),
             });
             const result = (await response.json()) as AnyObject;
-            result.__serviceInstanceId = __serviceInstanceId;
-            return result;
+            if (result.__status === "error" || result.status !== 200) {
+              throw new Error(
+                result.__error ??
+                  `Failed to connect to service ${serviceName} ${ctx.serviceInstanceId}`,
+              );
+            }
+
+            console.log(
+              `Connected to service ${serviceName} ${ctx.serviceInstanceId}`,
+              result,
+            );
+
+            for (const communicationType of ctx.communicationTypes) {
+              emit("meta.fetch.service_communication_established", {
+                serviceInstanceId: ctx.serviceInstanceId,
+                serviceInstanceClientId:
+                  Cadenza.serviceRegistry.serviceInstanceId,
+                communicationType,
+              });
+            }
           },
           "Sends handshake request",
+          {
+            retryCount: 20,
+            retryDelay: 200,
+            retryDelayMax: 5000,
+            retryDelayFactor: 1.5,
+          },
         )
-          .doOn("meta.fetch.handshake_requested")
+          .doOn(`meta.fetch.handshake_requested:${serviceInstanceId}`)
           .emits("meta.fetch.handshake_complete");
 
         Cadenza.createMetaTask(
@@ -369,8 +394,8 @@ export default class RestController {
           "Sends delegation request",
         )
           .doOn(
-            `meta.service_registry.selected_instance_for_fetch:${__serviceInstanceId}`,
-            `meta.service_registry.socket_failed:${__serviceInstanceId}`,
+            `meta.service_registry.selected_instance_for_fetch:${serviceInstanceId}`,
+            `meta.service_registry.socket_failed:${serviceInstanceId}`,
           )
           .emitsOnFail("meta.fetch.delegate_failed");
 
@@ -405,8 +430,8 @@ export default class RestController {
           "Sends signal request",
         )
           .doOn(
-            `meta.service_registry.selected_instance_for_fetch:${__serviceInstanceId}`,
-            `meta.signal_controller.remote_signal_registered:${__serviceName}`,
+            `meta.service_registry.selected_instance_for_fetch:${serviceInstanceId}`,
+            `meta.signal_controller.remote_signal_registered:${serviceName}`,
             "meta.signal_controller.wildcard_signal_registered",
           )
           .emitsOnFail("meta.fetch.signal_transmission_failed");
@@ -433,6 +458,11 @@ export default class RestController {
           .doOn("meta.fetch.status_check_requested")
           .emits("meta.fetch.status_checked")
           .emitsOnFail("meta.fetch.status_check_failed");
+
+        emit(`meta.fetch.handshake_requested:${serviceInstanceId}`, {
+          ...ctx,
+          // JWT token...
+        });
 
         return true;
       },

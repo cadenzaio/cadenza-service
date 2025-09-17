@@ -512,7 +512,6 @@ export default class CadenzaService {
 
     Cadenza.createEphemeralMetaTask("Initiate controllers", () => {
       GraphMetadataController.instance;
-      console.log("META CONTROLLERS INITIATED");
     })
       .doOn("meta.service_registry.instance_inserted")
       .emits("meta.process_signal_queue_requested");

@@ -144,10 +144,11 @@ export default class DeputyTask extends Task {
     this.serviceName = serviceName;
 
     this.emit("meta.deputy.created", {
-      __localTaskName: this.name,
-      __localTaskVersion: this.version,
-      __remoteRoutineName: this.remoteRoutineName,
-      __serviceName: this.serviceName,
+      localTaskName: this.name,
+      localTaskVersion: this.version,
+      remoteRoutineName: this.remoteRoutineName,
+      serviceName: this.serviceName,
+      communicationType: "delegation",
     });
   }
 
