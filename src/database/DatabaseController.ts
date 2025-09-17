@@ -66,6 +66,7 @@ export default class DatabaseController {
               return true;
             } catch (error: any) {
               if (error.code === "42P04") {
+                console.log("Database already exists");
                 // Database already exists
                 return true;
               }
@@ -169,175 +170,186 @@ export default class DatabaseController {
             "Validates database schema structure and content",
           ).then(
             Cadenza.createMetaTask(
-              "Split schema into tables",
-              this.splitTables.bind(this),
-              "Generates DDL for database schema",
+              "Sort tables by dependencies",
+              this.sortTablesByReferences.bind(this),
+              "Sorts tables by dependencies",
             ).then(
               Cadenza.createMetaTask(
-                "Generate tasks",
-                (ctx) => {
-                  const { table, tableName, options } = ctx;
+                "Split schema into tables",
+                this.splitTables.bind(this),
+                "Generates DDL for database schema",
+              ).then(
+                Cadenza.createMetaTask(
+                  "Generate tasks",
+                  (ctx) => {
+                    const { table, tableName, options } = ctx;
 
-                  this.createDatabaseTask(
-                    "query",
-                    tableName,
-                    table,
-                    this.queryFunction.bind(this),
-                    options,
-                  );
+                    this.createDatabaseTask(
+                      "query",
+                      tableName,
+                      table,
+                      this.queryFunction.bind(this),
+                      options,
+                    );
 
-                  this.createDatabaseTask(
-                    "insert",
-                    tableName,
-                    table,
-                    this.insertFunction.bind(this),
-                    options,
-                  );
+                    this.createDatabaseTask(
+                      "insert",
+                      tableName,
+                      table,
+                      this.insertFunction.bind(this),
+                      options,
+                    );
 
-                  this.createDatabaseTask(
-                    "update",
-                    tableName,
-                    table,
-                    this.updateFunction.bind(this),
-                    options,
-                  );
+                    this.createDatabaseTask(
+                      "update",
+                      tableName,
+                      table,
+                      this.updateFunction.bind(this),
+                      options,
+                    );
 
-                  this.createDatabaseTask(
-                    "delete",
-                    tableName,
-                    table,
-                    this.deleteFunction.bind(this),
-                    options,
-                  );
-                },
-                "Generates auto-tasks for database schema",
-              ),
-              Cadenza.createMetaTask("Generate DDL from table", (ctx) => {
-                const { ddl, table, tableName, schema, options } = ctx;
-                const fieldDefs = Object.entries(table.fields)
-                  .map((value) => {
-                    const [fieldName, field] = value as [
-                      string,
-                      FieldDefinition,
-                    ];
-                    let def = `${fieldName} ${field.type.toUpperCase()}`;
-                    if (field.type === "varchar")
-                      def += `(${field.constraints?.maxLength ?? 255})`;
-                    if (field.type === "decimal")
-                      def += `(${field.constraints?.precision ?? 10},${field.constraints?.scale ?? 2})`;
-                    if (field.primary) def += " PRIMARY KEY";
-                    if (field.unique) def += " UNIQUE";
-                    if (field.default !== undefined)
-                      def += ` DEFAULT ${field.default || "''"}`;
-                    if (field.required && !field.nullable) def += " NOT NULL";
-                    if (field.nullable) def += " NULL";
-                    if (field.generated)
-                      def += ` GENERATED ALWAYS AS ${field.generated.toUpperCase()} STORED`;
-                    if (field.references)
-                      def += ` REFERENCES ${field.references} ON DELETE ${field.onDelete || "NO_ACTION"}`;
-                    if (field.encrypted) def += " ENCRYPTED"; // Pseudo, handle via app-side
-
-                    if (field.constraints?.check) {
-                      def += ` CHECK (${field.constraints.check})`;
-                    }
-                    return def;
-                  })
-                  .join(", ");
-
-                let sql = `CREATE TABLE IF NOT EXISTS ${tableName} (${fieldDefs})`;
-                if (table.meta?.appendOnly) {
-                  sql += `;\nCREATE TRIGGER prevent_modification BEFORE UPDATE OR DELETE ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION prevent_context_modification();`;
-                }
-
-                ddl.push(sql);
-
-                return { ddl, table, tableName, schema, options };
-              }).then(
-                Cadenza.createMetaTask("Generate index DDL", (ctx) => {
+                    this.createDatabaseTask(
+                      "delete",
+                      tableName,
+                      table,
+                      this.deleteFunction.bind(this),
+                      options,
+                    );
+                  },
+                  "Generates auto-tasks for database schema",
+                ),
+                Cadenza.createMetaTask("Generate DDL from table", (ctx) => {
                   const { ddl, table, tableName, schema, options } = ctx;
-                  if (table.indexes) {
-                    table.indexes.forEach((fields: string[]) => {
-                      ddl.push(
-                        `CREATE INDEX idx_${tableName}_${fields.join("_")} ON ${tableName} (${fields.join(", ")});`,
-                      );
-                    });
+                  const fieldDefs = Object.entries(table.fields)
+                    .map((value) => {
+                      const [fieldName, field] = value as [
+                        string,
+                        FieldDefinition,
+                      ];
+                      let def = `${fieldName} ${field.type.toUpperCase()}`;
+                      if (field.type === "varchar")
+                        def += `(${field.constraints?.maxLength ?? 255})`;
+                      if (field.type === "decimal")
+                        def += `(${field.constraints?.precision ?? 10},${field.constraints?.scale ?? 2})`;
+                      if (field.primary) def += " PRIMARY KEY";
+                      if (field.unique) def += " UNIQUE";
+                      if (field.default !== undefined)
+                        def += ` DEFAULT ${field.default || "''"}`;
+                      if (field.required && !field.nullable) def += " NOT NULL";
+                      if (field.nullable) def += " NULL";
+                      if (field.generated)
+                        def += ` GENERATED ALWAYS AS ${field.generated.toUpperCase()} STORED`;
+                      if (field.references)
+                        def += ` REFERENCES ${field.references} ON DELETE ${field.onDelete || "NO_ACTION"}`;
+                      if (field.encrypted) def += " ENCRYPTED"; // Pseudo, handle via app-side
+
+                      if (field.constraints?.check) {
+                        def += ` CHECK (${field.constraints.check})`;
+                      }
+                      return def;
+                    })
+                    .join(", ");
+
+                  let sql = `CREATE TABLE IF NOT EXISTS ${tableName} (${fieldDefs})`;
+                  if (table.meta?.appendOnly) {
+                    sql += `;\nCREATE TRIGGER prevent_modification BEFORE UPDATE OR DELETE ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION prevent_context_modification();`;
                   }
+
+                  ddl.push(sql);
 
                   return { ddl, table, tableName, schema, options };
                 }).then(
-                  Cadenza.createMetaTask("Generate unique index DDL", (ctx) => {
+                  Cadenza.createMetaTask("Generate index DDL", (ctx) => {
                     const { ddl, table, tableName, schema, options } = ctx;
-                    if (table.uniqueConstraints) {
-                      table.uniqueConstraints.forEach((fields: string[]) => {
+                    if (table.indexes) {
+                      table.indexes.forEach((fields: string[]) => {
                         ddl.push(
-                          `ALTER TABLE ${tableName} ADD CONSTRAINT unique_${tableName}_${fields.join("_")} UNIQUE (${fields.join(", ")});`,
+                          `CREATE INDEX idx_${tableName}_${fields.join("_")} ON ${tableName} (${fields.join(", ")});`,
                         );
                       });
                     }
 
                     return { ddl, table, tableName, schema, options };
                   }).then(
-                    Cadenza.createMetaTask("Generate trigger DDL", (ctx) => {
-                      const { ddl, table, tableName, schema, options } = ctx;
-                      if (table.triggers) {
-                        for (const [triggerName, trigger] of Object.entries(
-                          table.triggers,
-                        ) as [string, any][]) {
-                          ddl.push(
-                            `CREATE TRIGGER ${triggerName} ${trigger.when} ${trigger.event} ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION ${trigger.function};`,
+                    Cadenza.createMetaTask(
+                      "Generate unique index DDL",
+                      (ctx) => {
+                        const { ddl, table, tableName, schema, options } = ctx;
+                        if (table.uniqueConstraints) {
+                          table.uniqueConstraints.forEach(
+                            (fields: string[]) => {
+                              ddl.push(
+                                `ALTER TABLE ${tableName} ADD CONSTRAINT unique_${tableName}_${fields.join("_")} UNIQUE (${fields.join(", ")});`,
+                              );
+                            },
                           );
                         }
-                      }
 
-                      return { ddl, table, tableName, schema, options };
-                    }).then(
-                      Cadenza.createMetaTask(
-                        "Generate initial data DDL",
-                        (ctx) => {
-                          const { ddl, table, tableName, schema, options } =
-                            ctx;
-                          if (table.initialData) {
+                        return { ddl, table, tableName, schema, options };
+                      },
+                    ).then(
+                      Cadenza.createMetaTask("Generate trigger DDL", (ctx) => {
+                        const { ddl, table, tableName, schema, options } = ctx;
+                        if (table.triggers) {
+                          for (const [triggerName, trigger] of Object.entries(
+                            table.triggers,
+                          ) as [string, any][]) {
                             ddl.push(
-                              `INSERT INTO ${tableName} (${table.initialData.fields.join(", ")}) VALUES ${table.initialData.data
-                                .map(
-                                  (row: any[]) =>
-                                    `(${row.map((value) => (value === undefined ? "NULL" : value)).join(", ")})`,
-                                )
-                                .join(", ")};`,
+                              `CREATE TRIGGER ${triggerName} ${trigger.when} ${trigger.event} ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION ${trigger.function};`,
                             );
                           }
+                        }
 
-                          return { ddl, table, tableName, schema, options };
-                        },
-                      ).then(
-                        Cadenza.createUniqueMetaTask("Join DDL", (ctx) => {
-                          const { joinedContexts } = ctx;
-                          const ddl: string[] = [];
-                          for (const joinedContext of joinedContexts) {
-                            ddl.push(...joinedContext.ddl);
-                          }
-                          ddl.flat();
-                          return {
-                            ddl,
-                            schema: joinedContexts[0].schema,
-                            options: joinedContexts[0].options,
-                          };
-                        }).then(
-                          Cadenza.createMetaTask(
-                            "meta.applyDatabaseChanges",
-                            async (ctx) => {
-                              const { ddl } = ctx;
-                              if (ddl && ddl.length > 0) {
-                                for (const sql of ddl) {
-                                  console.log("Applying SQL", sql);
-                                  await this.dbClient.query(sql);
+                        return { ddl, table, tableName, schema, options };
+                      }).then(
+                        Cadenza.createMetaTask(
+                          "Generate initial data DDL",
+                          (ctx) => {
+                            const { ddl, table, tableName, schema, options } =
+                              ctx;
+                            if (table.initialData) {
+                              ddl.push(
+                                `INSERT INTO ${tableName} (${table.initialData.fields.join(", ")}) VALUES ${table.initialData.data
+                                  .map(
+                                    (row: any[]) =>
+                                      `(${row.map((value) => (value === undefined ? "NULL" : value)).join(", ")})`,
+                                  )
+                                  .join(", ")};`,
+                              );
+                            }
+
+                            return { ddl, table, tableName, schema, options };
+                          },
+                        ).then(
+                          Cadenza.createUniqueMetaTask("Join DDL", (ctx) => {
+                            const { joinedContexts } = ctx;
+                            const ddl: string[] = [];
+                            for (const joinedContext of joinedContexts) {
+                              ddl.push(...joinedContext.ddl);
+                            }
+                            ddl.flat();
+                            return {
+                              ddl,
+                              schema: joinedContexts[0].schema,
+                              options: joinedContexts[0].options,
+                            };
+                          }).then(
+                            Cadenza.createMetaTask(
+                              "meta.applyDatabaseChanges",
+                              async (ctx) => {
+                                const { ddl } = ctx;
+                                if (ddl && ddl.length > 0) {
+                                  for (const sql of ddl) {
+                                    console.log("Applying SQL", sql);
+                                    await this.dbClient.query(sql);
+                                  }
                                 }
-                              }
-                              console.log("DDL applied");
-                              return ctx;
-                            },
-                            "Applies generated DDL to the database",
-                          ).emits("meta.database.setup_done"),
+                                console.log("DDL applied");
+                                return ctx;
+                              },
+                              "Applies generated DDL to the database",
+                            ).emits("meta.database.setup_done"),
+                          ),
                         ),
                       ),
                     ),
@@ -403,9 +415,62 @@ export default class DatabaseController {
     throw new Error(`Timeout waiting for database to be ready`);
   }
 
-  async *splitTables(ctx: any) {
-    const { schema, options = {} } = ctx;
+  sortTablesByReferences(ctx: AnyObject): AnyObject {
+    // Build dependency graph: map of table -> set of dependent tables
+    const schema: SchemaDefinition = ctx.schema;
+    const graph: Map<string, Set<string>> = new Map();
+    const allTables = Object.keys(schema.tables);
+
+    // Initialize graph with all tables
+    allTables.forEach((table) => graph.set(table, new Set()));
+
+    // Populate dependencies
     for (const [tableName, table] of Object.entries(schema.tables)) {
+      for (const field of Object.values(table.fields)) {
+        if (field.references) {
+          const [refTable] = field.references.split("."); // Extract referenced table
+          if (allTables.includes(refTable)) {
+            graph.get(refTable)?.add(tableName); // refTable depends on tableName
+          }
+        }
+      }
+    }
+
+    // Topological sort using DFS
+    const visited: Set<string> = new Set();
+    const tempMark: Set<string> = new Set(); // For cycle detection
+    const sorted: string[] = [];
+
+    function visit(table: string) {
+      if (tempMark.has(table)) {
+        console.log("Circular reference detected involving table", table);
+        throw new Error(`Circular reference detected involving table ${table}`);
+      }
+      if (visited.has(table)) return;
+
+      tempMark.add(table);
+      for (const dep of graph.get(table) || []) {
+        visit(dep);
+      }
+      tempMark.delete(table);
+      visited.add(table);
+      sorted.push(table);
+    }
+
+    // Visit each table
+    for (const table of allTables) {
+      if (!visited.has(table)) {
+        visit(table);
+      }
+    }
+
+    return { ...ctx, sortedTables: sorted };
+  }
+
+  async *splitTables(ctx: any) {
+    const { sortedTables, schema, options = {} } = ctx;
+    for (const tableName of sortedTables) {
+      const table = schema.tables[tableName];
       yield { ddl: [], table, tableName, schema, options };
     }
   }
