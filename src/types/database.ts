@@ -21,6 +21,7 @@ export const SCHEMA_TYPES = [
   "varchar",
   "text",
   "int",
+  "bigint",
   "decimal",
   "boolean",
   "array",
