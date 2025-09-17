@@ -1,3 +1,10 @@
+## [1.6.5](https://github.com/cadenzaio/cadenza-service/compare/v1.6.4...v1.6.5) (2025-09-17)
+
+
+### Bug Fixes
+
+* allowed for self referencing in table sorting ([ed8fb18](https://github.com/cadenzaio/cadenza-service/commit/ed8fb185e07c664160137bedec3623d93aadba19))
+
 ## [1.6.4](https://github.com/cadenzaio/cadenza-service/compare/v1.6.3...v1.6.4) (2025-09-17)
 
 
