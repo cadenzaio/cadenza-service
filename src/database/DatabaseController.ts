@@ -234,7 +234,7 @@ export default class DatabaseController {
                       if (field.primary) def += " PRIMARY KEY";
                       if (field.unique) def += " UNIQUE";
                       if (field.default !== undefined)
-                        def += ` DEFAULT ${field.default || "''"}`;
+                        def += ` DEFAULT ${field.default === null ? "NULL" : field.default || "''"}`;
                       if (field.required && !field.nullable) def += " NOT NULL";
                       if (field.nullable) def += " NULL";
                       if (field.generated)
