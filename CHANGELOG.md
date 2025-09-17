@@ -1,3 +1,10 @@
+## [1.6.4](https://github.com/cadenzaio/cadenza-service/compare/v1.6.3...v1.6.4) (2025-09-17)
+
+
+### Bug Fixes
+
+* fixed table sorting ([945917a](https://github.com/cadenzaio/cadenza-service/commit/945917ab1a7a42640573868fcde1598d74bf8a6d))
+
 ## [1.6.3](https://github.com/cadenzaio/cadenza-service/compare/v1.6.2...v1.6.3) (2025-09-17)
 
 
