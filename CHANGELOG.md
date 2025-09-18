@@ -1,3 +1,10 @@
+## [1.9.11](https://github.com/cadenzaio/cadenza-service/compare/v1.9.10...v1.9.11) (2025-09-18)
+
+
+### Bug Fixes
+
+* removed default signal emissions ([85fd0ab](https://github.com/cadenzaio/cadenza-service/commit/85fd0ab4faa644f91ea4269d304eb02b1cc92922))
+
 ## [1.9.10](https://github.com/cadenzaio/cadenza-service/compare/v1.9.9...v1.9.10) (2025-09-18)
 
 
