@@ -251,7 +251,7 @@ export default class DatabaseController {
                     .join(", ");
 
                   let sql = "";
-                  if (schema.dropExisting) {
+                  if (schema.meta?.dropExisting) {
                     sql = `DROP TABLE IF EXISTS ${tableName};`;
                     ddl.push(sql);
                   }
