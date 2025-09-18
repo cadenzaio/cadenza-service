@@ -1,3 +1,10 @@
+## [1.9.1](https://github.com/cadenzaio/cadenza-service/compare/v1.9.0...v1.9.1) (2025-09-18)
+
+
+### Bug Fixes
+
+* added log to database task ([38b5185](https://github.com/cadenzaio/cadenza-service/commit/38b5185a51fc3d87c0199c5fbb53e6f65f829272))
+
 # [1.9.0](https://github.com/cadenzaio/cadenza-service/compare/v1.8.4...v1.9.0) (2025-09-18)
 
 
