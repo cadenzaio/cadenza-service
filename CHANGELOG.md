@@ -1,3 +1,10 @@
+## [1.7.1](https://github.com/cadenzaio/cadenza-service/compare/v1.7.0...v1.7.1) (2025-09-18)
+
+
+### Bug Fixes
+
+* Fixed foreign key structure to allow for more than one per table. ([4be2809](https://github.com/cadenzaio/cadenza-service/commit/4be28093aceda0a0025ddcaba8d2796e79538370))
+
 # [1.7.0](https://github.com/cadenzaio/cadenza-service/compare/v1.6.13...v1.7.0) (2025-09-18)
 
 
