@@ -72,8 +72,8 @@ export default class CadenzaService {
     this.runner = Cadenza.runner;
     this.metaRunner = Cadenza.metaRunner;
     this.registry = Cadenza.registry;
-    SignalController.instance;
     this.serviceRegistry = ServiceRegistry.instance;
+    SignalController.instance;
     RestController.instance;
     SocketController.instance;
     console.log("BOOTSTRAPPED");
