@@ -368,6 +368,8 @@ export default class DatabaseController {
                                     ddl,
                                     schema: joinedContexts[0].schema,
                                     options: joinedContexts[0].options,
+                                    table: joinedContexts[0].table,
+                                    tableName: joinedContexts[0].tableName,
                                   };
                                 },
                               ).then(
