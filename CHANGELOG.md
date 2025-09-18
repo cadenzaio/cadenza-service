@@ -1,3 +1,10 @@
+## [1.9.8](https://github.com/cadenzaio/cadenza-service/compare/v1.9.7...v1.9.8) (2025-09-18)
+
+
+### Bug Fixes
+
+* Made meta database tasks subMeta ([51b82f5](https://github.com/cadenzaio/cadenza-service/commit/51b82f50b4f3c05921044d2865f998da421255e7))
+
 ## [1.9.7](https://github.com/cadenzaio/cadenza-service/compare/v1.9.6...v1.9.7) (2025-09-18)
 
 
