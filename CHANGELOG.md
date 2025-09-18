@@ -1,3 +1,10 @@
+## [1.6.12](https://github.com/cadenzaio/cadenza-service/compare/v1.6.11...v1.6.12) (2025-09-18)
+
+
+### Bug Fixes
+
+* removed prevent_modification trigger for now ([9e3584d](https://github.com/cadenzaio/cadenza-service/commit/9e3584d3e8e1cb4175493969690e1d1cc5c013d3))
+
 ## [1.6.11](https://github.com/cadenzaio/cadenza-service/compare/v1.6.10...v1.6.11) (2025-09-18)
 
 
