@@ -1,3 +1,10 @@
+## [1.7.2](https://github.com/cadenzaio/cadenza-service/compare/v1.7.1...v1.7.2) (2025-09-18)
+
+
+### Bug Fixes
+
+* Fixed table sorting with composite foreign keys. ([5f5cecc](https://github.com/cadenzaio/cadenza-service/commit/5f5cecc33547903fabc467451977b1ca076f58c2))
+
 ## [1.7.1](https://github.com/cadenzaio/cadenza-service/compare/v1.7.0...v1.7.1) (2025-09-18)
 
 
