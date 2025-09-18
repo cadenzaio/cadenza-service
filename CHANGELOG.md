@@ -1,3 +1,10 @@
+## [1.9.17](https://github.com/cadenzaio/cadenza-service/compare/v1.9.16...v1.9.17) (2025-09-18)
+
+
+### Bug Fixes
+
+* fixed database init ([621f8f8](https://github.com/cadenzaio/cadenza-service/commit/621f8f843c8f19af449d767fc0ec807510b4a7a3))
+
 ## [1.9.16](https://github.com/cadenzaio/cadenza-service/compare/v1.9.15...v1.9.16) (2025-09-18)
 
 
