@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/cadenzaio/cadenza-service/compare/v1.8.0...v1.8.1) (2025-09-18)
+
+
+### Bug Fixes
+
+* Fixed dropping tables. ([2581664](https://github.com/cadenzaio/cadenza-service/commit/258166479e9c211ef8587637b6375e843e072136))
+
 # [1.8.0](https://github.com/cadenzaio/cadenza-service/compare/v1.7.2...v1.8.0) (2025-09-18)
 
 
