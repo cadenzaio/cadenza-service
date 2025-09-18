@@ -1,3 +1,10 @@
+## [1.6.7](https://github.com/cadenzaio/cadenza-service/compare/v1.6.6...v1.6.7) (2025-09-18)
+
+
+### Bug Fixes
+
+* Minor bug fixes for ddl ([a2f8d9b](https://github.com/cadenzaio/cadenza-service/commit/a2f8d9b68f8470f5390d3ef500d3adc5973c4ae6))
+
 ## [1.6.6](https://github.com/cadenzaio/cadenza-service/compare/v1.6.5...v1.6.6) (2025-09-17)
 
 
