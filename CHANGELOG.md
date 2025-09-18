@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/cadenzaio/cadenza-service/compare/v1.7.2...v1.8.0) (2025-09-18)
+
+
+### Features
+
+* Added option to drop existing tables. ([3c9470b](https://github.com/cadenzaio/cadenza-service/commit/3c9470b7e95ccb2bc184c287150d6144e13ba8c0))
+
 ## [1.7.2](https://github.com/cadenzaio/cadenza-service/compare/v1.7.1...v1.7.2) (2025-09-18)
 
 
