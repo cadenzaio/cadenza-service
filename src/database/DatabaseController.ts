@@ -527,8 +527,13 @@ export default class DatabaseController {
                                     ).then(
                                       Cadenza.createUniqueMetaTask(
                                         "Join table tasks",
-                                        () => true,
-                                      ).emits("meta.database.setup_done"),
+                                        (ctx, emit) => {
+                                          console.log("JOINING TABLE TASKS");
+
+                                          emit("meta.database.setup_done", {});
+                                          return true;
+                                        },
+                                      ),
                                     ),
                                   ),
                                 ),
