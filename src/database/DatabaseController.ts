@@ -636,6 +636,7 @@ export default class DatabaseController {
       };
     } catch (error: any) {
       return {
+        ...context,
         errored: true,
         __error: `Query failed: ${error.message}`,
         __errors: { query: error.message },
@@ -726,6 +727,7 @@ export default class DatabaseController {
     } catch (error: any) {
       if (transaction) await client.query("ROLLBACK");
       return {
+        ...context,
         errored: true,
         __error: `Insert failed: ${error.message}`,
         __errors: { insert: error.message },
@@ -769,6 +771,7 @@ export default class DatabaseController {
     } catch (error: any) {
       if (transaction) await client.query("ROLLBACK");
       return {
+        ...context,
         errored: true,
         __error: `Update failed: ${error.message}`,
         __errors: { update: error.message },
@@ -964,7 +967,6 @@ export default class DatabaseController {
       `Auto-generated ${op} task for ${tableName}`,
       {
         isMeta: options.isMeta,
-        isSubMeta: options.isMeta,
         concurrency: 50,
         validateInputContext: false, // TODO
         getTagCallback: (
