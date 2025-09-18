@@ -312,7 +312,15 @@ export default class DatabaseController {
                                 `INSERT INTO ${tableName} (${table.initialData.fields.join(", ")}) VALUES ${table.initialData.data
                                   .map(
                                     (row: any[]) =>
-                                      `('${row.map((value) => (value === undefined ? "NULL" : value)).join("', '")}')`, // TODO: handle non string data
+                                      `(${row
+                                        .map((value) =>
+                                          value === undefined
+                                            ? "NULL"
+                                            : value.charAt(0) === "'"
+                                              ? value
+                                              : `'${value}'`,
+                                        )
+                                        .join(", ")})`, // TODO: handle non string data
                                   )
                                   .join(", ")} ON CONFLICT DO NOTHING;`,
                               );
