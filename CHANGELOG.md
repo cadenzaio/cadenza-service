@@ -1,3 +1,10 @@
+## [1.9.6](https://github.com/cadenzaio/cadenza-service/compare/v1.9.5...v1.9.6) (2025-09-18)
+
+
+### Bug Fixes
+
+* Added consoles ([aba5cdc](https://github.com/cadenzaio/cadenza-service/commit/aba5cdcbdd0d0c146e3832ad82c70f94c03cb282))
+
 ## [1.9.5](https://github.com/cadenzaio/cadenza-service/compare/v1.9.4...v1.9.5) (2025-09-18)
 
 
