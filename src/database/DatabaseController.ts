@@ -479,56 +479,59 @@ export default class DatabaseController {
                                     return true;
                                   },
                                   "Applies generated DDL to the database",
-                                )
-                                  .then(
+                                ).then(
+                                  Cadenza.createMetaTask(
+                                    "Split schema into tables for task creation",
+                                    this.splitTables.bind(this),
+                                    "Splits schema into tables for task creation",
+                                  ).then(
                                     Cadenza.createMetaTask(
-                                      "Split schema into tables for task creation",
-                                      this.splitTables.bind(this),
-                                      "Splits schema into tables for task creation",
+                                      "Generate tasks",
+                                      (ctx) => {
+                                        const { table, tableName, options } =
+                                          ctx;
+
+                                        this.createDatabaseTask(
+                                          "query",
+                                          tableName,
+                                          table,
+                                          this.queryFunction.bind(this),
+                                          options,
+                                        );
+
+                                        this.createDatabaseTask(
+                                          "insert",
+                                          tableName,
+                                          table,
+                                          this.insertFunction.bind(this),
+                                          options,
+                                        );
+
+                                        this.createDatabaseTask(
+                                          "update",
+                                          tableName,
+                                          table,
+                                          this.updateFunction.bind(this),
+                                          options,
+                                        );
+
+                                        this.createDatabaseTask(
+                                          "delete",
+                                          tableName,
+                                          table,
+                                          this.deleteFunction.bind(this),
+                                          options,
+                                        );
+                                      },
+                                      "Generates auto-tasks for database schema",
                                     ).then(
-                                      Cadenza.createMetaTask(
-                                        "Generate tasks",
-                                        (ctx) => {
-                                          const { table, tableName, options } =
-                                            ctx;
-
-                                          this.createDatabaseTask(
-                                            "query",
-                                            tableName,
-                                            table,
-                                            this.queryFunction.bind(this),
-                                            options,
-                                          );
-
-                                          this.createDatabaseTask(
-                                            "insert",
-                                            tableName,
-                                            table,
-                                            this.insertFunction.bind(this),
-                                            options,
-                                          );
-
-                                          this.createDatabaseTask(
-                                            "update",
-                                            tableName,
-                                            table,
-                                            this.updateFunction.bind(this),
-                                            options,
-                                          );
-
-                                          this.createDatabaseTask(
-                                            "delete",
-                                            tableName,
-                                            table,
-                                            this.deleteFunction.bind(this),
-                                            options,
-                                          );
-                                        },
-                                        "Generates auto-tasks for database schema",
-                                      ),
+                                      Cadenza.createUniqueMetaTask(
+                                        "Join table tasks",
+                                        () => true,
+                                      ).emits("meta.database.setup_done"),
                                     ),
-                                  )
-                                  .emits("meta.database.setup_done"),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
