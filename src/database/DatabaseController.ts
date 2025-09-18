@@ -278,17 +278,13 @@ export default class DatabaseController {
                     return { ddl, table, tableName, schema, options };
                   }).then(
                     Cadenza.createMetaTask(
-                      "Generate unique index DDL",
+                      "Generate primary key ddl",
                       (ctx) => {
                         const { ddl, table, tableName, schema, options } = ctx;
-                        if (table.uniqueConstraints) {
-                          table.uniqueConstraints.forEach(
-                            (fields: string[]) => {
-                              ddl.push(
-                                `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS unique_${tableName}_${fields.join("_")};`,
-                                `ALTER TABLE ${tableName} ADD CONSTRAINT unique_${tableName}_${fields.join("_")} UNIQUE (${fields.join(", ")});`,
-                              );
-                            },
+                        if (table.primaryKey) {
+                          ddl.push(
+                            `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS unique_${tableName}_${table.primaryKey.join("_")};`,
+                            `ALTER TABLE ${tableName} ADD CONSTRAINT unique_${tableName}_${table.primaryKey.join("_")} PRIMARY KEY (${table.primaryKey.join(", ")});`,
                           );
                         }
 
@@ -296,45 +292,43 @@ export default class DatabaseController {
                       },
                     ).then(
                       Cadenza.createMetaTask(
-                        "Generate foreign key DDL",
+                        "Generate unique index DDL",
                         (ctx) => {
                           const { ddl, table, tableName, schema, options } =
                             ctx;
-                          if (table.foreignKeys) {
-                            for (const foreignKey of table.foreignKeys as {
-                              tableName: string;
-                              fields: string[];
-                              referenceFields: string[];
-                            }[]) {
-                              const foreignKeyName = `fk_${tableName}_${foreignKey.fields.join("_")}`;
-                              ddl.push(
-                                `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS ${foreignKeyName};`,
-                                `ALTER TABLE ${tableName} ADD CONSTRAINT ${foreignKeyName} FOREIGN KEY (${foreignKey.fields.join(
-                                  ", ",
-                                )}) REFERENCES ${foreignKey.tableName} (${foreignKey.referenceFields.join(
-                                  ", ",
-                                )});`,
-                              );
-                            }
+                          if (table.uniqueConstraints) {
+                            table.uniqueConstraints.forEach(
+                              (fields: string[]) => {
+                                ddl.push(
+                                  `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS unique_${tableName}_${fields.join("_")};`,
+                                  `ALTER TABLE ${tableName} ADD CONSTRAINT unique_${tableName}_${fields.join("_")} UNIQUE (${fields.join(", ")});`,
+                                );
+                              },
+                            );
                           }
+
                           return { ddl, table, tableName, schema, options };
                         },
                       ).then(
                         Cadenza.createMetaTask(
-                          "Generate trigger DDL",
+                          "Generate foreign key DDL",
                           (ctx) => {
                             const { ddl, table, tableName, schema, options } =
                               ctx;
-                            if (table.triggers) {
-                              for (const [
-                                triggerName,
-                                trigger,
-                              ] of Object.entries(table.triggers) as [
-                                string,
-                                any,
-                              ][]) {
+                            if (table.foreignKeys) {
+                              for (const foreignKey of table.foreignKeys as {
+                                tableName: string;
+                                fields: string[];
+                                referenceFields: string[];
+                              }[]) {
+                                const foreignKeyName = `fk_${tableName}_${foreignKey.fields.join("_")}`;
                                 ddl.push(
-                                  `CREATE TRIGGER ${triggerName} ${trigger.when} ${trigger.event} ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION ${trigger.function};`,
+                                  `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS ${foreignKeyName};`,
+                                  `ALTER TABLE ${tableName} ADD CONSTRAINT ${foreignKeyName} FOREIGN KEY (${foreignKey.fields.join(
+                                    ", ",
+                                  )}) REFERENCES ${foreignKey.tableName} (${foreignKey.referenceFields.join(
+                                    ", ",
+                                  )});`,
                                 );
                               }
                             }
@@ -342,68 +336,104 @@ export default class DatabaseController {
                           },
                         ).then(
                           Cadenza.createMetaTask(
-                            "Generate initial data DDL",
+                            "Generate trigger DDL",
                             (ctx) => {
                               const { ddl, table, tableName, schema, options } =
                                 ctx;
-                              if (table.initialData) {
-                                ddl.push(
-                                  `INSERT INTO ${tableName} (${table.initialData.fields.join(", ")}) VALUES ${table.initialData.data
-                                    .map(
-                                      (row: any[]) =>
-                                        `(${row
-                                          .map((value) =>
-                                            value === undefined
-                                              ? "NULL"
-                                              : value.charAt(0) === "'"
-                                                ? value
-                                                : `'${value}'`,
-                                          )
-                                          .join(", ")})`, // TODO: handle non string data
-                                    )
-                                    .join(", ")} ON CONFLICT DO NOTHING;`,
-                                );
+                              if (table.triggers) {
+                                for (const [
+                                  triggerName,
+                                  trigger,
+                                ] of Object.entries(table.triggers) as [
+                                  string,
+                                  any,
+                                ][]) {
+                                  ddl.push(
+                                    `CREATE TRIGGER ${triggerName} ${trigger.when} ${trigger.event} ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION ${trigger.function};`,
+                                  );
+                                }
                               }
-
                               return { ddl, table, tableName, schema, options };
                             },
                           ).then(
-                            Cadenza.createUniqueMetaTask("Join DDL", (ctx) => {
-                              const { joinedContexts } = ctx;
-                              const ddl: string[] = [];
-                              for (const joinedContext of joinedContexts) {
-                                ddl.push(...joinedContext.ddl);
-                              }
-                              ddl.flat();
-                              return {
-                                ddl,
-                                schema: joinedContexts[0].schema,
-                                options: joinedContexts[0].options,
-                              };
-                            }).then(
-                              Cadenza.createMetaTask(
-                                "meta.applyDatabaseChanges",
-                                async (ctx) => {
-                                  const { ddl } = ctx;
-                                  if (ddl && ddl.length > 0) {
-                                    try {
-                                      for (const sql of ddl) {
-                                        console.log("Applying SQL", sql);
-                                        await this.dbClient.query(sql);
-                                      }
-                                    } catch (error: any) {
-                                      console.error(
-                                        "Error applying DDL",
-                                        error,
-                                      );
-                                      throw error;
-                                    }
+                            Cadenza.createMetaTask(
+                              "Generate initial data DDL",
+                              (ctx) => {
+                                const {
+                                  ddl,
+                                  table,
+                                  tableName,
+                                  schema,
+                                  options,
+                                } = ctx;
+                                if (table.initialData) {
+                                  ddl.push(
+                                    `INSERT INTO ${tableName} (${table.initialData.fields.join(", ")}) VALUES ${table.initialData.data
+                                      .map(
+                                        (row: any[]) =>
+                                          `(${row
+                                            .map((value) =>
+                                              value === undefined
+                                                ? "NULL"
+                                                : value.charAt(0) === "'"
+                                                  ? value
+                                                  : `'${value}'`,
+                                            )
+                                            .join(", ")})`, // TODO: handle non string data
+                                      )
+                                      .join(", ")} ON CONFLICT DO NOTHING;`,
+                                  );
+                                }
+
+                                return {
+                                  ddl,
+                                  table,
+                                  tableName,
+                                  schema,
+                                  options,
+                                };
+                              },
+                            ).then(
+                              Cadenza.createUniqueMetaTask(
+                                "Join DDL",
+                                (ctx) => {
+                                  const { joinedContexts } = ctx;
+                                  const ddl: string[] = [];
+                                  for (const joinedContext of joinedContexts) {
+                                    ddl.push(...joinedContext.ddl);
                                   }
-                                  console.log("DDL applied");
-                                  return ctx;
+                                  ddl.flat();
+                                  return {
+                                    ddl,
+                                    schema: joinedContexts[0].schema,
+                                    options: joinedContexts[0].options,
+                                  };
                                 },
-                                "Applies generated DDL to the database",
-                              ).emits("meta.database.setup_done"),
+                              ).then(
+                                Cadenza.createMetaTask(
+                                  "meta.applyDatabaseChanges",
+                                  async (ctx) => {
+                                    const { ddl } = ctx;
+                                    if (ddl && ddl.length > 0) {
+                                      try {
+                                        for (const sql of ddl) {
+                                          console.log("Applying SQL", sql);
+                                          await this.dbClient.query(sql);
+                                        }
+                                      } catch (error: any) {
+                                        console.error(
+                                          "Error applying DDL",
+                                          error,
+                                        );
+                                        throw error;
+                                      }
+                                    }
+                                    console.log("DDL applied");
+                                    return ctx;
+                                  },
+                                  "Applies generated DDL to the database",
+                                ).emits("meta.database.setup_done"),
+                              ),
                             ),
                           ),
                         ),
