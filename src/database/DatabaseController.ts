@@ -296,19 +296,17 @@ export default class DatabaseController {
                           const { ddl, table, tableName, schema, options } =
                             ctx;
                           if (table.foreignKeys) {
-                            for (const [
-                              foreignTableName,
-                              foreignKey,
-                            ] of Object.entries(table.foreignKeys) as [
-                              string,
-                              any,
-                            ][]) {
+                            for (const foreignKey of table.foreignKeys as {
+                              tableName: string;
+                              fields: string[];
+                              referenceFields: string[];
+                            }[]) {
                               const foreignKeyName = `fk_${tableName}_${foreignKey.fields.join("_")}`;
                               ddl.push(
                                 `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS ${foreignKeyName};`,
                                 `ALTER TABLE ${tableName} ADD CONSTRAINT ${foreignKeyName} FOREIGN KEY (${foreignKey.fields.join(
                                   ", ",
-                                )}) REFERENCES ${foreignTableName} (${foreignKey.referenceFields.join(
+                                )}) REFERENCES ${foreignKey.tableName} (${foreignKey.referenceFields.join(
                                   ", ",
                                 )});`,
                               );

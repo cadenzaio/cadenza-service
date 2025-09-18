@@ -86,11 +86,10 @@ export interface TableDefinition {
   primaryKey?: string[];
   fullTextIndexes?: string[][];
   foreignKeys?: {
-    [tableName: string]: {
-      fields: string[];
-      referenceFields: string[];
-    };
-  };
+    tableName: string;
+    fields: string[];
+    referenceFields: string[];
+  }[];
   triggers?: Record<
     string,
     {
