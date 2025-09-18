@@ -1,3 +1,10 @@
+## [1.6.9](https://github.com/cadenzaio/cadenza-service/compare/v1.6.8...v1.6.9) (2025-09-18)
+
+
+### Bug Fixes
+
+* Minor bug fix for initial data insertion ([d68d787](https://github.com/cadenzaio/cadenza-service/commit/d68d787903497ba4bd1df64c63eb1fc86793dc40))
+
 ## [1.6.8](https://github.com/cadenzaio/cadenza-service/compare/v1.6.7...v1.6.8) (2025-09-18)
 
 
