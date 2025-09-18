@@ -283,7 +283,7 @@ export default class DatabaseController {
                         const { ddl, table, tableName, schema, options } = ctx;
                         if (table.primaryKey) {
                           ddl.push(
-                            `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS unique_${tableName}_${table.primaryKey.join("_")} CASCADE;`, // TODO: should be cascade?
+                            `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS unique_${tableName}_${table.primaryKey.join("_")};`, // TODO: should be cascade?
                             `ALTER TABLE ${tableName} ADD CONSTRAINT unique_${tableName}_${table.primaryKey.join("_")} PRIMARY KEY (${table.primaryKey.join(", ")});`,
                           );
                         }
@@ -300,7 +300,7 @@ export default class DatabaseController {
                             table.uniqueConstraints.forEach(
                               (fields: string[]) => {
                                 ddl.push(
-                                  `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS unique_${tableName}_${fields.join("_")}; CASCADE`, // TODO: should be cascade?
+                                  `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS unique_${tableName}_${fields.join("_")};`, // TODO: should be cascade?
                                   `ALTER TABLE ${tableName} ADD CONSTRAINT unique_${tableName}_${fields.join("_")} UNIQUE (${fields.join(", ")});`,
                                 );
                               },
@@ -323,7 +323,7 @@ export default class DatabaseController {
                               }[]) {
                                 const foreignKeyName = `fk_${tableName}_${foreignKey.fields.join("_")}`;
                                 ddl.push(
-                                  `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS ${foreignKeyName} CASCADE;`, // TODO: should be cascade?
+                                  `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS ${foreignKeyName};`, // TODO: should be cascade?
                                   `ALTER TABLE ${tableName} ADD CONSTRAINT ${foreignKeyName} FOREIGN KEY (${foreignKey.fields.join(
                                     ", ",
                                   )}) REFERENCES ${foreignKey.tableName} (${foreignKey.referenceFields.join(
@@ -415,16 +415,16 @@ export default class DatabaseController {
                                   async (ctx) => {
                                     const { ddl } = ctx;
                                     if (ddl && ddl.length > 0) {
-                                      try {
-                                        for (const sql of ddl) {
+                                      for (const sql of ddl) {
+                                        try {
                                           console.log("Applying SQL", sql);
                                           await this.dbClient.query(sql);
+                                        } catch (error: any) {
+                                          console.error(
+                                            "Error applying DDL",
+                                            error,
+                                          );
                                         }
-                                      } catch (error: any) {
-                                        console.error(
-                                          "Error applying DDL",
-                                          error,
-                                        );
                                       }
                                     }
                                     console.log("DDL applied");
