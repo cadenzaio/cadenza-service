@@ -485,6 +485,15 @@ export default class DatabaseController {
           }
         }
       }
+
+      if (table.foreignKeys) {
+        for (const foreignKey of table.foreignKeys) {
+          const refTable = foreignKey.tableName;
+          if (refTable !== tableName && allTables.includes(refTable)) {
+            graph.get(refTable)?.add(tableName); // refTable depends on tableName
+          }
+        }
+      }
     }
 
     // Topological sort using DFS with cycle detection
