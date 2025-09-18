@@ -12,7 +12,6 @@ export default class SignalController {
       "Handle Signal Registration",
       (ctx, emit) => {
         const { __signalName } = ctx;
-        const firstChar = __signalName.charAt(0);
         const parts = __signalName.split(".");
         const domain = parts[0] === "meta" ? parts[1] : parts[0];
         const action = parts[parts.length - 1];
@@ -27,30 +26,72 @@ export default class SignalController {
           },
         });
 
-        if (
-          (firstChar === firstChar.toUpperCase() &&
-            firstChar !== firstChar.toLowerCase()) ||
-          firstChar === "*"
-        ) {
-          const serviceName = __signalName.split(".")[0];
-
-          ctx.__listenerServiceName = Cadenza.serviceRegistry.serviceName;
-          ctx.__emitterSignalName = __signalName.split(".").slice(1).join(".");
-          ctx.__signalName = "meta.signal_controller.foreign_signal_registered";
-
-          if (serviceName === "*") {
-            emit("meta.signal_controller.wildcard_signal_registered", ctx);
-          } else {
-            emit(
-              `meta.signal_controller.remote_signal_registered:${serviceName}`,
-              ctx,
-            );
-          }
-        }
         return ctx;
       },
       "Handles signal registration from a service instance",
-    ).doOn("meta.signal_broker.added");
+    )
+      .then(
+        Cadenza.createMetaTask(
+          "Handle foreign signal registration",
+          (ctx, emit) => {
+            const { __signalName } = ctx;
+            const firstChar = __signalName.charAt(0);
+
+            if (
+              (firstChar === firstChar.toUpperCase() &&
+                firstChar !== firstChar.toLowerCase()) ||
+              firstChar === "*"
+            ) {
+              const serviceName = __signalName.split(".")[0];
+
+              ctx.__listenerServiceName = Cadenza.serviceRegistry.serviceName;
+              ctx.__emitterSignalName = __signalName
+                .split(".")
+                .slice(1)
+                .join(".");
+              ctx.__signalName =
+                "meta.signal_controller.foreign_signal_registered";
+              ctx.__remoteServiceName = serviceName;
+
+              if (serviceName === "*") {
+                emit("meta.signal_controller.wildcard_signal_registered", ctx);
+              } else {
+                emit(
+                  `meta.signal_controller.remote_signal_registered:${serviceName}`,
+                  ctx,
+                );
+              }
+
+              return ctx;
+            }
+          },
+        ).then(Cadenza.serviceRegistry.handleRemoteSignalRegistrationTask),
+      )
+      .doOn("meta.signal_broker.added");
+
+    Cadenza.createMetaTask(
+      "Forward signal observations to remote service",
+      (ctx, emit) => {
+        const { __remoteSignals } = ctx;
+
+        for (const remoteSignal of __remoteSignals) {
+          if (remoteSignal.__remoteServiceName === "*") {
+            emit(
+              "meta.signal_controller.wildcard_signal_registered",
+              remoteSignal,
+            );
+          } else {
+            emit(
+              `meta.signal_controller.remote_signal_registered:${remoteSignal.__remoteServiceName}`,
+              remoteSignal,
+            );
+          }
+        }
+
+        return true;
+      },
+      "Forwards signal observations to remote service",
+    ).doAfter(Cadenza.serviceRegistry.getRemoteSignalsTask);
 
     Cadenza.createMetaTask("Handle foreign signal registration", (ctx) => {
       const { __emitterSignalName, __listenerServiceName } = ctx;

@@ -23,6 +23,13 @@ export interface DeputyDescriptor {
   communicationType: string;
 }
 
+export interface RemoteSignalDescriptor {
+  __listenerServiceName: string;
+  __emitterSignalName: string;
+  __signalName: string;
+  __remoteServiceName: string;
+}
+
 export default class ServiceRegistry {
   private static _instance: ServiceRegistry;
   public static get instance(): ServiceRegistry {
@@ -32,12 +39,15 @@ export default class ServiceRegistry {
 
   private instances: Map<string, ServiceInstanceDescriptor[]> = new Map();
   private deputies: Map<string, DeputyDescriptor[]> = new Map();
+  private remoteSignals: Map<string, RemoteSignalDescriptor[]> = new Map();
   serviceName: string | null = null;
   serviceInstanceId: string | null = null;
   useSocket: boolean = false;
   retryCount: number = 3;
 
   handleInstanceUpdateTask: Task;
+  handleRemoteSignalRegistrationTask: Task;
+  getRemoteSignalsTask: Task;
   handleSocketStatusUpdateTask: Task;
   fullSyncTask: Task;
   getAllInstances: Task;
@@ -65,7 +75,10 @@ export default class ServiceRegistry {
         if (existing) {
           Object.assign(existing, serviceInstance); // Update
         } else {
-          if (this.deputies.has(serviceName)) {
+          if (
+            this.deputies.has(serviceName) ||
+            this.remoteSignals.has(serviceName)
+          ) {
             const communicationTypes = Array.from(
               new Set(
                 this.deputies
@@ -73,6 +86,13 @@ export default class ServiceRegistry {
                   .map((d) => d.communicationType) ?? [],
               ),
             );
+
+            if (
+              !communicationTypes.includes("signal") &&
+              this.remoteSignals.has(serviceName)
+            ) {
+              communicationTypes.push("signal");
+            }
 
             emit("meta.service_registry.dependee_registered", {
               serviceName: serviceName,
@@ -112,6 +132,51 @@ export default class ServiceRegistry {
         "CadenzaDB.meta.service_instance.inserted",
         "CadenzaDB.meta.service_instance.updated",
       );
+
+    this.handleRemoteSignalRegistrationTask = Cadenza.createMetaTask(
+      "Handle Remote Signal Registration",
+      (ctx) => {
+        const { __remoteServiceName, __emitterSignalName } = ctx;
+        let remoteSignals = this.remoteSignals.get(__remoteServiceName);
+        if (!remoteSignals) {
+          this.remoteSignals.set(__remoteServiceName, []);
+          remoteSignals = this.remoteSignals.get(__remoteServiceName);
+        }
+
+        if (
+          remoteSignals &&
+          remoteSignals.findIndex(
+            (s) => s.__emitterSignalName === __emitterSignalName,
+          ) === -1
+        ) {
+          remoteSignals.push({
+            __listenerServiceName: ctx.__listenerServiceName,
+            __emitterSignalName: __emitterSignalName,
+            __signalName: ctx.__signalName,
+            __remoteServiceName,
+          });
+          return true;
+        }
+
+        return false;
+      },
+      "Handles registration of remote signals",
+    );
+
+    this.getRemoteSignalsTask = Cadenza.createMetaTask(
+      "Get remote signals",
+      (ctx) => {
+        const { serviceName } = ctx;
+        let remoteSignals = this.remoteSignals.get(serviceName) ?? [];
+        remoteSignals = remoteSignals.concat(this.remoteSignals.get("*") ?? []);
+
+        return {
+          __remoteSignals: remoteSignals,
+          ...ctx,
+        };
+      },
+      "Gets remote signals",
+    ).doOn("meta.fetch.handshake_complete");
 
     this.handleSocketStatusUpdateTask = Cadenza.createMetaTask(
       "Handle Socket Status Update",

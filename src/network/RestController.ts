@@ -329,7 +329,7 @@ export default class RestController {
           async (ctx, emit) => {
             const response = await fetch(`${URL}/handshake`, {
               method: "POST",
-              body: JSON.stringify(ctx),
+              body: JSON.stringify(ctx.handshakeData),
             });
             const result = (await response.json()) as AnyObject;
             if (result.__status === "error" || result.status !== 200) {
@@ -345,13 +345,18 @@ export default class RestController {
             );
 
             for (const communicationType of ctx.communicationTypes) {
+              // TODO: Should be done in other situations as well
               emit("meta.fetch.service_communication_established", {
-                serviceInstanceId: ctx.serviceInstanceId,
-                serviceInstanceClientId:
-                  Cadenza.serviceRegistry.serviceInstanceId,
-                communicationType,
+                data: {
+                  serviceInstanceId: ctx.serviceInstanceId,
+                  serviceInstanceClientId:
+                    Cadenza.serviceRegistry.serviceInstanceId,
+                  communicationType,
+                },
               });
             }
+
+            return true;
           },
           "Sends handshake request",
           {
@@ -459,15 +464,26 @@ export default class RestController {
           .emits("meta.fetch.status_checked")
           .emitsOnFail("meta.fetch.status_check_failed");
 
-        emit(`meta.fetch.handshake_requested:${serviceInstanceId}`, {
-          ...ctx,
-          // JWT token...
-        });
-
         return true;
       },
       "Manages REST client requests as fallback",
     )
+      .then(
+        Cadenza.createMetaTask(
+          "Prepare handshake",
+          (ctx, emit) => {
+            const { serviceInstanceId, serviceName } = ctx;
+            emit(`meta.fetch.handshake_requested:${serviceInstanceId}`, {
+              serviceInstanceId,
+              serviceName,
+              handshakeData: {
+                // JWT token...
+              },
+            });
+          },
+          "Prepares handshake",
+        ),
+      )
       .doOn("meta.service_registry.dependee_registered")
       .emitsOnFail("meta.fetch.connect_failed");
   }
