@@ -568,6 +568,7 @@ export default class CadenzaService {
     Cadenza.broker.emit("meta.database_init_requested", {
       schema,
       databaseName: options.databaseName,
+      options,
     });
 
     Cadenza.createEphemeralMetaTask("Set database connection", () => {
