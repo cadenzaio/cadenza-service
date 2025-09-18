@@ -1,3 +1,10 @@
+## [1.8.3](https://github.com/cadenzaio/cadenza-service/compare/v1.8.2...v1.8.3) (2025-09-18)
+
+
+### Bug Fixes
+
+* Fixed Dropping of existing stuff. ([e41b681](https://github.com/cadenzaio/cadenza-service/commit/e41b681b78f5c2855b2270d852c24ac33f0064a1))
+
 ## [1.8.2](https://github.com/cadenzaio/cadenza-service/compare/v1.8.1...v1.8.2) (2025-09-18)
 
 
