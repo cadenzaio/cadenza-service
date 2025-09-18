@@ -122,7 +122,6 @@ export default class SignalController {
             service_name: Cadenza.serviceRegistry.serviceName,
             service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
           },
-          transaction: true,
         };
       },
       "",

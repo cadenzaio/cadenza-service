@@ -430,7 +430,7 @@ export default class DatabaseController {
                                       }
                                     }
                                     console.log("DDL applied");
-                                    return ctx;
+                                    return true;
                                   },
                                   "Applies generated DDL to the database",
                                 ).emits("meta.database.setup_done"),
