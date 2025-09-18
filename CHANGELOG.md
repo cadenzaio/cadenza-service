@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/cadenzaio/cadenza-service/compare/v1.6.13...v1.7.0) (2025-09-18)
+
+
+### Features
+
+* Added support for composed foreign keys. ([03863d1](https://github.com/cadenzaio/cadenza-service/commit/03863d1288ba942fea0fb4f87109b63be24a31ab))
+
 ## [1.6.13](https://github.com/cadenzaio/cadenza-service/compare/v1.6.12...v1.6.13) (2025-09-18)
 
 
