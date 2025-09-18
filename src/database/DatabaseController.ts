@@ -234,7 +234,7 @@ export default class DatabaseController {
                       if (field.primary) def += " PRIMARY KEY";
                       if (field.unique) def += " UNIQUE";
                       if (field.default !== undefined)
-                        def += ` DEFAULT ${String(field.default) ?? "''"}`;
+                        def += ` DEFAULT ${field.default === "" ? "''" : String(field.default)}`;
                       if (field.required && !field.nullable) def += " NOT NULL";
                       if (field.nullable) def += " NULL";
                       if (field.generated)
@@ -433,7 +433,7 @@ export default class DatabaseController {
     for (const [tableName, table] of Object.entries(schema.tables)) {
       for (const field of Object.values(table.fields)) {
         if (field.references) {
-          const [refTable] = field.references.split("."); // Extract referenced table
+          const [refTable] = field.references.split("("); // Extract referenced table
           if (refTable !== tableName && allTables.includes(refTable)) {
             graph.get(refTable)?.add(tableName); // refTable depends on tableName
           }
