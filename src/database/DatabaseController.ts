@@ -264,7 +264,7 @@ export default class DatabaseController {
                     if (table.indexes) {
                       table.indexes.forEach((fields: string[]) => {
                         ddl.push(
-                          `CREATE INDEX idx_${tableName}_${fields.join("_")} ON ${tableName} (${fields.join(", ")});`,
+                          `CREATE INDEX IF NOT EXISTS idx_${tableName}_${fields.join("_")} ON ${tableName} (${fields.join(", ")});`,
                         );
                       });
                     }
@@ -279,6 +279,7 @@ export default class DatabaseController {
                           table.uniqueConstraints.forEach(
                             (fields: string[]) => {
                               ddl.push(
+                                `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS unique_${tableName}_${fields.join("_")};`,
                                 `ALTER TABLE ${tableName} ADD CONSTRAINT unique_${tableName}_${fields.join("_")} UNIQUE (${fields.join(", ")});`,
                               );
                             },
