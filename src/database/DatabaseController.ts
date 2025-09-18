@@ -477,6 +477,8 @@ export default class DatabaseController {
       }
     }
 
+    sorted.reverse();
+
     console.log("sorted tables", sorted, "has cycles", hasCycles);
 
     return { ...ctx, sortedTables: sorted, hasCycles };
