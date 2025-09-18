@@ -917,7 +917,7 @@ export default class DatabaseController {
     queryFunction: (tableName: string, context: AnyObject) => Promise<any>,
     options: ServerOptions,
   ) {
-    const defaultSignal = `${tableName}.${op}`;
+    // const defaultSignal = `${tableName}.${op}`;
     Cadenza.createTask(
       `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableName.charAt(0).toUpperCase() + tableName.slice(1)}`,
       async (context, emit) => {
@@ -985,13 +985,11 @@ export default class DatabaseController {
           },
         },
       },
-    )
-      .doOn(
-        ...(table.customSignals?.triggers?.[op]?.map((signal: any) => {
-          return typeof signal === "string" ? signal : signal.signal;
-        }) ?? []),
-      )
-      .emits(defaultSignal);
+    ).doOn(
+      ...(table.customSignals?.triggers?.[op]?.map((signal: any) => {
+        return typeof signal === "string" ? signal : signal.signal;
+      }) ?? []),
+    );
     console.log("Created database task", op, tableName);
   }
 }
