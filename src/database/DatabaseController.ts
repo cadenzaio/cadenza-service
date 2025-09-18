@@ -240,8 +240,7 @@ export default class DatabaseController {
                       if (field.generated)
                         def += ` GENERATED ALWAYS AS ${field.generated.toUpperCase()} STORED`;
                       if (field.references)
-                        // TODO "FOREIGN KEY (foo_id, created_on) REFERENCES foo (id, created_on)", for composite primary keys
-                        def += ` REFERENCES ${field.references} ON DELETE ${field.onDelete || "NO_ACTION"}`;
+                        def += ` REFERENCES ${field.references} ON DELETE ${field.onDelete || "DO NOTHING"}`;
                       if (field.encrypted) def += " ENCRYPTED"; // Pseudo, handle via app-side
 
                       if (field.constraints?.check) {
@@ -251,7 +250,13 @@ export default class DatabaseController {
                     })
                     .join(", ");
 
-                  let sql = `CREATE TABLE IF NOT EXISTS ${tableName} (${fieldDefs})`;
+                  let sql = "";
+                  if (schema.dropExisting) {
+                    sql = `DROP TABLE IF EXISTS ${tableName};`;
+                    ddl.push(sql);
+                  }
+
+                  sql = `CREATE TABLE IF NOT EXISTS ${tableName} (${fieldDefs})`;
                   // if (table.meta?.appendOnly) { // TODO Add prevent_context_modification() function
                   //   sql += `;\nCREATE TRIGGER prevent_modification BEFORE UPDATE OR DELETE ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION prevent_context_modification();`;
                   // }

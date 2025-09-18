@@ -129,5 +129,6 @@ export interface SchemaDefinition {
     defaultEncoding?: "utf8" | "base64";
     autoIndex?: boolean;
     relationsVersion?: number;
+    dropExisting?: boolean;
   };
 }
