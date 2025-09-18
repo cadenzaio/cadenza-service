@@ -1,3 +1,10 @@
+## [1.6.13](https://github.com/cadenzaio/cadenza-service/compare/v1.6.12...v1.6.13) (2025-09-18)
+
+
+### Bug Fixes
+
+* fixed adding existing constraints. ([d4bedf9](https://github.com/cadenzaio/cadenza-service/commit/d4bedf97c2f2393ab8e75761ea3b406707a6c295))
+
 ## [1.6.12](https://github.com/cadenzaio/cadenza-service/compare/v1.6.11...v1.6.12) (2025-09-18)
 
 
