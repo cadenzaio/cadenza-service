@@ -1,3 +1,10 @@
+## [1.9.9](https://github.com/cadenzaio/cadenza-service/compare/v1.9.8...v1.9.9) (2025-09-18)
+
+
+### Bug Fixes
+
+* Reversed subMeta. added context to errors. ([d6df30a](https://github.com/cadenzaio/cadenza-service/commit/d6df30ac22b4f0789d288117f3d75d957b5bab44))
+
 ## [1.9.8](https://github.com/cadenzaio/cadenza-service/compare/v1.9.7...v1.9.8) (2025-09-18)
 
 
