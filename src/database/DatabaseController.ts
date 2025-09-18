@@ -522,6 +522,8 @@ export default class DatabaseController {
                                           this.deleteFunction.bind(this),
                                           options,
                                         );
+
+                                        return true;
                                       },
                                       "Generates auto-tasks for database schema",
                                     ).then(
