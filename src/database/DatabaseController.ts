@@ -951,6 +951,12 @@ export default class DatabaseController {
         delete context.limit;
         delete context.offset;
 
+        console.log(
+          "EXECUTED",
+          `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableName.charAt(0).toUpperCase() + tableName.slice(1)}`,
+          context,
+        );
+
         return context;
       },
       `Auto-generated ${op} task for ${tableName}`,
