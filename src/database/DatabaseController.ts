@@ -314,7 +314,7 @@ export default class DatabaseController {
                                     (row: any[]) =>
                                       `('${row.map((value) => (value === undefined ? "NULL" : value)).join("', '")}')`, // TODO: handle non string data
                                   )
-                                  .join(", ")};`,
+                                  .join(", ")} ON CONFLICT DO NOTHING;`,
                               );
                             }
 
