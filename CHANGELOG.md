@@ -1,3 +1,10 @@
+## [1.8.2](https://github.com/cadenzaio/cadenza-service/compare/v1.8.1...v1.8.2) (2025-09-18)
+
+
+### Bug Fixes
+
+* Fixed composed primary key generation. ([18b4a70](https://github.com/cadenzaio/cadenza-service/commit/18b4a703ba409d3ed6d959c5952816274a7e0150))
+
 ## [1.8.1](https://github.com/cadenzaio/cadenza-service/compare/v1.8.0...v1.8.1) (2025-09-18)
 
 
