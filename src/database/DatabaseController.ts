@@ -179,48 +179,15 @@ export default class DatabaseController {
                 this.splitTables.bind(this),
                 "Generates DDL for database schema",
               ).then(
-                Cadenza.createMetaTask(
-                  "Generate tasks",
-                  (ctx) => {
-                    const { table, tableName, options } = ctx;
-                    console.log(tableName, options);
-
-                    this.createDatabaseTask(
-                      "query",
-                      tableName,
-                      table,
-                      this.queryFunction.bind(this),
-                      options,
-                    );
-
-                    this.createDatabaseTask(
-                      "insert",
-                      tableName,
-                      table,
-                      this.insertFunction.bind(this),
-                      options,
-                    );
-
-                    this.createDatabaseTask(
-                      "update",
-                      tableName,
-                      table,
-                      this.updateFunction.bind(this),
-                      options,
-                    );
-
-                    this.createDatabaseTask(
-                      "delete",
-                      tableName,
-                      table,
-                      this.deleteFunction.bind(this),
-                      options,
-                    );
-                  },
-                  "Generates auto-tasks for database schema",
-                ),
                 Cadenza.createMetaTask("Generate DDL from table", (ctx) => {
-                  const { ddl, table, tableName, schema, options } = ctx;
+                  const {
+                    ddl,
+                    table,
+                    tableName,
+                    schema,
+                    options,
+                    sortedTables,
+                  } = ctx;
                   const fieldDefs = Object.entries(table.fields)
                     .map((value) => {
                       const [fieldName, field] = value as [
@@ -264,10 +231,24 @@ export default class DatabaseController {
 
                   ddl.push(sql);
 
-                  return { ddl, table, tableName, schema, options };
+                  return {
+                    ddl,
+                    table,
+                    tableName,
+                    schema,
+                    options,
+                    sortedTables,
+                  };
                 }).then(
                   Cadenza.createMetaTask("Generate index DDL", (ctx) => {
-                    const { ddl, table, tableName, schema, options } = ctx;
+                    const {
+                      ddl,
+                      table,
+                      tableName,
+                      schema,
+                      options,
+                      sortedTables,
+                    } = ctx;
                     if (table.indexes) {
                       table.indexes.forEach((fields: string[]) => {
                         ddl.push(
@@ -276,12 +257,26 @@ export default class DatabaseController {
                       });
                     }
 
-                    return { ddl, table, tableName, schema, options };
+                    return {
+                      ddl,
+                      table,
+                      tableName,
+                      schema,
+                      options,
+                      sortedTables,
+                    };
                   }).then(
                     Cadenza.createMetaTask(
                       "Generate primary key ddl",
                       (ctx) => {
-                        const { ddl, table, tableName, schema, options } = ctx;
+                        const {
+                          ddl,
+                          table,
+                          tableName,
+                          schema,
+                          options,
+                          sortedTables,
+                        } = ctx;
                         if (table.primaryKey) {
                           ddl.push(
                             `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS unique_${tableName}_${table.primaryKey.join("_")};`, // TODO: should be cascade?
@@ -289,14 +284,27 @@ export default class DatabaseController {
                           );
                         }
 
-                        return { ddl, table, tableName, schema, options };
+                        return {
+                          ddl,
+                          table,
+                          tableName,
+                          schema,
+                          options,
+                          sortedTables,
+                        };
                       },
                     ).then(
                       Cadenza.createMetaTask(
                         "Generate unique index DDL",
                         (ctx) => {
-                          const { ddl, table, tableName, schema, options } =
-                            ctx;
+                          const {
+                            ddl,
+                            table,
+                            tableName,
+                            schema,
+                            options,
+                            sortedTables,
+                          } = ctx;
                           if (table.uniqueConstraints) {
                             table.uniqueConstraints.forEach(
                               (fields: string[]) => {
@@ -308,14 +316,27 @@ export default class DatabaseController {
                             );
                           }
 
-                          return { ddl, table, tableName, schema, options };
+                          return {
+                            ddl,
+                            table,
+                            tableName,
+                            schema,
+                            options,
+                            sortedTables,
+                          };
                         },
                       ).then(
                         Cadenza.createMetaTask(
                           "Generate foreign key DDL",
                           (ctx) => {
-                            const { ddl, table, tableName, schema, options } =
-                              ctx;
+                            const {
+                              ddl,
+                              table,
+                              tableName,
+                              schema,
+                              options,
+                              sortedTables,
+                            } = ctx;
                             if (table.foreignKeys) {
                               for (const foreignKey of table.foreignKeys as {
                                 tableName: string;
@@ -333,14 +354,27 @@ export default class DatabaseController {
                                 );
                               }
                             }
-                            return { ddl, table, tableName, schema, options };
+                            return {
+                              ddl,
+                              table,
+                              tableName,
+                              schema,
+                              options,
+                              sortedTables,
+                            };
                           },
                         ).then(
                           Cadenza.createMetaTask(
                             "Generate trigger DDL",
                             (ctx) => {
-                              const { ddl, table, tableName, schema, options } =
-                                ctx;
+                              const {
+                                ddl,
+                                table,
+                                tableName,
+                                schema,
+                                options,
+                                sortedTables,
+                              } = ctx;
                               if (table.triggers) {
                                 for (const [
                                   triggerName,
@@ -354,7 +388,14 @@ export default class DatabaseController {
                                   );
                                 }
                               }
-                              return { ddl, table, tableName, schema, options };
+                              return {
+                                ddl,
+                                table,
+                                tableName,
+                                schema,
+                                options,
+                                sortedTables,
+                              };
                             },
                           ).then(
                             Cadenza.createMetaTask(
@@ -366,6 +407,7 @@ export default class DatabaseController {
                                   tableName,
                                   schema,
                                   options,
+                                  sortedTables,
                                 } = ctx;
                                 if (table.initialData) {
                                   ddl.push(
@@ -392,6 +434,7 @@ export default class DatabaseController {
                                   tableName,
                                   schema,
                                   options,
+                                  sortedTables,
                                 };
                               },
                             ).then(
@@ -410,6 +453,8 @@ export default class DatabaseController {
                                     options: joinedContexts[0].options,
                                     table: joinedContexts[0].table,
                                     tableName: joinedContexts[0].tableName,
+                                    sortedTables:
+                                      joinedContexts[0].sortedTables,
                                   };
                                 },
                               ).then(
@@ -434,7 +479,56 @@ export default class DatabaseController {
                                     return true;
                                   },
                                   "Applies generated DDL to the database",
-                                ).emits("meta.database.setup_done"),
+                                )
+                                  .then(
+                                    Cadenza.createMetaTask(
+                                      "Split schema into tables for task creation",
+                                      this.splitTables.bind(this),
+                                      "Splits schema into tables for task creation",
+                                    ).then(
+                                      Cadenza.createMetaTask(
+                                        "Generate tasks",
+                                        (ctx) => {
+                                          const { table, tableName, options } =
+                                            ctx;
+
+                                          this.createDatabaseTask(
+                                            "query",
+                                            tableName,
+                                            table,
+                                            this.queryFunction.bind(this),
+                                            options,
+                                          );
+
+                                          this.createDatabaseTask(
+                                            "insert",
+                                            tableName,
+                                            table,
+                                            this.insertFunction.bind(this),
+                                            options,
+                                          );
+
+                                          this.createDatabaseTask(
+                                            "update",
+                                            tableName,
+                                            table,
+                                            this.updateFunction.bind(this),
+                                            options,
+                                          );
+
+                                          this.createDatabaseTask(
+                                            "delete",
+                                            tableName,
+                                            table,
+                                            this.deleteFunction.bind(this),
+                                            options,
+                                          );
+                                        },
+                                        "Generates auto-tasks for database schema",
+                                      ),
+                                    ),
+                                  )
+                                  .emits("meta.database.setup_done"),
                               ),
                             ),
                           ),
@@ -580,7 +674,7 @@ export default class DatabaseController {
     const { sortedTables, schema, options = {} } = ctx;
     for (const tableName of sortedTables) {
       const table = schema.tables[tableName];
-      yield { ddl: [], table, tableName, schema, options };
+      yield { ddl: [], table, tableName, schema, options, sortedTables };
     }
   }
 
@@ -938,7 +1032,7 @@ export default class DatabaseController {
           }
         }
 
-        context = await queryFunction(tableName, context.querydata ?? context);
+        context = await queryFunction(tableName, context.queryData ?? context);
 
         for (const signal of table.customSignals?.emissions?.[op] ??
           ([] as any[])) {
