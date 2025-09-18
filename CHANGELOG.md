@@ -1,3 +1,10 @@
+## [1.9.15](https://github.com/cadenzaio/cadenza-service/compare/v1.9.14...v1.9.15) (2025-09-18)
+
+
+### Bug Fixes
+
+* rearranged database init order again ([78e5bc3](https://github.com/cadenzaio/cadenza-service/commit/78e5bc38a58451c19191cb0d4595a0376f485817))
+
 ## [1.9.14](https://github.com/cadenzaio/cadenza-service/compare/v1.9.13...v1.9.14) (2025-09-18)
 
 
