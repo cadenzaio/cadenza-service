@@ -1,3 +1,10 @@
+## [1.9.16](https://github.com/cadenzaio/cadenza-service/compare/v1.9.15...v1.9.16) (2025-09-18)
+
+
+### Bug Fixes
+
+* small fix ([80c0a7b](https://github.com/cadenzaio/cadenza-service/commit/80c0a7b61b32935901902b7ecfe21c8c3b404dfa))
+
 ## [1.9.15](https://github.com/cadenzaio/cadenza-service/compare/v1.9.14...v1.9.15) (2025-09-18)
 
 
