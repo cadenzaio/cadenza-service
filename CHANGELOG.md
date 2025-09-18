@@ -1,3 +1,10 @@
+## [1.9.10](https://github.com/cadenzaio/cadenza-service/compare/v1.9.9...v1.9.10) (2025-09-18)
+
+
+### Bug Fixes
+
+* better logging ([3670a82](https://github.com/cadenzaio/cadenza-service/commit/3670a8257852f48acbe9bec008704d07a53a935d))
+
 ## [1.9.9](https://github.com/cadenzaio/cadenza-service/compare/v1.9.8...v1.9.9) (2025-09-18)
 
 
