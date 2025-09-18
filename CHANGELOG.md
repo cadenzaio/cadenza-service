@@ -1,3 +1,10 @@
+## [1.9.13](https://github.com/cadenzaio/cadenza-service/compare/v1.9.12...v1.9.13) (2025-09-18)
+
+
+### Bug Fixes
+
+* added options to the data init ([7d16043](https://github.com/cadenzaio/cadenza-service/commit/7d1604312373029bb3fb5534accc03719803cd80))
+
 ## [1.9.12](https://github.com/cadenzaio/cadenza-service/compare/v1.9.11...v1.9.12) (2025-09-18)
 
 
