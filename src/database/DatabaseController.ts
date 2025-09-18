@@ -947,6 +947,12 @@ export default class DatabaseController {
           emit(signal.signal ?? signal, context);
         }
 
+        console.log(
+          "EXECUTED",
+          `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableName.charAt(0).toUpperCase() + tableName.slice(1)}`,
+          context,
+        );
+
         delete context.queryData;
         delete context.data;
         delete context.filter;
@@ -955,12 +961,6 @@ export default class DatabaseController {
         delete context.sort;
         delete context.limit;
         delete context.offset;
-
-        console.log(
-          "EXECUTED",
-          `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableName.charAt(0).toUpperCase() + tableName.slice(1)}`,
-          context,
-        );
 
         return context;
       },
@@ -983,7 +983,6 @@ export default class DatabaseController {
               type: "object",
             },
           },
-          required: ["filter"],
         },
       },
     )
