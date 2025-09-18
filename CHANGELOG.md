@@ -1,3 +1,10 @@
+## [1.9.5](https://github.com/cadenzaio/cadenza-service/compare/v1.9.4...v1.9.5) (2025-09-18)
+
+
+### Bug Fixes
+
+* reverted database set up fixes. Updated core package. ([d3f54fb](https://github.com/cadenzaio/cadenza-service/commit/d3f54fb45773039ba8a175447fd353eafea1a623))
+
 ## [1.9.4](https://github.com/cadenzaio/cadenza-service/compare/v1.9.3...v1.9.4) (2025-09-18)
 
 
