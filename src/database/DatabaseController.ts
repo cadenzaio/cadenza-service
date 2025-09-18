@@ -179,45 +179,6 @@ export default class DatabaseController {
                 this.splitTables.bind(this),
                 "Generates DDL for database schema",
               ).then(
-                Cadenza.createMetaTask(
-                  "Generate tasks",
-                  (ctx) => {
-                    const { table, tableName, options } = ctx;
-
-                    this.createDatabaseTask(
-                      "query",
-                      tableName,
-                      table,
-                      this.queryFunction.bind(this),
-                      options,
-                    );
-
-                    this.createDatabaseTask(
-                      "insert",
-                      tableName,
-                      table,
-                      this.insertFunction.bind(this),
-                      options,
-                    );
-
-                    this.createDatabaseTask(
-                      "update",
-                      tableName,
-                      table,
-                      this.updateFunction.bind(this),
-                      options,
-                    );
-
-                    this.createDatabaseTask(
-                      "delete",
-                      tableName,
-                      table,
-                      this.deleteFunction.bind(this),
-                      options,
-                    );
-                  },
-                  "Generates auto-tasks for database schema",
-                ),
                 Cadenza.createMetaTask("Generate DDL from table", (ctx) => {
                   const { ddl, table, tableName, schema, options } = ctx;
                   const fieldDefs = Object.entries(table.fields)
@@ -431,7 +392,47 @@ export default class DatabaseController {
                                     return ctx;
                                   },
                                   "Applies generated DDL to the database",
-                                ).emits("meta.database.setup_done"),
+                                ).then(
+                                  Cadenza.createMetaTask(
+                                    "Generate tasks",
+                                    (ctx) => {
+                                      const { table, tableName, options } = ctx;
+
+                                      this.createDatabaseTask(
+                                        "query",
+                                        tableName,
+                                        table,
+                                        this.queryFunction.bind(this),
+                                        options,
+                                      );
+
+                                      this.createDatabaseTask(
+                                        "insert",
+                                        tableName,
+                                        table,
+                                        this.insertFunction.bind(this),
+                                        options,
+                                      );
+
+                                      this.createDatabaseTask(
+                                        "update",
+                                        tableName,
+                                        table,
+                                        this.updateFunction.bind(this),
+                                        options,
+                                      );
+
+                                      this.createDatabaseTask(
+                                        "delete",
+                                        tableName,
+                                        table,
+                                        this.deleteFunction.bind(this),
+                                        options,
+                                      );
+                                    },
+                                    "Generates auto-tasks for database schema",
+                                  ).emits("meta.database.setup_done"),
+                                ),
                               ),
                             ),
                           ),
