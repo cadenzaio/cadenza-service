@@ -564,7 +564,7 @@ export default class ServiceRegistry {
           ctx.__skipRemoteExecution = true;
         }
 
-        console.log("service creation");
+        console.log("service creation", ctx);
 
         return ctx;
       },

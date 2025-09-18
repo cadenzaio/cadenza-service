@@ -493,6 +493,8 @@ export default class CadenzaService {
       });
     });
 
+    console.log("Creating service...");
+
     Cadenza.broker.emit("meta.create_service_requested", {
       data: {
         name: serviceName,
@@ -511,6 +513,7 @@ export default class CadenzaService {
     });
 
     Cadenza.createEphemeralMetaTask("Initiate controllers", () => {
+      console.log("Initiating controllers...");
       GraphMetadataController.instance;
     })
       .doOn("meta.service_registry.instance_inserted")
@@ -565,6 +568,7 @@ export default class CadenzaService {
     });
 
     Cadenza.createEphemeralMetaTask("Set database connection", () => {
+      console.log("Database service created");
       this.createCadenzaService(name, description, options);
     }).doOn("meta.database.setup_done");
   }
