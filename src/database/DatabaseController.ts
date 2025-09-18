@@ -183,6 +183,7 @@ export default class DatabaseController {
                   "Generate tasks",
                   (ctx) => {
                     const { table, tableName, options } = ctx;
+                    console.log(tableName, options);
 
                     this.createDatabaseTask(
                       "query",

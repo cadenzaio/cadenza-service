@@ -435,6 +435,8 @@ export default class CadenzaService {
     Cadenza.validateName(serviceName);
     this.validateServiceName(serviceName);
 
+    this.serviceRegistry.serviceName = serviceName;
+
     options = {
       loadBalance: true,
       useSocket: true,
@@ -540,6 +542,7 @@ export default class CadenzaService {
     if (this.serviceCreated) return;
     this.bootstrap();
     DatabaseController.instance; // Ensure DB controller is created
+    this.serviceRegistry.serviceName = name;
 
     options = {
       loadBalance: true,
