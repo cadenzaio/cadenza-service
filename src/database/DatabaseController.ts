@@ -251,9 +251,9 @@ export default class DatabaseController {
                     .join(", ");
 
                   let sql = `CREATE TABLE IF NOT EXISTS ${tableName} (${fieldDefs})`;
-                  if (table.meta?.appendOnly) {
-                    sql += `;\nCREATE TRIGGER prevent_modification BEFORE UPDATE OR DELETE ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION prevent_context_modification();`;
-                  }
+                  // if (table.meta?.appendOnly) { // TODO Add prevent_context_modification() function
+                  //   sql += `;\nCREATE TRIGGER prevent_modification BEFORE UPDATE OR DELETE ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION prevent_context_modification();`;
+                  // }
 
                   ddl.push(sql);
 
