@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/cadenzaio/cadenza-service/compare/v1.8.4...v1.9.0) (2025-09-18)
+
+
+### Features
+
+* Dynamic remote signal handling. ([80d513c](https://github.com/cadenzaio/cadenza-service/commit/80d513c7b1ce1899e28c861d902f1f8e4168018d))
+
 ## [1.8.4](https://github.com/cadenzaio/cadenza-service/compare/v1.8.3...v1.8.4) (2025-09-18)
 
 
