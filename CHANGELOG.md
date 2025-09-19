@@ -1,3 +1,10 @@
+## [1.9.36](https://github.com/cadenzaio/cadenza-service/compare/v1.9.35...v1.9.36) (2025-09-19)
+
+
+### Bug Fixes
+
+* better service bootstrap and better error handling. Updated core package. ([4d61ea8](https://github.com/cadenzaio/cadenza-service/commit/4d61ea8a24ef057c919b194466c3a8c9eb206930))
+
 ## [1.9.35](https://github.com/cadenzaio/cadenza-service/compare/v1.9.34...v1.9.35) (2025-09-19)
 
 
