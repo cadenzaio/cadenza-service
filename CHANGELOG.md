@@ -1,3 +1,10 @@
+## [1.9.22](https://github.com/cadenzaio/cadenza-service/compare/v1.9.21...v1.9.22) (2025-09-19)
+
+
+### Bug Fixes
+
+* Trying to add retry to database tasks. ([6596a2b](https://github.com/cadenzaio/cadenza-service/commit/6596a2b81b9666ba93ecdc5984af195c4bd6e523))
+
 ## [1.9.21](https://github.com/cadenzaio/cadenza-service/compare/v1.9.20...v1.9.21) (2025-09-19)
 
 
