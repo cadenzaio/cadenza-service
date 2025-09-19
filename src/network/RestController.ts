@@ -19,6 +19,9 @@ export default class RestController {
   }
 
   constructor() {
+    Cadenza.registry.getTaskByName.doOn("meta.rest.delegation_requested");
+    Cadenza.registry.getRoutineByName.doOn("meta.rest.delegation_requested");
+
     Cadenza.createMetaRoutine(
       "RestServer",
       [
