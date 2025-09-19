@@ -437,8 +437,6 @@ export default class CadenzaService {
 
     this.serviceRegistry.serviceName = serviceName;
 
-    GraphMetadataController.instance;
-
     options = {
       loadBalance: true,
       useSocket: true,
@@ -515,6 +513,12 @@ export default class CadenzaService {
       __retryCount: options.retryCount,
       __cadenzaDBConnect: options.cadenzaDB?.connect,
     });
+
+    this.createEphemeralMetaTask("Handle service setup completion", (ctx) => {
+      GraphMetadataController.instance;
+      // TODO: add all tasks, routines and signals to database...
+      return true;
+    }).doOn("meta.service_registry.instance_inserted");
 
     this.serviceCreated = true;
   }
