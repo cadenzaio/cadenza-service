@@ -1054,7 +1054,7 @@ export default class DatabaseController {
         console.log(
           "EXECUTED",
           `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableName.charAt(0).toUpperCase() + tableName.slice(1)}`,
-          context,
+          JSON.stringify(context),
         );
 
         delete context.queryData;
