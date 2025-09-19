@@ -1,3 +1,10 @@
+## [1.9.39](https://github.com/cadenzaio/cadenza-service/compare/v1.9.38...v1.9.39) (2025-09-19)
+
+
+### Bug Fixes
+
+* attached delegation to runner. ([384abb5](https://github.com/cadenzaio/cadenza-service/commit/384abb54dfb33707e66a01d32548d3b866b86dd2))
+
 ## [1.9.38](https://github.com/cadenzaio/cadenza-service/compare/v1.9.37...v1.9.38) (2025-09-19)
 
 
