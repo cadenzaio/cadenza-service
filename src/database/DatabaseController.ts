@@ -1077,7 +1077,6 @@ export default class DatabaseController {
         retryCount: 5,
         retryDelay: 100,
         retryDelayFactor: 1.3,
-        concurrency: 50,
         validateInputContext: false, // TODO
         getTagCallback: (
           context?: AnyObject, // TODO more granular tags
