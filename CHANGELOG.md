@@ -1,3 +1,10 @@
+## [1.9.27](https://github.com/cadenzaio/cadenza-service/compare/v1.9.26...v1.9.27) (2025-09-19)
+
+
+### Bug Fixes
+
+* Changed bootstrap order and added better logging. ([59d880a](https://github.com/cadenzaio/cadenza-service/commit/59d880afb8cca805e092224053884186b2f484d6))
+
 ## [1.9.26](https://github.com/cadenzaio/cadenza-service/compare/v1.9.25...v1.9.26) (2025-09-19)
 
 
