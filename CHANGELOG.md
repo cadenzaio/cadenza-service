@@ -1,3 +1,10 @@
+## [1.9.26](https://github.com/cadenzaio/cadenza-service/compare/v1.9.25...v1.9.26) (2025-09-19)
+
+
+### Bug Fixes
+
+* Fixed update params indices ([fd9ca8e](https://github.com/cadenzaio/cadenza-service/commit/fd9ca8e13b2af8e0592f9a0525fc8b4bbc9ef29c))
+
 ## [1.9.25](https://github.com/cadenzaio/cadenza-service/compare/v1.9.24...v1.9.25) (2025-09-19)
 
 
