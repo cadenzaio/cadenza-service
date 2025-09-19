@@ -1,3 +1,10 @@
+## [1.9.32](https://github.com/cadenzaio/cadenza-service/compare/v1.9.31...v1.9.32) (2025-09-19)
+
+
+### Bug Fixes
+
+* shortened logs ([560fa84](https://github.com/cadenzaio/cadenza-service/commit/560fa84c7bacbbee24739cd7a2e86b9e88e55b22))
+
 ## [1.9.31](https://github.com/cadenzaio/cadenza-service/compare/v1.9.30...v1.9.31) (2025-09-19)
 
 
