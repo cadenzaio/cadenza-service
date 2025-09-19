@@ -1,3 +1,10 @@
+## [1.9.41](https://github.com/cadenzaio/cadenza-service/compare/v1.9.40...v1.9.41) (2025-09-19)
+
+
+### Bug Fixes
+
+* fixed forwarding delegation fo runner. ([469b9a4](https://github.com/cadenzaio/cadenza-service/commit/469b9a494c8d3f2fdbf984f9d6b04ec6ed826912))
+
 ## [1.9.40](https://github.com/cadenzaio/cadenza-service/compare/v1.9.39...v1.9.40) (2025-09-19)
 
 
