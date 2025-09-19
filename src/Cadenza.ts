@@ -437,6 +437,8 @@ export default class CadenzaService {
 
     this.serviceRegistry.serviceName = serviceName;
 
+    GraphMetadataController.instance;
+
     options = {
       loadBalance: true,
       useSocket: true,
@@ -513,13 +515,6 @@ export default class CadenzaService {
       __retryCount: options.retryCount,
       __cadenzaDBConnect: options.cadenzaDB?.connect,
     });
-
-    Cadenza.createEphemeralMetaTask("Initiate controllers", () => {
-      console.log("Initiating controllers...");
-      GraphMetadataController.instance;
-    })
-      .doOn("meta.service_registry.instance_inserted")
-      .emits("meta.process_signal_queue_requested");
 
     this.serviceCreated = true;
   }

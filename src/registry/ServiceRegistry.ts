@@ -554,7 +554,10 @@ export default class ServiceRegistry {
             return true;
           },
           "Sets service instance id after insertion",
-        ).emits("meta.service_registry.instance_inserted"),
+        ).emits(
+          "meta.service_registry.instance_inserted",
+          "meta.process_signal_queue_requested",
+        ),
       );
 
     Cadenza.createMetaTask(
