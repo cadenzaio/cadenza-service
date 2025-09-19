@@ -1,3 +1,10 @@
+## [1.9.24](https://github.com/cadenzaio/cadenza-service/compare/v1.9.23...v1.9.24) (2025-09-19)
+
+
+### Bug Fixes
+
+* Fixed throttling for database tasks and updated packages. ([12a60fc](https://github.com/cadenzaio/cadenza-service/commit/12a60fc3807e22d4b04fa25e3678efe715609f27))
+
 ## [1.9.23](https://github.com/cadenzaio/cadenza-service/compare/v1.9.22...v1.9.23) (2025-09-19)
 
 
