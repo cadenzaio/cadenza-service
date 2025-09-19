@@ -1020,8 +1020,12 @@ export default class DatabaseController {
     options: ServerOptions,
   ) {
     // const defaultSignal = `${tableName}.${op}`;
+    const tableNameFormatted = tableName
+      .split("_")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join("");
     const task = Cadenza.createThrottledTask(
-      `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableName.charAt(0).toUpperCase() + tableName.slice(1)}`,
+      `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableNameFormatted}`,
       async (context, emit) => {
         const triggerConditions: any | undefined =
           table.customSignals?.triggers?.query?.filter(

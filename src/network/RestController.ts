@@ -118,7 +118,7 @@ export default class RestController {
               // TODO: add body validation based on profile
 
               app.post("/handshake", (req: Request, res: Response) => {
-                // TODO
+                console.log("handshake", req.body);
                 Cadenza.broker.emit("meta.rest.handshake", req.body);
                 res.send({ __status: "success" });
               });
@@ -126,6 +126,7 @@ export default class RestController {
               app.post("/delegation", (req: Request, res: Response) => {
                 const ctx = req.body;
                 const routineExecId = ctx.__routineExecId || uuid();
+                console.log("delegation", ctx);
 
                 Cadenza.createEphemeralMetaTask(
                   "Resolve delegation",
@@ -163,6 +164,7 @@ export default class RestController {
 
               app.post("/signal", (req: Request, res: Response) => {
                 const ctx = req.body;
+                console.log("signal", ctx);
                 res.send({ __status: "success" });
                 Cadenza.broker.emit(ctx.__signalName, ctx.__context);
               });
@@ -327,12 +329,14 @@ export default class RestController {
         Cadenza.createMetaTask(
           "Send Handshake",
           async (ctx, emit) => {
+            console.log("Sending handshake", ctx);
             const response = await fetch(`${URL}/handshake`, {
               method: "POST",
               body: JSON.stringify(ctx.handshakeData),
             });
             const result = (await response.json()) as AnyObject;
-            if (result.__status === "error" || result.status !== 200) {
+            console.log("Handshake result", result);
+            if (result.__status === "error") {
               throw new Error(
                 result.__error ??
                   `Failed to connect to service ${serviceName} ${ctx.serviceInstanceId}`,
@@ -472,10 +476,11 @@ export default class RestController {
         Cadenza.createMetaTask(
           "Prepare handshake",
           (ctx, emit) => {
-            const { serviceInstanceId, serviceName } = ctx;
+            const { serviceInstanceId, serviceName, communicationTypes } = ctx;
             emit(`meta.fetch.handshake_requested:${serviceInstanceId}`, {
               serviceInstanceId,
               serviceName,
+              communicationTypes,
               handshakeData: {
                 // JWT token...
               },
