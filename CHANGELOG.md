@@ -1,3 +1,10 @@
+## [1.9.28](https://github.com/cadenzaio/cadenza-service/compare/v1.9.27...v1.9.28) (2025-09-19)
+
+
+### Bug Fixes
+
+* Fixed issue with service instance setup. More logging ([c34c27e](https://github.com/cadenzaio/cadenza-service/commit/c34c27eba874abbb2cb6433f093484aefa0d3107))
+
 ## [1.9.27](https://github.com/cadenzaio/cadenza-service/compare/v1.9.26...v1.9.27) (2025-09-19)
 
 
