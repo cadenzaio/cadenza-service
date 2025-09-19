@@ -351,6 +351,11 @@ export default class RestController {
           "Send Handshake",
           async (ctx, emit) => {
             console.log("Sending handshake", ctx);
+            const formData = new FormData();
+            formData.append(
+              "handshakeData",
+              JSON.stringify({ ...ctx.handshakeData }),
+            );
             const response = await fetch(`${URL}/handshake`, {
               method: "POST",
               body: JSON.stringify(ctx.handshakeData),
@@ -403,9 +408,11 @@ export default class RestController {
 
             let resultContext;
             try {
+              const formData = new FormData();
+              formData.append("context", JSON.stringify(ctx));
               const response = await fetch(`${URL}/delegation`, {
                 method: "POST",
-                body: JSON.stringify(ctx),
+                body: formData,
               });
               resultContext = await response.json();
             } catch (e) {
@@ -438,9 +445,11 @@ export default class RestController {
 
             let response;
             try {
+              const formData = new FormData();
+              formData.append("context", JSON.stringify(ctx));
               response = await fetch(`${URL}/signal`, {
                 method: "POST",
-                body: JSON.stringify(ctx),
+                body: formData,
               });
               response = (await response.json()) as AnyObject;
 

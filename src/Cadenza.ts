@@ -74,7 +74,6 @@ export default class CadenzaService {
     this.metaRunner = Cadenza.metaRunner;
     this.registry = Cadenza.registry;
     this.serviceRegistry = ServiceRegistry.instance;
-    SignalController.instance;
     RestController.instance;
     SocketController.instance;
     console.log("BOOTSTRAPPED");
@@ -524,6 +523,7 @@ export default class CadenzaService {
     }
 
     this.createEphemeralMetaTask("Handle service setup completion", (ctx) => {
+      SignalController.instance;
       GraphMetadataController.instance;
       // TODO: add all tasks, routines and signals to database...
       return true;
