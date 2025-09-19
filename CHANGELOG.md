@@ -1,3 +1,10 @@
+## [1.9.40](https://github.com/cadenzaio/cadenza-service/compare/v1.9.39...v1.9.40) (2025-09-19)
+
+
+### Bug Fixes
+
+* removed database tasks retry. ([1c94e07](https://github.com/cadenzaio/cadenza-service/commit/1c94e07826fbe0f7eeee04d54c3cb7015057701a))
+
 ## [1.9.39](https://github.com/cadenzaio/cadenza-service/compare/v1.9.38...v1.9.39) (2025-09-19)
 
 
