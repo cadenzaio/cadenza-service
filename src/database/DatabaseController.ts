@@ -863,12 +863,13 @@ export default class DatabaseController {
 
       const resolvedData = await this.resolveNestedData(data, tableName);
       const setClause = Object.entries(resolvedData)
-        .map(([key, value]) => `${key} = $${params.length + 1}`)
+        .map(([key, value]) => `${snakeCase(key)} = $${params.length + 1}`)
         .join(", ");
       const params = Object.values(resolvedData);
       const whereClause = this.buildWhereClause(filter, params);
 
       const sql = `UPDATE ${tableName} SET ${setClause} ${whereClause} RETURNING *`;
+      console.log("update", tableName, sql, params);
       const result = await client.query(sql, params);
       if (transaction) await client.query("COMMIT");
       return {
