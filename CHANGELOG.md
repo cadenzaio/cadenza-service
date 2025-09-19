@@ -1,3 +1,10 @@
+## [1.9.35](https://github.com/cadenzaio/cadenza-service/compare/v1.9.34...v1.9.35) (2025-09-19)
+
+
+### Bug Fixes
+
+* log improvements and fixed handshake. ([3e44983](https://github.com/cadenzaio/cadenza-service/commit/3e44983539a73717f5d1423e311d9b70747ee0bf))
+
 ## [1.9.34](https://github.com/cadenzaio/cadenza-service/compare/v1.9.33...v1.9.34) (2025-09-19)
 
 
