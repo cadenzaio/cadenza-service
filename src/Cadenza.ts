@@ -522,12 +522,18 @@ export default class CadenzaService {
       Cadenza.broker.emit("meta.create_service_requested", initContext);
     }
 
-    this.createEphemeralMetaTask("Handle service setup completion", (ctx) => {
-      SignalController.instance;
-      GraphMetadataController.instance;
-      // TODO: add all tasks, routines and signals to database...
-      return true;
-    }).doOn("meta.service_registry.instance_inserted");
+    this.createEphemeralMetaTask(
+      "Handle service setup completion",
+      (ctx, emit) => {
+        SignalController.instance;
+        GraphMetadataController.instance;
+        // TODO: add all tasks, routines and signals to database...
+        emit("meta.register_all_routines", {});
+        emit("meta.register_all_tasks", {});
+        emit("meta.register_all_signals", {});
+        return true;
+      },
+    ).doOn("meta.service_registry.instance_inserted");
 
     this.serviceCreated = true;
   }

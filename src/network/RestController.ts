@@ -119,8 +119,8 @@ export default class RestController {
 
               app.post("/handshake", (req: Request, res: Response) => {
                 try {
-                  console.log("handshake", req);
-                  Cadenza.broker.emit("meta.rest.handshake", req);
+                  console.log("handshake", req.body);
+                  Cadenza.broker.emit("meta.rest.handshake", req.body);
                   res.send({ __status: "success" });
                 } catch (e) {
                   console.error("Error in handshake", e);
@@ -132,7 +132,7 @@ export default class RestController {
                 let routineExecId;
                 let ctx;
                 try {
-                  ctx = req as any;
+                  ctx = req.body;
                   routineExecId = ctx.__routineExecId || uuid();
                   console.log("delegation", ctx);
                 } catch (e) {
@@ -178,7 +178,7 @@ export default class RestController {
               app.post("/signal", (req: Request, res: Response) => {
                 let ctx;
                 try {
-                  ctx = req as any;
+                  ctx = req.body;
                   console.log("signal", ctx);
                   res.send({ __status: "success" });
                 } catch (e) {
@@ -351,12 +351,10 @@ export default class RestController {
           "Send Handshake",
           async (ctx, emit) => {
             console.log("Sending handshake", ctx);
-            const formData = new FormData();
-            formData.append(
-              "handshakeData",
-              JSON.stringify({ ...ctx.handshakeData }),
-            );
             const response = await fetch(`${URL}/handshake`, {
+              headers: {
+                "Content-Type": "application/json",
+              },
               method: "POST",
               body: JSON.stringify(ctx.handshakeData),
             });
@@ -408,11 +406,12 @@ export default class RestController {
 
             let resultContext;
             try {
-              const formData = new FormData();
-              formData.append("context", JSON.stringify(ctx));
               const response = await fetch(`${URL}/delegation`, {
+                headers: {
+                  "Content-Type": "application/json",
+                },
                 method: "POST",
-                body: formData,
+                body: JSON.stringify(ctx),
               });
               resultContext = await response.json();
             } catch (e) {
@@ -445,11 +444,12 @@ export default class RestController {
 
             let response;
             try {
-              const formData = new FormData();
-              formData.append("context", JSON.stringify(ctx));
               response = await fetch(`${URL}/signal`, {
+                headers: {
+                  "Content-Type": "application/json",
+                },
                 method: "POST",
-                body: formData,
+                body: JSON.stringify(ctx),
               });
               response = (await response.json()) as AnyObject;
 
