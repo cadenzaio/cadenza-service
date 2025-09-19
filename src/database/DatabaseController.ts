@@ -1026,7 +1026,7 @@ export default class DatabaseController {
       .join("");
     const task = Cadenza.createThrottledTask(
       `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableNameFormatted}`,
-      async (context, emit) => {
+      async (context: AnyObject, emit: any) => {
         const triggerConditions: any | undefined =
           table.customSignals?.triggers?.query?.filter(
             (trigger: any) => trigger.condition,
@@ -1080,9 +1080,6 @@ export default class DatabaseController {
       `Auto-generated ${op} task for ${tableName}`,
       {
         isMeta: options.isMeta,
-        retryCount: 5,
-        retryDelay: 100,
-        retryDelayFactor: 1.3,
         validateInputContext: false, // TODO
         inputSchema: {
           // TODO
