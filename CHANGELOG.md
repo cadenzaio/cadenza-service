@@ -1,3 +1,10 @@
+## [1.9.23](https://github.com/cadenzaio/cadenza-service/compare/v1.9.22...v1.9.23) (2025-09-19)
+
+
+### Bug Fixes
+
+* Increased retry count ([910efc3](https://github.com/cadenzaio/cadenza-service/commit/910efc3d001f1eb11d7a9b437cd95458835586d1))
+
 ## [1.9.22](https://github.com/cadenzaio/cadenza-service/compare/v1.9.21...v1.9.22) (2025-09-19)
 
 
