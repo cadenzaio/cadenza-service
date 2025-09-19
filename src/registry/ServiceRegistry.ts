@@ -544,9 +544,9 @@ export default class ServiceRegistry {
           "Setup service",
           (ctx) => {
             const { serviceInstance, data, __useSocket, __retryCount } = ctx;
-            this.serviceInstanceId = data?.id ?? serviceInstance?.id;
+            this.serviceInstanceId = data?.uuid ?? serviceInstance?.uuid;
             this.instances.set(
-              data?.service_name ?? serviceInstance?.serviceName,
+              data?.service_name ?? serviceInstance?.service_name,
               [{ ...(data ?? serviceInstance) }],
             );
             this.useSocket = __useSocket;

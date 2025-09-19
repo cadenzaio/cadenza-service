@@ -1023,7 +1023,7 @@ export default class DatabaseController {
     options: ServerOptions,
   ) {
     // const defaultSignal = `${tableName}.${op}`;
-    Cadenza.createThrottledTask(
+    const task = Cadenza.createThrottledTask(
       `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableName.charAt(0).toUpperCase() + tableName.slice(1)}`,
       async (context, emit) => {
         const triggerConditions: any | undefined =
@@ -1097,6 +1097,11 @@ export default class DatabaseController {
         return typeof signal === "string" ? signal : signal.signal;
       }) ?? []),
     );
-    console.log("Created database task", op, tableName);
+    console.log("Created database task", op, tableName, {
+      taskName: task.name,
+      retries: task.retryCount,
+      retryDelay: task.retryDelay,
+      throttled: task.throttled,
+    });
   }
 }
