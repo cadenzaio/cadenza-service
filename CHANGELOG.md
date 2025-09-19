@@ -1,3 +1,10 @@
+## [1.9.29](https://github.com/cadenzaio/cadenza-service/compare/v1.9.28...v1.9.29) (2025-09-19)
+
+
+### Bug Fixes
+
+* Removed unnecessary logging ([1a667eb](https://github.com/cadenzaio/cadenza-service/commit/1a667eb9844f5802316b1b7a2bf1d50e6b9d96a6))
+
 ## [1.9.28](https://github.com/cadenzaio/cadenza-service/compare/v1.9.27...v1.9.28) (2025-09-19)
 
 
