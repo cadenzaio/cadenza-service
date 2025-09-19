@@ -1,3 +1,10 @@
+## [1.9.31](https://github.com/cadenzaio/cadenza-service/compare/v1.9.30...v1.9.31) (2025-09-19)
+
+
+### Bug Fixes
+
+* update core package ([c4e071f](https://github.com/cadenzaio/cadenza-service/commit/c4e071f377137f5c1317b47d8c8e8351a03590b1))
+
 ## [1.9.30](https://github.com/cadenzaio/cadenza-service/compare/v1.9.29...v1.9.30) (2025-09-19)
 
 
