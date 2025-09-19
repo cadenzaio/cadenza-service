@@ -22,7 +22,7 @@ export default class GraphMetadataController {
         },
       };
     })
-      .doAfter(Cadenza.registry.registerTask)
+      .doOn("meta.task.created")
       .emits("meta.graph_metadata.task_created");
 
     Cadenza.createMetaTask("Handle task update", (ctx) => {

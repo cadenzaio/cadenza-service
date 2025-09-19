@@ -1044,12 +1044,14 @@ export default class DatabaseController {
 
         context = await queryFunction(tableName, context.queryData ?? context);
 
-        for (const signal of table.customSignals?.emissions?.[op] ??
-          ([] as any[])) {
-          if (signal.condition && !signal.condition(context)) {
-            continue;
+        if (!context.errored) {
+          for (const signal of table.customSignals?.emissions?.[op] ??
+            ([] as any[])) {
+            if (signal.condition && !signal.condition(context)) {
+              continue;
+            }
+            emit(signal.signal ?? signal, context);
           }
-          emit(signal.signal ?? signal, context);
         }
 
         console.log(
@@ -1072,8 +1074,9 @@ export default class DatabaseController {
       `Auto-generated ${op} task for ${tableName}`,
       {
         isMeta: options.isMeta,
-        retryCount: 3,
+        retryCount: 5,
         retryDelay: 100,
+        retryDelayFactor: 1.3,
         concurrency: 50,
         validateInputContext: false, // TODO
         getTagCallback: (
