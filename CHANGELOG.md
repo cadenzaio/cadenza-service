@@ -1,3 +1,10 @@
+## [1.9.21](https://github.com/cadenzaio/cadenza-service/compare/v1.9.20...v1.9.21) (2025-09-19)
+
+
+### Bug Fixes
+
+* Fixed table update task ([1ae5ae2](https://github.com/cadenzaio/cadenza-service/commit/1ae5ae29fcf90d25a3b537a511ac5a6a9b233022))
+
 ## [1.9.20](https://github.com/cadenzaio/cadenza-service/compare/v1.9.19...v1.9.20) (2025-09-19)
 
 
