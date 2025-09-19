@@ -1,3 +1,10 @@
+## [1.9.38](https://github.com/cadenzaio/cadenza-service/compare/v1.9.37...v1.9.38) (2025-09-19)
+
+
+### Bug Fixes
+
+* Fixed request data forwarding ([9ce568c](https://github.com/cadenzaio/cadenza-service/commit/9ce568c1c0a3a32acd405c99bd3432559f7808a5))
+
 ## [1.9.37](https://github.com/cadenzaio/cadenza-service/compare/v1.9.36...v1.9.37) (2025-09-19)
 
 
