@@ -35,6 +35,7 @@ export type NetworkMode =
   | "dev";
 
 export type ServerOptions = {
+  customServiceId?: string; // TODO
   loadBalance?: boolean;
   useSocket?: boolean;
   log?: boolean;
@@ -497,7 +498,7 @@ export default class CadenzaService {
 
     console.log("Creating service...");
 
-    Cadenza.broker.emit("meta.create_service_requested", {
+    const initContext = {
       data: {
         name: serviceName,
         description: description,
@@ -512,7 +513,15 @@ export default class CadenzaService {
       __networkMode: options.networkMode,
       __retryCount: options.retryCount,
       __cadenzaDBConnect: options.cadenzaDB?.connect,
-    });
+    };
+
+    if (options.cadenzaDB?.connect) {
+      Cadenza.createEphemeralMetaTask("Create service", async (_, emit) => {
+        emit("meta.create_service_requested", initContext);
+      }).doOn("meta.fetch.handshake_complete");
+    } else {
+      Cadenza.broker.emit("meta.create_service_requested", initContext);
+    }
 
     this.createEphemeralMetaTask("Handle service setup completion", (ctx) => {
       GraphMetadataController.instance;

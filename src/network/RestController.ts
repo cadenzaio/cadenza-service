@@ -118,15 +118,28 @@ export default class RestController {
               // TODO: add body validation based on profile
 
               app.post("/handshake", (req: Request, res: Response) => {
-                console.log("handshake", req.body);
-                Cadenza.broker.emit("meta.rest.handshake", req.body);
-                res.send({ __status: "success" });
+                try {
+                  console.log("handshake", req);
+                  Cadenza.broker.emit("meta.rest.handshake", req);
+                  res.send({ __status: "success" });
+                } catch (e) {
+                  console.error("Error in handshake", e);
+                  res.send({ __status: "error" });
+                }
               });
 
               app.post("/delegation", (req: Request, res: Response) => {
-                const ctx = req.body;
-                const routineExecId = ctx.__routineExecId || uuid();
-                console.log("delegation", ctx);
+                let routineExecId;
+                let ctx;
+                try {
+                  ctx = req as any;
+                  routineExecId = ctx.__routineExecId || uuid();
+                  console.log("delegation", ctx);
+                } catch (e) {
+                  console.error("Error in delegation", e);
+                  res.send({ __status: "error" });
+                  return;
+                }
 
                 Cadenza.createEphemeralMetaTask(
                   "Resolve delegation",
@@ -163,9 +176,17 @@ export default class RestController {
               });
 
               app.post("/signal", (req: Request, res: Response) => {
-                const ctx = req.body;
-                console.log("signal", ctx);
-                res.send({ __status: "success" });
+                let ctx;
+                try {
+                  ctx = req as any;
+                  console.log("signal", ctx);
+                  res.send({ __status: "success" });
+                } catch (e) {
+                  console.error("Error in signal", e);
+                  res.send({ __status: "error" });
+                  return;
+                }
+
                 Cadenza.broker.emit(ctx.__signalName, ctx.__context);
               });
 
