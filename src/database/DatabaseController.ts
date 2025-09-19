@@ -767,7 +767,7 @@ export default class DatabaseController {
       const isBatch = Array.isArray(resolvedData);
       const rows = isBatch ? resolvedData : [resolvedData];
 
-      const sql = `INSERT INTO ${tableName} (${Object.keys(rows[0]).join(", ")}) VALUES `;
+      const sql = `INSERT INTO ${tableName} (${Object.keys(rows[0]).map(snakeCase).join(", ")}) VALUES `;
       const values = rows
         .map(
           (row) =>
@@ -816,6 +816,8 @@ export default class DatabaseController {
           onConflictSql += ` DO NOTHING`;
         }
       }
+
+      console.log("insert", tableName, sql, params);
 
       const result = await client.query(
         `${sql} ${values}${onConflictSql} RETURNING ${fields.length ? fields.join(", ") : "*"}`,
@@ -961,18 +963,14 @@ export default class DatabaseController {
       ) {
         const subOp = value as SubOperation;
         const subResult = await this.executeSubOperation(subOp);
-        resolved[snakeCase(key)] =
-          subResult[subOp.return || "full"] ?? subResult;
+        resolved[key] = subResult[subOp.return || "full"] ?? subResult;
       } else if (
         typeof value === "string" &&
         ["increment", "decrement", "set"].includes(value)
       ) {
-        resolved[snakeCase(key)] = { __effect: value }; // Placeholder for effect handling (DB-side or app-side)
+        resolved[key] = { __effect: value }; // Placeholder for effect handling (DB-side or app-side)
       } else if (typeof value === "object") {
-        resolved[snakeCase(key)] = await this.resolveNestedData(
-          value,
-          tableName,
-        );
+        resolved[key] = await this.resolveNestedData(value, tableName);
       }
     }
     return resolved;

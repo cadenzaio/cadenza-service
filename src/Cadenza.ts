@@ -501,7 +501,7 @@ export default class CadenzaService {
       data: {
         name: serviceName,
         description: description,
-        displayName: options.displayName,
+        displayName: options.displayName ?? "",
         isMeta: options.isMeta,
       },
       __serviceName: serviceName,
