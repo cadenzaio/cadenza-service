@@ -175,7 +175,10 @@ export default class RestController {
                   `meta.node.ended_routine_execution:${routineExecId}`,
                 );
 
-                Cadenza.broker.emit("meta.rest.delegation_requested", ctx);
+                Cadenza.broker.emit("meta.rest.delegation_requested", {
+                  ...ctx,
+                  __name: ctx.__remoteRoutineName,
+                });
               });
 
               app.post("/signal", (req: Request, res: Response) => {
