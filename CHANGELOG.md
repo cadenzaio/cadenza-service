@@ -1,3 +1,10 @@
+## [1.9.34](https://github.com/cadenzaio/cadenza-service/compare/v1.9.33...v1.9.34) (2025-09-19)
+
+
+### Bug Fixes
+
+* change bootstrap order again ([c53b510](https://github.com/cadenzaio/cadenza-service/commit/c53b5106ac2efe3a376d6deeef04986707a819a9))
+
 ## [1.9.33](https://github.com/cadenzaio/cadenza-service/compare/v1.9.32...v1.9.33) (2025-09-19)
 
 
