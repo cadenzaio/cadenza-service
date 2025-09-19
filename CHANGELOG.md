@@ -1,3 +1,10 @@
+## [1.9.19](https://github.com/cadenzaio/cadenza-service/compare/v1.9.18...v1.9.19) (2025-09-19)
+
+
+### Bug Fixes
+
+* Typo and package update ([12be0e2](https://github.com/cadenzaio/cadenza-service/commit/12be0e2a27d7b259e4c7d38c1010f22778fe881c))
+
 ## [1.9.18](https://github.com/cadenzaio/cadenza-service/compare/v1.9.17...v1.9.18) (2025-09-19)
 
 
