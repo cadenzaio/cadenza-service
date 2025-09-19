@@ -1,3 +1,10 @@
+## [1.9.37](https://github.com/cadenzaio/cadenza-service/compare/v1.9.36...v1.9.37) (2025-09-19)
+
+
+### Bug Fixes
+
+* Trying with form data for requests. ([8267b15](https://github.com/cadenzaio/cadenza-service/commit/8267b158068941653be51f692c0cd399af0f7747))
+
 ## [1.9.36](https://github.com/cadenzaio/cadenza-service/compare/v1.9.35...v1.9.36) (2025-09-19)
 
 
