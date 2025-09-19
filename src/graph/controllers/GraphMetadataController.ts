@@ -81,13 +81,21 @@ export default class GraphMetadataController {
       .emits("meta.graph_metadata.task_attached_signal");
 
     Cadenza.createMetaTask("Handle task unsubscribing signal", (ctx) => {
+      // const firstChar = ctx.data.signalName.charAt(0);
+      // let signalServiceName;
+      // if (
+      //   firstChar === firstChar.toUpperCase() &&
+      //   firstChar !== firstChar.toLowerCase()
+      // ) {
+      //   signalServiceName = ctx.data.signalName.split(".")[0];
+      // }
       return {
         data: {
           deleted: true,
         },
         filter: {
           ...ctx.filter,
-          service_name: Cadenza.serviceRegistry.serviceName,
+          task_service_name: Cadenza.serviceRegistry.serviceName,
         },
       };
     })

@@ -1072,6 +1072,8 @@ export default class DatabaseController {
       `Auto-generated ${op} task for ${tableName}`,
       {
         isMeta: options.isMeta,
+        retryCount: 3,
+        retryDelay: 100,
         concurrency: 50,
         validateInputContext: false, // TODO
         getTagCallback: (
