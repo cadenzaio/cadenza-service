@@ -1023,7 +1023,7 @@ export default class DatabaseController {
     options: ServerOptions,
   ) {
     // const defaultSignal = `${tableName}.${op}`;
-    Cadenza.createTask(
+    Cadenza.createThrottledTask(
       `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableName.charAt(0).toUpperCase() + tableName.slice(1)}`,
       async (context, emit) => {
         const triggerConditions: any | undefined =
@@ -1071,6 +1071,10 @@ export default class DatabaseController {
 
         return context;
       },
+      (context?: AnyObject) =>
+        context?.__metadata?.__executionTraceId ??
+        context?.__executionTraceId ??
+        "default",
       `Auto-generated ${op} task for ${tableName}`,
       {
         isMeta: options.isMeta,
@@ -1078,12 +1082,6 @@ export default class DatabaseController {
         retryDelay: 100,
         retryDelayFactor: 1.3,
         validateInputContext: false, // TODO
-        getTagCallback: (
-          context?: AnyObject, // TODO more granular tags
-        ) =>
-          context?.__metadata?.__executionTraceId ??
-          context?.__executionTraceId ??
-          "default",
         inputSchema: {
           // TODO
           type: "object",
