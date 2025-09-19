@@ -817,8 +817,6 @@ export default class DatabaseController {
         }
       }
 
-      console.log("insert", tableName, sql, params);
-
       const result = await client.query(
         `${sql} ${values}${onConflictSql} RETURNING ${fields.length ? fields.join(", ") : "*"}`,
         params,
@@ -870,7 +868,6 @@ export default class DatabaseController {
       const whereClause = this.buildWhereClause(filter, params);
 
       const sql = `UPDATE ${tableName} SET ${setClause} ${whereClause} RETURNING *;`;
-      console.log("update", tableName, sql, params);
       const result = await client.query(sql, params);
       if (transaction) await client.query("COMMIT");
       return {
