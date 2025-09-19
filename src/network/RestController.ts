@@ -285,7 +285,7 @@ export default class RestController {
                   }
 
                   ctx.data = {
-                    id: uuid(),
+                    uuid: uuid(),
                     address: address,
                     port: port,
                     exposed: exposed,

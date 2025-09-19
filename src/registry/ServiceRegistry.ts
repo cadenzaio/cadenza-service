@@ -483,7 +483,7 @@ export default class ServiceRegistry {
         inputSchema: {
           type: "object",
           properties: {
-            id: {
+            uuid: {
               type: "string",
             },
             address: {
