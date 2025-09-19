@@ -1,3 +1,10 @@
+## [1.9.18](https://github.com/cadenzaio/cadenza-service/compare/v1.9.17...v1.9.18) (2025-09-19)
+
+
+### Bug Fixes
+
+* fixed insert issue ([6c758a7](https://github.com/cadenzaio/cadenza-service/commit/6c758a7110a75c7f10252532aafdaa0f7fa007d2))
+
 ## [1.9.17](https://github.com/cadenzaio/cadenza-service/compare/v1.9.16...v1.9.17) (2025-09-18)
 
 
