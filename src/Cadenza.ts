@@ -536,8 +536,9 @@ export default class CadenzaService {
   ) {
     if (this.serviceCreated) return;
     this.bootstrap();
-    DatabaseController.instance; // Ensure DB controller is created
     this.serviceRegistry.serviceName = name;
+    GraphMetadataController.instance;
+    DatabaseController.instance; // Ensure DB controller is created
 
     options = {
       loadBalance: true,

@@ -551,6 +551,7 @@ export default class ServiceRegistry {
             );
             this.useSocket = __useSocket;
             this.retryCount = __retryCount;
+            console.log("SETUP SERVICE", this.serviceInstanceId);
             return true;
           },
           "Sets service instance id after insertion",
