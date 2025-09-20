@@ -1,3 +1,10 @@
+## [1.9.43](https://github.com/cadenzaio/cadenza-service/compare/v1.9.42...v1.9.43) (2025-09-20)
+
+
+### Bug Fixes
+
+* update core package again for debugging ([8ffd798](https://github.com/cadenzaio/cadenza-service/commit/8ffd798e81bf8ca42cda27676515705db4e663fc))
+
 ## [1.9.42](https://github.com/cadenzaio/cadenza-service/compare/v1.9.41...v1.9.42) (2025-09-20)
 
 
