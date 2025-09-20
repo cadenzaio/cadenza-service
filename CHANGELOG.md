@@ -1,3 +1,10 @@
+## [1.9.45](https://github.com/cadenzaio/cadenza-service/compare/v1.9.44...v1.9.45) (2025-09-20)
+
+
+### Bug Fixes
+
+* Bug with returning id instead of uuid. ([630fa53](https://github.com/cadenzaio/cadenza-service/commit/630fa536f5d2e9536e45d45bf6f0d44c3d594879))
+
 ## [1.9.44](https://github.com/cadenzaio/cadenza-service/compare/v1.9.43...v1.9.44) (2025-09-20)
 
 
