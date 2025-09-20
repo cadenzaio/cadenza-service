@@ -1024,7 +1024,7 @@ export default class DatabaseController {
       .split("_")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join("");
-    const task = Cadenza.createThrottledTask(
+    Cadenza.createThrottledTask(
       `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableNameFormatted}`,
       async (context: AnyObject, emit: any) => {
         const triggerConditions: any | undefined =
@@ -1057,7 +1057,7 @@ export default class DatabaseController {
 
         console.log(
           "EXECUTED",
-          `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableName.charAt(0).toUpperCase() + tableName.slice(1)}`,
+          `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableNameFormatted}`,
           JSON.stringify(context).slice(0, 100),
           context.__error,
         );
@@ -1096,11 +1096,5 @@ export default class DatabaseController {
         return typeof signal === "string" ? signal : signal.signal;
       }) ?? []),
     );
-    console.log("Created database task", op, tableName, {
-      taskName: task.name,
-      retries: task.retryCount,
-      retryDelay: task.retryDelay,
-      throttled: task.throttled,
-    });
   }
 }

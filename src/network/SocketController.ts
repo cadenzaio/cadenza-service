@@ -89,10 +89,6 @@ export default class SocketController {
               const server = ctx.__socketServer;
 
               server.on("connection", (ws: any) => {
-                ws.on("handshake", (ctx: AnyObject) =>
-                  Cadenza.broker.emit("meta.socket.handshake", ctx),
-                );
-
                 ws.on(
                   "delegation",
                   (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
@@ -101,9 +97,7 @@ export default class SocketController {
                       callback,
                       "Resolves a delegation request using the provided callback from the client (.emitWithAck())",
                     )
-                      .doOn(
-                        `meta.node.ended_routine_execution:${ctx.__routineExecId}`,
-                      )
+                      .doOn(`meta.node.graph_completed:${ctx.__routineExecId}`)
                       .emits(
                         `meta.socket.delegation_resolved:${ctx.__routineExecId}`,
                       );
@@ -118,12 +112,13 @@ export default class SocketController {
                       {
                         once: false,
                         destroyCondition: (ctx: AnyObject) =>
-                          ctx.data.progress === 1.0,
+                          ctx.data.progress === 1.0 ||
+                          ctx.data?.progress === undefined,
                       },
                     )
                       .doOn(
                         `meta.node.routine_execution_progress:${ctx.__routineExecId}`,
-                        `meta.node.ended_routine_execution:${ctx.__routineExecId}`,
+                        `meta.node.graph_completed:${ctx.__routineExecId}`,
                       )
                       .emitsOnFail(
                         `meta.socket.progress_failed:${ctx.__routineExecId}`,

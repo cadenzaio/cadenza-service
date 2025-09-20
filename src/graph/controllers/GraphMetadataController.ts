@@ -164,7 +164,7 @@ export default class GraphMetadataController {
               context: ctx.data.context.context,
               is_meta: ctx.data.isMeta,
             },
-            return: "id",
+            return: "uuid",
           },
         },
       };
@@ -188,7 +188,7 @@ export default class GraphMetadataController {
                 context: context.context,
                 is_meta: ctx.data.isMeta,
               },
-              return: "id",
+              return: "uuid",
             },
           },
         };
@@ -217,7 +217,7 @@ export default class GraphMetadataController {
                 context: context.context,
                 is_meta: ctx.data.isMeta,
               },
-              return: "id",
+              return: "uuid",
             },
           },
         };

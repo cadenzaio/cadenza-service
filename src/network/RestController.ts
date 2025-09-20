@@ -148,32 +148,32 @@ export default class RestController {
                   "Resolve delegation",
                   (endCtx) =>
                     res.json({
+                      ...endCtx,
                       __status: "success",
-                      __result: endCtx.__result,
                     }),
                   "Resolves a delegation request",
                 )
-                  .doOn(`meta.node.ended_routine_execution:${routineExecId}`)
+                  .doOn(`meta.node.graph_completed:${routineExecId}`)
                   .emits(`meta.rest.delegation_resolved:${routineExecId}`);
 
-                Cadenza.createEphemeralMetaTask(
-                  "Delegation progress update",
-                  (progressCtx) => {
-                    if (progressCtx.__progress !== undefined) {
-                      // TODO: Progress updates via polling or long-polling for REST, but omit broadcasting as per instruction
-                    }
-                  },
-                  "Updates delegation progress (polling-based for REST)",
-                  {
-                    once: false,
-                    destroyCondition: (progressCtx: AnyObject) =>
-                      progressCtx.__progress === 1 ||
-                      progressCtx.__graphComplete,
-                  },
-                ).doOn(
-                  `meta.node.routine_execution_progress:${routineExecId}`,
-                  `meta.node.ended_routine_execution:${routineExecId}`,
-                );
+                // Cadenza.createEphemeralMetaTask(
+                //   "Delegation progress update",
+                //   (progressCtx) => {
+                //     if (progressCtx.__progress !== undefined) {
+                //       // TODO: Progress updates via polling or long-polling for REST, but omit broadcasting as per instruction
+                //     }
+                //   },
+                //   "Updates delegation progress (polling-based for REST)",
+                //   {
+                //     once: false,
+                //     destroyCondition: (progressCtx: AnyObject) =>
+                //       progressCtx.__progress === 1 ||
+                //       progressCtx.__graphComplete,
+                //   },
+                // ).doOn(
+                //   `meta.node.routine_execution_progress:${routineExecId}`,
+                //   `meta.node.ended_routine_execution:${routineExecId}`,
+                // );
 
                 Cadenza.broker.emit("meta.rest.delegation_requested", {
                   ...ctx,
