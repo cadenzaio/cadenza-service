@@ -209,16 +209,19 @@ export default class GraphMetadataController {
             ...ctx.data,
             service_name: Cadenza.serviceRegistry.serviceName,
             service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
-            context_id: {
-              subOperation: "insert",
-              table: "context",
-              data: {
-                uuid: context.id,
-                context: context.context,
-                is_meta: ctx.data.isMeta,
-              },
-              return: "uuid",
-            },
+            context_id:
+              typeof context === "string"
+                ? context
+                : {
+                    subOperation: "insert",
+                    table: "context",
+                    data: {
+                      uuid: context.id,
+                      context: context.context,
+                      is_meta: ctx.data.isMeta,
+                    },
+                    return: "uuid",
+                  },
           },
         };
       },

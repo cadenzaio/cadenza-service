@@ -1080,6 +1080,7 @@ export default class DatabaseController {
       `Auto-generated ${op} task for ${tableName}`,
       {
         isMeta: options.isMeta,
+        isSubMeta: options.isMeta,
         validateInputContext: false, // TODO
         inputSchema: {
           // TODO
