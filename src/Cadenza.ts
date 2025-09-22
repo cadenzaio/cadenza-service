@@ -25,6 +25,7 @@ import GraphMetadataController from "./graph/controllers/GraphMetadataController
 import { SchemaDefinition } from "./types/database";
 import { snakeCase } from "lodash-es";
 import DatabaseController from "./database/DatabaseController";
+import { v4 as uuid } from "uuid";
 
 export type SecurityProfile = "low" | "medium" | "high";
 export type NetworkMode =
@@ -435,7 +436,9 @@ export default class CadenzaService {
     Cadenza.validateName(serviceName);
     this.validateServiceName(serviceName);
 
+    const serviceId = options.customServiceId ?? uuid();
     this.serviceRegistry.serviceName = serviceName;
+    this.serviceRegistry.serviceInstanceId = serviceId;
 
     options = {
       loadBalance: true,
@@ -505,6 +508,7 @@ export default class CadenzaService {
         isMeta: options.isMeta,
       },
       __serviceName: serviceName,
+      __serviceInstanceId: serviceId,
       __port: options.port,
       __loadBalance: options.loadBalance,
       __useSocket: options.useSocket,

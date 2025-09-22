@@ -77,7 +77,8 @@ export default class ServiceRegistry {
         } else {
           if (
             this.deputies.has(serviceName) ||
-            this.remoteSignals.has(serviceName)
+            this.remoteSignals.has(serviceName) ||
+            this.remoteSignals.has("*")
           ) {
             const communicationTypes = Array.from(
               new Set(
@@ -89,7 +90,8 @@ export default class ServiceRegistry {
 
             if (
               !communicationTypes.includes("signal") &&
-              this.remoteSignals.has(serviceName)
+              (this.remoteSignals.has(serviceName) ||
+                this.remoteSignals.has("*"))
             ) {
               communicationTypes.push("signal");
             }

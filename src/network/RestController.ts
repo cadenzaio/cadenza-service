@@ -136,21 +136,23 @@ export default class RestController {
                 let ctx;
                 try {
                   ctx = req.body;
-                  routineExecId = ctx.__routineExecId || uuid();
+                  routineExecId = ctx.__routineExecId;
                   console.log("delegation", ctx);
                 } catch (e) {
                   console.error("Error in delegation", e);
-                  res.send({ __status: "error" });
+                  res.send({ __status: "error", __error: e, errored: true });
                   return;
                 }
 
                 Cadenza.createEphemeralMetaTask(
                   "Resolve delegation",
-                  (endCtx) =>
+                  (endCtx) => {
+                    console.log("Resolve delegation", endCtx);
                     res.json({
                       ...endCtx,
                       __status: "success",
-                    }),
+                    });
+                  },
                   "Resolves a delegation request",
                 )
                   .doOn(`meta.node.graph_completed:${routineExecId}`)
@@ -314,7 +316,7 @@ export default class RestController {
                   }
 
                   ctx.data = {
-                    uuid: uuid(),
+                    uuid: ctx.__serviceInstanceId,
                     address: address,
                     port: port,
                     exposed: exposed,
