@@ -1,3 +1,10 @@
+## [1.9.54](https://github.com/cadenzaio/cadenza-service/compare/v1.9.53...v1.9.54) (2025-09-22)
+
+
+### Bug Fixes
+
+* Fixed trace execution insertion and more. ([f6c654f](https://github.com/cadenzaio/cadenza-service/commit/f6c654f874d7bfde972cbae558fc74359b3e2507))
+
 ## [1.9.53](https://github.com/cadenzaio/cadenza-service/compare/v1.9.52...v1.9.53) (2025-09-22)
 
 
