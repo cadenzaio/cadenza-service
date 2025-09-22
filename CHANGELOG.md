@@ -1,3 +1,10 @@
+## [1.9.49](https://github.com/cadenzaio/cadenza-service/compare/v1.9.48...v1.9.49) (2025-09-22)
+
+
+### Bug Fixes
+
+* Further fixes to delegation logic. ([96a23c2](https://github.com/cadenzaio/cadenza-service/commit/96a23c2503a4f77f0c939146c03b62f1637d9a45))
+
 ## [1.9.48](https://github.com/cadenzaio/cadenza-service/compare/v1.9.47...v1.9.48) (2025-09-22)
 
 
