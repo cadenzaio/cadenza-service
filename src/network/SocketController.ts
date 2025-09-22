@@ -261,9 +261,14 @@ export default class SocketController {
               resultContext = await socket
                 .timeout(ctx.__timeout ?? 0)
                 .emitWithAck("delegation", ctx);
+              const metadata = resultContext.__metadata;
+              delete resultContext.__metadata;
               emit(
                 `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
-                resultContext,
+                {
+                  ...resultContext,
+                  ...metadata,
+                },
               );
             } catch (e) {
               resultContext = {

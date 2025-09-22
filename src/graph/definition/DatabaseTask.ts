@@ -102,7 +102,7 @@ export default class DatabaseTask extends DeputyTask {
   ): TaskResult {
     const ctx = context.getContext();
     const metadata = context.getMetadata();
-    const dynamicQueryData = ctx.queryData;
+    const dynamicQueryData = ctx.queryData ?? {};
     delete ctx.queryData;
 
     const deputyContext = {
