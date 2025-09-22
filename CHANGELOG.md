@@ -1,3 +1,10 @@
+## [1.9.46](https://github.com/cadenzaio/cadenza-service/compare/v1.9.45...v1.9.46) (2025-09-22)
+
+
+### Bug Fixes
+
+* Better logging and ID handling. Also improved deputy handling. ([59aec6b](https://github.com/cadenzaio/cadenza-service/commit/59aec6b061885cefdfc2a9737ab9fbc51f0cc8bb))
+
 ## [1.9.45](https://github.com/cadenzaio/cadenza-service/compare/v1.9.44...v1.9.45) (2025-09-20)
 
 
