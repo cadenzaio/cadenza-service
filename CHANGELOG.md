@@ -1,3 +1,10 @@
+## [1.9.47](https://github.com/cadenzaio/cadenza-service/compare/v1.9.46...v1.9.47) (2025-09-22)
+
+
+### Bug Fixes
+
+* Made database tasks subMeta. Performance improvements. Package update. ([21820ec](https://github.com/cadenzaio/cadenza-service/commit/21820ec4489778187be03545c4318a427d60f96e))
+
 ## [1.9.46](https://github.com/cadenzaio/cadenza-service/compare/v1.9.45...v1.9.46) (2025-09-22)
 
 
