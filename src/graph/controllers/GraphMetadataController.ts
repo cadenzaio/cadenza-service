@@ -235,7 +235,10 @@ export default class GraphMetadataController {
       "Handle task execution relationship creation",
       (ctx) => {
         return {
-          ...ctx,
+          data: {
+            ...ctx.data,
+            executionCount: "increment",
+          },
           filter: {
             ...ctx.filter,
             service_name: Cadenza.serviceRegistry.serviceName,

@@ -78,7 +78,7 @@ export default class DeputyTask extends Task {
 
         const processId = uuid();
 
-        context.__deputyExecId = processId;
+        context.__metadata.__deputyExecId = processId;
         emit("meta.deputy.delegation_requested", {
           ...context,
         });

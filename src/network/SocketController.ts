@@ -262,7 +262,7 @@ export default class SocketController {
                 .timeout(ctx.__timeout ?? 0)
                 .emitWithAck("delegation", ctx);
               emit(
-                `meta.socket_client.delegated:${ctx.__deputyExecId}`,
+                `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
                 resultContext,
               );
             } catch (e) {
