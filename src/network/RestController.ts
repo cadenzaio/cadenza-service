@@ -4,7 +4,6 @@ import bodyParser from "body-parser";
 import helmet from "helmet";
 import cors from "cors";
 import { RateLimiterMemory } from "rate-limiter-flexible";
-import { v4 as uuid } from "uuid";
 import http from "node:http";
 import fs from "node:fs";
 import https from "node:https";
@@ -132,11 +131,11 @@ export default class RestController {
               });
 
               app.post("/delegation", (req: Request, res: Response) => {
-                let routineExecId;
+                let deputyExecId;
                 let ctx;
                 try {
                   ctx = req.body;
-                  routineExecId = ctx.__routineExecId;
+                  deputyExecId = ctx.__metadata.__deputyExecId;
                   console.log("delegation", ctx);
                 } catch (e) {
                   console.error("Error in delegation", e);
@@ -155,8 +154,8 @@ export default class RestController {
                   },
                   "Resolves a delegation request",
                 )
-                  .doOn(`meta.node.graph_completed:${routineExecId}`)
-                  .emits(`meta.rest.delegation_resolved:${routineExecId}`);
+                  .doOn(`meta.node.graph_completed:${deputyExecId}`)
+                  .emits(`meta.rest.delegation_resolved:${deputyExecId}`);
 
                 // Cadenza.createEphemeralMetaTask(
                 //   "Delegation progress update",

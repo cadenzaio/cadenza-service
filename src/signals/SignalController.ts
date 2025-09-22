@@ -117,7 +117,12 @@ export default class SignalController {
 
         return {
           data: {
-            ...signalEmission,
+            signal_name: signalEmission.signalName,
+            task_name: signalEmission.taskName,
+            task_version: signalEmission.taskVersion,
+            task_execution_id: signalEmission.taskExecutionId,
+            is_meta: signalEmission.isMeta,
+            is_metric: signalEmission.isMetric,
             data: ctx,
             service_name: Cadenza.serviceRegistry.serviceName,
             service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
@@ -135,7 +140,7 @@ export default class SignalController {
       (ctx) => {
         return {
           data: {
-            ...ctx.__data,
+            ...ctx.data,
             serviceName: Cadenza.serviceRegistry.serviceName,
             serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
           },
