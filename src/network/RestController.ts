@@ -136,10 +136,15 @@ export default class RestController {
                 try {
                   ctx = req.body;
                   deputyExecId = ctx.__metadata.__deputyExecId;
-                  console.log("delegation", ctx);
+                  console.log("delegation", deputyExecId, ctx);
                 } catch (e) {
                   console.error("Error in delegation", e);
-                  res.send({ __status: "error", __error: e, errored: true });
+                  res.send({
+                    __status: "error",
+                    __error: e,
+                    errored: true,
+                    ...ctx,
+                  });
                   return;
                 }
 
@@ -147,8 +152,11 @@ export default class RestController {
                   "Resolve delegation",
                   (endCtx) => {
                     console.log("Resolve delegation", endCtx);
+                    const metadata = endCtx.__metadata;
+                    delete endCtx.__metadata;
                     res.json({
                       ...endCtx,
+                      ...metadata,
                       __status: "success",
                     });
                   },
@@ -411,6 +419,8 @@ export default class RestController {
               return;
             }
 
+            console.log("Delegating", ctx);
+
             let resultContext;
             try {
               const response = await fetch(`${URL}/delegation`, {
@@ -429,7 +439,10 @@ export default class RestController {
                 ...ctx.__metadata,
               };
             } finally {
-              emit(`meta.fetch.delegated:${ctx.__deputyExecId}`, resultContext);
+              emit(
+                `meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`,
+                resultContext,
+              );
             }
 
             return resultContext;

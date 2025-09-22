@@ -335,7 +335,7 @@ export default class ServiceRegistry {
           context.errored = true;
           context.__error = "No active instances";
           emit(
-            `meta.service_registry.load_balance_failed:${context.__deputyExecId}`,
+            `meta.service_registry.load_balance_failed:${context.__metadata.__deputyExecId}`,
             context,
           );
           return context;

@@ -104,6 +104,7 @@ export default class DeputyTask extends Task {
             if (responseCtx.errored) {
               reject(new Error(responseCtx.__error));
             } else {
+              // TODO clean up metadata
               resolve(responseCtx);
             }
 
