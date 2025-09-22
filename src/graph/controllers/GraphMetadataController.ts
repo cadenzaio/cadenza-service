@@ -168,7 +168,9 @@ export default class GraphMetadataController {
           },
         },
       };
-    }).doOn("meta.runner.new_trace");
+    })
+      .doOn("meta.runner.new_trace")
+      .emits("meta.graph_metadata.execution_trace_created");
 
     Cadenza.createMetaTask(
       "Handle routine execution creation",
@@ -198,6 +200,41 @@ export default class GraphMetadataController {
     )
       .doOn("meta.runner.added_tasks")
       .emits("meta.graph_metadata.routine_execution_created");
+
+    Cadenza.createMetaTask(
+      "Handle routine execution ended",
+      (ctx) => {
+        const context = ctx.data.context;
+        delete ctx.data.context;
+        return {
+          data: {
+            ...ctx.data,
+            service_name: Cadenza.serviceRegistry.serviceName,
+            service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
+            result_context_id:
+              typeof context === "string"
+                ? context
+                : {
+                    subOperation: "insert",
+                    table: "context",
+                    data: {
+                      uuid: context.id,
+                      context: context.context,
+                      is_meta: ctx.data.isMeta,
+                    },
+                    return: "uuid",
+                  },
+          },
+          filter: {
+            ...ctx.filter,
+          },
+        };
+      },
+      "Handles routine execution ended",
+      { concurrency: 100, isSubMeta: true },
+    )
+      .doOn("meta.node.ended_routine_execution")
+      .emits("meta.graph_metadata.routine_execution_ended");
 
     Cadenza.createMetaTask(
       "Handle task execution creation",
@@ -230,6 +267,41 @@ export default class GraphMetadataController {
     )
       .doOn("meta.node.scheduled")
       .emits("meta.graph_metadata.task_execution_created");
+
+    Cadenza.createMetaTask(
+      "Handle task execution ended",
+      (ctx) => {
+        const context = ctx.data.context;
+        delete ctx.data.context;
+        return {
+          data: {
+            ...ctx.data,
+            service_name: Cadenza.serviceRegistry.serviceName,
+            service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
+            result_context_id:
+              typeof context === "string"
+                ? context
+                : {
+                    subOperation: "insert",
+                    table: "context",
+                    data: {
+                      uuid: context.id,
+                      context: context.context,
+                      is_meta: ctx.data.isMeta,
+                    },
+                    return: "uuid",
+                  },
+          },
+          filter: {
+            ...ctx.filter,
+          },
+        };
+      },
+      "Handles task execution ended",
+      { concurrency: 100, isSubMeta: true },
+    )
+      .doOn("meta.node.ended")
+      .emits("meta.graph_metadata.task_execution_ended");
 
     Cadenza.createMetaTask(
       "Handle task execution relationship creation",
