@@ -66,19 +66,19 @@ export default class ServiceRegistry {
     this.handleInstanceUpdateTask = Cadenza.createMetaTask(
       "Handle Instance Update",
       (ctx, emit) => {
-        const { serviceInstance } = ctx;
-        const { id, serviceName, address, port, exposed } = serviceInstance;
+        const { service_instance } = ctx;
+        const { id, serviceName, address, port, exposed } = service_instance;
         if (!this.instances.has(serviceName))
           this.instances.set(serviceName, []);
         const instances = this.instances.get(serviceName)!;
         const existing = instances.find((i) => i.id === id);
         if (existing) {
-          Object.assign(existing, serviceInstance); // Update
+          Object.assign(existing, service_instance); // Update
         } else {
           if (
             this.deputies.has(serviceName) ||
             this.remoteSignals.has(serviceName) ||
-            this.remoteSignals.has("*")
+            (this.remoteSignals.has("*") && this.serviceName !== serviceName)
           ) {
             const communicationTypes = Array.from(
               new Set(
@@ -105,7 +105,7 @@ export default class ServiceRegistry {
               communicationTypes,
             });
 
-            serviceInstance.clientCreated = true;
+            service_instance.clientCreated = true;
 
             for (const instance of this.instances.get(serviceName)!) {
               if (instance.clientCreated) continue;
@@ -121,7 +121,7 @@ export default class ServiceRegistry {
             }
           }
 
-          instances.push(serviceInstance); // Insert
+          instances.push(service_instance); // Insert
         }
 
         return true;

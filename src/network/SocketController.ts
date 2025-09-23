@@ -21,67 +21,73 @@ export default class SocketController {
             return;
           }
 
-          const server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
-          ctx.__socketServer = server;
+          console.log("SocketServer: Setting up", ctx);
 
-          const profile = ctx.__securityProfile ?? "medium";
+          try {
+            const server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
+            ctx.__socketServer = server;
 
-          server.use((socket, next) => {
-            // Origin check (CORS-like)
-            const origin = socket.handshake.headers.origin;
-            const allowedOrigins = ["*"]; // TODO From firewall_rule
-            const networkType = ctx.__networkType ?? "internal"; // From meta-config
-            let effectiveOrigin = origin || "unknown";
-            if (networkType === "internal") effectiveOrigin = "internal"; // Assume trusted internal
+            const profile = ctx.__securityProfile ?? "medium";
 
-            if (
-              profile !== "low" &&
-              !allowedOrigins.includes(effectiveOrigin) &&
-              !allowedOrigins.includes("*")
-            ) {
-              return next(new Error("Unauthorized origin"));
-            }
+            server.use((socket, next) => {
+              // Origin check (CORS-like)
+              const origin = socket.handshake.headers.origin;
+              const allowedOrigins = ["*"]; // TODO From firewall_rule
+              const networkType = ctx.__networkType ?? "internal"; // From meta-config
+              let effectiveOrigin = origin || "unknown";
+              if (networkType === "internal") effectiveOrigin = "internal"; // Assume trusted internal
 
-            // Rate limiting per socket/IP
-            const limiterOptions: { [key: string]: IRateLimiterOptions } = {
-              low: { points: Infinity, duration: 300 },
-              medium: { points: 100, duration: 300 },
-              high: { points: 50, duration: 60, blockDuration: 300 },
-            };
-            const limiter = new RateLimiterMemory(limiterOptions[profile]);
-            socket.use((packet, next) => {
-              limiter
-                .consume(socket.handshake.address)
-                .then(() => next())
-                .catch((rej) => {
-                  if (rej.msBeforeNext > 0) {
-                    socket.emit("error", {
-                      message: "Rate limit exceeded",
-                      retryAfter: rej.msBeforeNext / 1000,
-                    });
-                  } else {
-                    socket.disconnect(true);
-                  }
-                });
-            });
-
-            // Sanitization for payloads
-            socket.use((packet, next) => {
-              if (profile !== "low") {
-                const sanitize = (data: any) => {
-                  if (typeof data === "string") return xss(data);
-                  if (typeof data === "object") {
-                    for (const key in data) {
-                      data[key] = sanitize(data[key]);
-                    }
-                  }
-                  return data;
-                };
-                packet[1] = sanitize(packet[1]); // Sanitize event payload
+              if (
+                profile !== "low" &&
+                !allowedOrigins.includes(effectiveOrigin) &&
+                !allowedOrigins.includes("*")
+              ) {
+                return next(new Error("Unauthorized origin"));
               }
-              next();
+
+              // Rate limiting per socket/IP
+              const limiterOptions: { [key: string]: IRateLimiterOptions } = {
+                low: { points: Infinity, duration: 300 },
+                medium: { points: 100, duration: 300 },
+                high: { points: 50, duration: 60, blockDuration: 300 },
+              };
+              const limiter = new RateLimiterMemory(limiterOptions[profile]);
+              socket.use((packet, next) => {
+                limiter
+                  .consume(socket.handshake.address)
+                  .then(() => next())
+                  .catch((rej) => {
+                    if (rej.msBeforeNext > 0) {
+                      socket.emit("error", {
+                        message: "Rate limit exceeded",
+                        retryAfter: rej.msBeforeNext / 1000,
+                      });
+                    } else {
+                      socket.disconnect(true);
+                    }
+                  });
+              });
+
+              // Sanitization for payloads
+              socket.use((packet, next) => {
+                if (profile !== "low") {
+                  const sanitize = (data: any) => {
+                    if (typeof data === "string") return xss(data);
+                    if (typeof data === "object") {
+                      for (const key in data) {
+                        data[key] = sanitize(data[key]);
+                      }
+                    }
+                    return data;
+                  };
+                  packet[1] = sanitize(packet[1]); // Sanitize event payload
+                }
+                next();
+              });
             });
-          });
+          } catch (err) {
+            console.error("Socket setup error:", err);
+          }
         }).then(
           Cadenza.createMetaTask(
             "Start SocketServer",

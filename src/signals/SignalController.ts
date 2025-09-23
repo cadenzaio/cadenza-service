@@ -44,6 +44,10 @@ export default class SignalController {
             ) {
               const serviceName = __signalName.split(".")[0];
 
+              if (Cadenza.serviceRegistry.serviceName === serviceName) {
+                return false;
+              }
+
               ctx.__listenerServiceName = Cadenza.serviceRegistry.serviceName;
               ctx.__emitterSignalName = __signalName
                 .split(".")
