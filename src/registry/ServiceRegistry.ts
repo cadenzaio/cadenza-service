@@ -173,7 +173,7 @@ export default class ServiceRegistry {
         remoteSignals = remoteSignals.concat(this.remoteSignals.get("*") ?? []);
 
         return {
-          __remoteSignals: remoteSignals,
+          remoteSignals: remoteSignals,
           ...ctx,
         };
       },
@@ -545,11 +545,11 @@ export default class ServiceRegistry {
         Cadenza.createMetaTask(
           "Setup service",
           (ctx) => {
-            const { serviceInstance, data, __useSocket, __retryCount } = ctx;
-            this.serviceInstanceId = data?.uuid ?? serviceInstance?.uuid;
+            const { service_instance, data, __useSocket, __retryCount } = ctx;
+            this.serviceInstanceId = service_instance?.uuid ?? data?.uuid;
             this.instances.set(
-              data?.service_name ?? serviceInstance?.service_name,
-              [{ ...(data ?? serviceInstance) }],
+              data?.service_name ?? service_instance?.service_name,
+              [{ ...(service_instance ?? data) }],
             );
             this.useSocket = __useSocket;
             this.retryCount = __retryCount;

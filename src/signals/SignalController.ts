@@ -72,20 +72,13 @@ export default class SignalController {
     Cadenza.createMetaTask(
       "Forward signal observations to remote service",
       (ctx, emit) => {
-        const { __remoteSignals } = ctx;
+        const { remoteSignals, serviceName } = ctx;
 
-        for (const remoteSignal of __remoteSignals) {
-          if (remoteSignal.__remoteServiceName === "*") {
-            emit(
-              "meta.signal_controller.wildcard_signal_registered",
-              remoteSignal,
-            );
-          } else {
-            emit(
-              `meta.signal_controller.remote_signal_registered:${remoteSignal.__remoteServiceName}`,
-              remoteSignal,
-            );
-          }
+        for (const remoteSignal of remoteSignals) {
+          emit(
+            `meta.signal_controller.remote_signal_registered:${serviceName}`,
+            remoteSignal,
+          );
         }
 
         return true;
