@@ -532,6 +532,8 @@ export default class CadenzaService {
         SignalController.instance;
         GraphMetadataController.instance;
         // TODO: add all tasks, routines and signals to database...
+        emit("meta.service_registry_sync_requested", {});
+        emit("meta.register_remote_signals_requested", { serviceName });
         emit("meta.register_all_routines", {});
         emit("meta.register_all_tasks", {});
         emit("meta.register_all_signals", {});

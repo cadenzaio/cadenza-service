@@ -178,7 +178,10 @@ export default class ServiceRegistry {
         };
       },
       "Gets remote signals",
-    ).doOn("meta.fetch.handshake_complete");
+    ).doOn(
+      "meta.register_remote_signals_requested",
+      "meta.fetch.handshake_complete",
+    );
 
     this.handleSocketStatusUpdateTask = Cadenza.createMetaTask(
       "Handle Socket Status Update",
@@ -215,10 +218,7 @@ export default class ServiceRegistry {
         "exposed",
       ],
     })
-      .doOn(
-        "meta.service_registry_sync_requested",
-        "meta.service_registry.instance_inserted",
-      )
+      .doOn("meta.service_registry_sync_requested")
       .then(
         Cadenza.createMetaTask("Split service instances", function* (ctx) {
           const { serviceInstances } = ctx;
@@ -227,6 +227,7 @@ export default class ServiceRegistry {
             yield { serviceInstance };
           }
         }).then(this.handleInstanceUpdateTask),
+        // .emits("meta.process_signal_queue_requested"), // TODO Has to happen after the endpoints has been created...
       );
 
     this.updateInstanceId = Cadenza.createMetaTask(
@@ -557,10 +558,7 @@ export default class ServiceRegistry {
             return true;
           },
           "Sets service instance id after insertion",
-        ).emits(
-          "meta.service_registry.instance_inserted",
-          "meta.process_signal_queue_requested",
-        ),
+        ).emits("meta.service_registry.instance_inserted"),
       );
 
     Cadenza.createMetaTask(

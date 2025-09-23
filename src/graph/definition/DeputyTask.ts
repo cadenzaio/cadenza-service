@@ -70,10 +70,12 @@ export default class DeputyTask extends Task {
       return new Promise((resolve, reject) => {
         if (context.__metadata.__blockRemoteExecution) {
           reject(new Error("Blocked remote execution"));
+          return;
         }
 
         if (context.__metadata.__skipRemoteExecution) {
           resolve(true);
+          return;
         }
 
         const processId = uuid();

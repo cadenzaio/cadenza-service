@@ -271,9 +271,11 @@ export default class SocketController {
               return;
             }
 
+            console.log("Socket Delegate:", ctx);
+
             let resultContext;
             try {
-              resultContext = await socket
+              resultContext = await socket // TODO: Does not work
                 .timeout(ctx.__timeout ?? 0)
                 .emitWithAck("delegation", ctx);
               const metadata = resultContext.__metadata;
@@ -286,6 +288,7 @@ export default class SocketController {
                 },
               );
             } catch (e) {
+              console.log("socket error:", e);
               resultContext = {
                 __error: `Timeout error: ${e}`,
                 errored: true,
