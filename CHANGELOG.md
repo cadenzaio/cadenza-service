@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/cadenzaio/cadenza-service/compare/v1.9.55...v1.10.0) (2025-09-23)
+
+
+### Features
+
+* Socket init. ([7ad512a](https://github.com/cadenzaio/cadenza-service/commit/7ad512a7113e058ae8fb28dc0855359d66e3762f))
+
 ## [1.9.55](https://github.com/cadenzaio/cadenza-service/compare/v1.9.54...v1.9.55) (2025-09-23)
 
 
