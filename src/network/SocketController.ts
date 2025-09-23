@@ -27,6 +27,8 @@ export default class SocketController {
             const server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
             ctx.__socketServer = server;
 
+            console.log("SocketServer:", server);
+
             const profile = ctx.__securityProfile ?? "medium";
 
             server.use((socket, next) => {
@@ -85,6 +87,7 @@ export default class SocketController {
                 next();
               });
             });
+            console.log("SocketServer: Setup complete");
           } catch (err) {
             console.error("Socket setup error:", err);
             return false;
@@ -97,7 +100,10 @@ export default class SocketController {
             (ctx) => {
               const server = ctx.__socketServer;
 
+              console.log("SocketServer: Starting");
+
               server.on("connection", (ws: any) => {
+                console.log("SocketServer: New connection");
                 ws.on("handshake", (ctx: AnyObject) => {
                   console.log("Socket HANDSHAKE", ctx.serviceInstanceId);
                   ws.emit("handshake", {
