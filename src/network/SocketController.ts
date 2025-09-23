@@ -87,7 +87,10 @@ export default class SocketController {
             });
           } catch (err) {
             console.error("Socket setup error:", err);
+            return false;
           }
+
+          return true;
         }).then(
           Cadenza.createMetaTask(
             "Start SocketServer",
