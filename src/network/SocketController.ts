@@ -259,7 +259,7 @@ export default class SocketController {
           console.log("SocketClient: CONNECTED");
           Cadenza.broker.emit("meta.socket_client.connected", ctx);
           socket.emit("handshake", {
-            serviceInstanceId: serviceInstanceId,
+            serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
           });
         });
 
@@ -277,6 +277,16 @@ export default class SocketController {
 
         socket.on("status_update", (status) => {
           Cadenza.broker.emit("meta.socket_client.status_received", status);
+        });
+
+        socket.on("connect_error", (err) => {
+          console.error("SocketClient: connect_error", err);
+          Cadenza.broker.emit("meta.socket_client.connect_error", err);
+        });
+
+        socket.on("error", (err) => {
+          console.error("SocketClient: error", err);
+          Cadenza.broker.emit("meta.socket_client.error", err);
         });
 
         socket.on("disconnect", () => {
@@ -298,7 +308,7 @@ export default class SocketController {
             let resultContext;
             try {
               resultContext = await socket // TODO: Does not work
-                .timeout(ctx.__timeout ?? 0)
+                .timeout(ctx.__timeout ?? 10000)
                 .emitWithAck("delegation", ctx);
               const metadata = resultContext.__metadata;
               delete resultContext.__metadata;
@@ -342,7 +352,7 @@ export default class SocketController {
             let response;
             try {
               response = await socket
-                .timeout(ctx.__timeout ?? 0)
+                .timeout(ctx.__timeout ?? 10000)
                 .emitWithAck("signal", ctx);
 
               if (ctx.__routineExecId) {
