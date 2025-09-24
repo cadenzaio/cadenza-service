@@ -123,15 +123,20 @@ export default class SocketController {
 
           server.on("connection", (ws: any) => {
             console.log("SocketServer: New connection");
-            ws.on("handshake", (ctx: AnyObject) => {
-              console.log("Socket HANDSHAKE", ctx.serviceInstanceId);
-              ws.emit("handshake", {
-                serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-                __status: "success",
-              });
-              Cadenza.broker.emit("meta.socket.handshake", ctx);
-            });
             try {
+              ws.onAny((eventName: any, data: any) => {
+                console.log("SocketServer: Received", eventName, data);
+              });
+
+              ws.on("handshake", (ctx: AnyObject) => {
+                console.log("Socket HANDSHAKE", ctx.serviceInstanceId);
+                ws.emit("handshake", {
+                  serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                  __status: "success",
+                });
+                Cadenza.broker.emit("meta.socket.handshake", ctx);
+              });
+
               ws.on(
                 "delegation",
                 (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
