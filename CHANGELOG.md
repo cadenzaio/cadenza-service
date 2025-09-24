@@ -1,3 +1,10 @@
+## [1.10.17](https://github.com/cadenzaio/cadenza-service/compare/v1.10.16...v1.10.17) (2025-09-24)
+
+
+### Bug Fixes
+
+* Debugging query database task. ([b12c9da](https://github.com/cadenzaio/cadenza-service/commit/b12c9da8e14835b7ef693cc5e00402a62c380c6b))
+
 ## [1.10.16](https://github.com/cadenzaio/cadenza-service/compare/v1.10.15...v1.10.16) (2025-09-24)
 
 
