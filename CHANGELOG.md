@@ -1,3 +1,10 @@
+## [1.10.10](https://github.com/cadenzaio/cadenza-service/compare/v1.10.9...v1.10.10) (2025-09-24)
+
+
+### Bug Fixes
+
+* Added default timeout to socket requests. ([8972246](https://github.com/cadenzaio/cadenza-service/commit/89722464c2372a13534137bc82f089ae4bc29875))
+
 ## [1.10.9](https://github.com/cadenzaio/cadenza-service/compare/v1.10.8...v1.10.9) (2025-09-24)
 
 
