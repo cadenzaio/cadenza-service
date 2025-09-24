@@ -704,11 +704,10 @@ export default class DatabaseController {
     // Build base query
     let sql = `SELECT ${fields.length ? fields.join(", ") : "*"} FROM ${tableName}`;
     const params: any[] = [];
-    const conditions: string[] = [];
 
     // Handle filter
     if (Object.keys(filter).length > 0) {
-      conditions.push(this.buildWhereClause(filter, params));
+      sql += " " + this.buildWhereClause(filter, params);
     }
 
     // Handle joins
@@ -726,12 +725,16 @@ export default class DatabaseController {
     }
 
     // Handle limit and offset
-    if (limit !== undefined) sql += ` LIMIT $${params.length + 1}`;
-    params.push(limit);
-    if (offset !== undefined) sql += ` OFFSET $${params.length + 1}`;
-    params.push(offset);
+    if (limit !== undefined) {
+      sql += ` LIMIT $${params.length + 1}`;
+      params.push(limit);
+    }
+    if (offset !== undefined) {
+      sql += ` OFFSET $${params.length + 1}`;
+      params.push(offset);
+    }
 
-    console.log("Query", sql);
+    console.log("Query", sql, params);
 
     try {
       const result = await this.dbClient.query(sql, params);
