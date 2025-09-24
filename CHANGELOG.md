@@ -1,3 +1,10 @@
+## [1.10.16](https://github.com/cadenzaio/cadenza-service/compare/v1.10.15...v1.10.16) (2025-09-24)
+
+
+### Bug Fixes
+
+* Finally fixed delegation over socket. ([89a689b](https://github.com/cadenzaio/cadenza-service/commit/89a689b1b0eacb8a3eec5445332aa5d8808b38a1))
+
 ## [1.10.15](https://github.com/cadenzaio/cadenza-service/compare/v1.10.14...v1.10.15) (2025-09-24)
 
 
