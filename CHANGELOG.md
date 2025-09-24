@@ -1,3 +1,10 @@
+## [1.10.15](https://github.com/cadenzaio/cadenza-service/compare/v1.10.14...v1.10.15) (2025-09-24)
+
+
+### Bug Fixes
+
+* Debugging socket server. ([a541a8a](https://github.com/cadenzaio/cadenza-service/commit/a541a8acb0272df90b52994684a0552c5e9dbaaf))
+
 ## [1.10.14](https://github.com/cadenzaio/cadenza-service/compare/v1.10.13...v1.10.14) (2025-09-24)
 
 
