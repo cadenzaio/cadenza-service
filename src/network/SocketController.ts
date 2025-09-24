@@ -98,6 +98,7 @@ export default class SocketController {
                 }
                 next();
               });
+              next();
             });
             console.log("SocketServer: Setup complete");
           } catch (err) {
