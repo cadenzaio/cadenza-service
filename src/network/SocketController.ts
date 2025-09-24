@@ -31,6 +31,12 @@ export default class SocketController {
             const profile = ctx.__securityProfile ?? "medium";
 
             server.use((socket, next) => {
+              console.log(
+                "SocketServer: middleware",
+                socket.handshake.headers.origin,
+                profile,
+                ctx.__networkType,
+              );
               // Origin check (CORS-like)
               const origin = socket.handshake.headers.origin;
               const allowedOrigins = ["*"]; // TODO From firewall_rule
@@ -59,11 +65,16 @@ export default class SocketController {
                   .then(() => next())
                   .catch((rej) => {
                     if (rej.msBeforeNext > 0) {
+                      console.log(
+                        "SocketServer: Rate limit exceeded",
+                        rej.msBeforeNext / 1000,
+                      );
                       socket.emit("error", {
                         message: "Rate limit exceeded",
                         retryAfter: rej.msBeforeNext / 1000,
                       });
                     } else {
+                      console.log("SocketServer: Rate limit exceeded, blocked");
                       socket.disconnect(true);
                     }
                   });
@@ -81,7 +92,9 @@ export default class SocketController {
                     }
                     return data;
                   };
+                  console.log("SocketServer: Sanitizing", packet[1]);
                   packet[1] = sanitize(packet[1]); // Sanitize event payload
+                  console.log("SocketServer: Sanitized", packet[1]);
                 }
                 next();
               });

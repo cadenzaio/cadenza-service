@@ -2,7 +2,7 @@ import { AnyObject, Task } from "@cadenza.io/core";
 import Cadenza from "../Cadenza";
 
 export interface ServiceInstanceDescriptor {
-  id: string;
+  uuid: string;
   address: string;
   port: number;
   serviceName: string;
@@ -67,11 +67,11 @@ export default class ServiceRegistry {
       "Handle Instance Update",
       (ctx, emit) => {
         const { service_instance } = ctx;
-        const { id, serviceName, address, port, exposed } = service_instance;
+        const { uuid, serviceName, address, port, exposed } = service_instance;
         if (!this.instances.has(serviceName))
           this.instances.set(serviceName, []);
         const instances = this.instances.get(serviceName)!;
-        const existing = instances.find((i) => i.id === id);
+        const existing = instances.find((i) => i.uuid === uuid);
         if (existing) {
           Object.assign(existing, service_instance); // Update
         } else {
@@ -98,7 +98,7 @@ export default class ServiceRegistry {
 
             emit("meta.service_registry.dependee_registered", {
               serviceName: serviceName,
-              serviceInstanceId: id,
+              serviceInstanceId: uuid,
               serviceAddress: address,
               servicePort: port,
               protocol: exposed ? "https" : "http",
@@ -112,7 +112,7 @@ export default class ServiceRegistry {
               instance.clientCreated = true;
               emit("meta.service_registry.dependee_registered", {
                 serviceName: serviceName,
-                serviceInstanceId: id,
+                serviceInstanceId: uuid,
                 serviceAddress: address,
                 servicePort: port,
                 protocol: exposed ? "https" : "http",
@@ -189,7 +189,7 @@ export default class ServiceRegistry {
         const instanceId = ctx.__serviceInstanceId;
         const serviceName = ctx.__serviceName;
         const instances = this.instances.get(serviceName);
-        const instance = instances?.find((i) => i.id === instanceId);
+        const instance = instances?.find((i) => i.uuid === instanceId);
         if (instance) {
           instance.health = ctx.health;
           instance.numberOfRunningGraphs = ctx.numberOfRunningGraphs;
@@ -249,7 +249,7 @@ export default class ServiceRegistry {
         const { __id } = context;
         let instance;
         for (const instances of this.instances.values()) {
-          instance = instances.find((i) => i.id === __id);
+          instance = instances.find((i) => i.uuid === __id);
           if (instance) break;
         }
         return { ...context, __instance: instance };
@@ -343,7 +343,7 @@ export default class ServiceRegistry {
         }
 
         let instancesToTry = instances.filter(
-          (i) => !__triedInstances?.includes(i.id),
+          (i) => !__triedInstances?.includes(i.uuid),
         );
 
         if (instancesToTry.length === 0) {
@@ -364,9 +364,9 @@ export default class ServiceRegistry {
             instancesToTry[Math.floor(Math.random() * instancesToTry.length)];
         }
 
-        context.__instance = selected.id;
+        context.__instance = selected.uuid;
         context.__triedInstances = triedInstances;
-        context.__triedInstances.push(selected.id);
+        context.__triedInstances.push(selected.uuid);
         context.__retries = retries;
 
         if (this.useSocket) {
@@ -411,7 +411,7 @@ export default class ServiceRegistry {
 
       const self = this.instances
         .get(this.serviceName)
-        ?.find((i) => i.id === this.serviceInstanceId);
+        ?.find((i) => i.uuid === this.serviceInstanceId);
 
       return {
         ...ctx,
