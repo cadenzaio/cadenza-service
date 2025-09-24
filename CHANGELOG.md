@@ -1,3 +1,10 @@
+## [1.10.5](https://github.com/cadenzaio/cadenza-service/compare/v1.10.4...v1.10.5) (2025-09-24)
+
+
+### Bug Fixes
+
+* Core update to fix log issue ([721e34a](https://github.com/cadenzaio/cadenza-service/commit/721e34a04e9deb8948560cf6bec576b9038eefb3))
+
 ## [1.10.4](https://github.com/cadenzaio/cadenza-service/compare/v1.10.3...v1.10.4) (2025-09-24)
 
 
