@@ -1,3 +1,10 @@
+## [1.10.7](https://github.com/cadenzaio/cadenza-service/compare/v1.10.6...v1.10.7) (2025-09-24)
+
+
+### Bug Fixes
+
+* bug fix with instance id. More logging. ([787617b](https://github.com/cadenzaio/cadenza-service/commit/787617be92da65853b11476238e46ac1be8e94b5))
+
 ## [1.10.6](https://github.com/cadenzaio/cadenza-service/compare/v1.10.5...v1.10.6) (2025-09-24)
 
 
