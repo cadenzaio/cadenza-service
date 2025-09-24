@@ -1,3 +1,10 @@
+## [1.10.6](https://github.com/cadenzaio/cadenza-service/compare/v1.10.5...v1.10.6) (2025-09-24)
+
+
+### Bug Fixes
+
+* Better logging for socket server ([a540480](https://github.com/cadenzaio/cadenza-service/commit/a54048072be846ca9990d5f67788a39abf2030b7))
+
 ## [1.10.5](https://github.com/cadenzaio/cadenza-service/compare/v1.10.4...v1.10.5) (2025-09-24)
 
 
