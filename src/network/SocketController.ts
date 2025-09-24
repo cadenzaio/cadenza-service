@@ -33,12 +33,12 @@ export default class SocketController {
             server.use((socket, next) => {
               console.log(
                 "SocketServer: middleware",
-                socket.handshake.headers.origin,
+                socket?.handshake?.headers?.origin,
                 profile,
                 ctx.__networkType,
               );
               // Origin check (CORS-like)
-              const origin = socket.handshake.headers.origin;
+              const origin = socket?.handshake?.headers?.origin;
               const allowedOrigins = ["*"]; // TODO From firewall_rule
               const networkType = ctx.__networkType ?? "internal"; // From meta-config
               let effectiveOrigin = origin || "unknown";
