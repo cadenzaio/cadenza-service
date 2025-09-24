@@ -23,98 +23,87 @@ export default class SocketController {
 
           console.log("SocketServer: Setting up", ctx);
           let server;
-          try {
-            server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
+          server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
 
-            console.log("SocketServer:", server);
+          console.log("SocketServer:", server);
 
-            // const profile = ctx.__securityProfile ?? "medium";
+          const profile = ctx.__securityProfile ?? "medium";
 
-            // server.use((socket, next) => {
-            //   console.log(
-            //     "SocketServer: middleware",
-            //     socket?.handshake?.headers?.origin,
-            //     profile,
-            //     ctx.__networkType,
-            //   );
-            //   try {
-            //     // Origin check (CORS-like)
-            //     const origin = socket?.handshake?.headers?.origin;
-            //     const allowedOrigins = ["*"]; // TODO From firewall_rule
-            //     const networkType = ctx.__networkType ?? "internal"; // From meta-config
-            //     let effectiveOrigin = origin || "unknown";
-            //     if (networkType === "internal") effectiveOrigin = "internal"; // Assume trusted internal
-            //
-            //     if (
-            //       profile !== "low" &&
-            //       !allowedOrigins.includes(effectiveOrigin) &&
-            //       !allowedOrigins.includes("*")
-            //     ) {
-            //       return next(new Error("Unauthorized origin"));
-            //     }
-            //
-            //     // Rate limiting per socket/IP
-            //     const limiterOptions: { [key: string]: IRateLimiterOptions } = {
-            //       low: { points: Infinity, duration: 300 },
-            //       medium: { points: 100, duration: 300 },
-            //       high: { points: 50, duration: 60, blockDuration: 300 },
-            //     };
-            //     const limiter = new RateLimiterMemory(limiterOptions[profile]);
-            //     socket.use((packet, next) => {
-            //       limiter
-            //         .consume(socket?.handshake?.address || "unknown")
-            //         .then(() => next())
-            //         .catch((rej) => {
-            //           if (rej.msBeforeNext > 0) {
-            //             console.log(
-            //               "SocketServer: Rate limit exceeded",
-            //               rej.msBeforeNext / 1000,
-            //             );
-            //             socket.emit("error", {
-            //               message: "Rate limit exceeded",
-            //               retryAfter: rej.msBeforeNext / 1000,
-            //             });
-            //           } else {
-            //             console.log(
-            //               "SocketServer: Rate limit exceeded, blocked",
-            //             );
-            //             socket.disconnect(true);
-            //           }
-            //         });
-            //     });
-            //
-            //     // Sanitization for payloads
-            //     socket.use((packet, next) => {
-            //       if (profile !== "low") {
-            //         const sanitize = (data: any) => {
-            //           if (typeof data === "string") return xss(data);
-            //           if (typeof data === "object") {
-            //             for (const key in data) {
-            //               data[key] = sanitize(data[key]);
-            //             }
-            //           }
-            //           return data;
-            //         };
-            //         try {
-            //           console.log("SocketServer: Sanitizing", packet[1]);
-            //           packet[1] = sanitize(packet[1]); // Sanitize event payload
-            //           console.log("SocketServer: Sanitized", packet[1]);
-            //         } catch (e) {
-            //           console.error("SocketServer: Sanitization error", e);
-            //         }
-            //       }
-            //       next();
-            //     });
-            //   } catch (e) {
-            //     console.error("SocketServer: middleware error", e);
-            //   }
-            //   next();
-            // });
-            console.log("SocketServer: Setup complete");
-          } catch (err) {
-            console.error("Socket setup error:", err);
-            return { ...ctx, __error: err, errored: true };
-          }
+          server.use((socket, next) => {
+            console.log(
+              "SocketServer: middleware",
+              socket?.handshake?.headers?.origin,
+              profile,
+              ctx.__networkType,
+            );
+            // Origin check (CORS-like)
+            const origin = socket?.handshake?.headers?.origin;
+            const allowedOrigins = ["*"]; // TODO From firewall_rule
+            const networkType = ctx.__networkType ?? "internal"; // From meta-config
+            let effectiveOrigin = origin || "unknown";
+            if (networkType === "internal") effectiveOrigin = "internal"; // Assume trusted internal
+
+            if (
+              profile !== "low" &&
+              !allowedOrigins.includes(effectiveOrigin) &&
+              !allowedOrigins.includes("*")
+            ) {
+              return next(new Error("Unauthorized origin"));
+            }
+
+            // Rate limiting per socket/IP
+            const limiterOptions: { [key: string]: IRateLimiterOptions } = {
+              low: { points: Infinity, duration: 300 },
+              medium: { points: 100, duration: 300 },
+              high: { points: 50, duration: 60, blockDuration: 300 },
+            };
+            const limiter = new RateLimiterMemory(limiterOptions[profile]);
+            socket.use((packet, next) => {
+              limiter
+                .consume(socket?.handshake?.address || "unknown")
+                .then(() => next())
+                .catch((rej) => {
+                  if (rej.msBeforeNext > 0) {
+                    console.log(
+                      "SocketServer: Rate limit exceeded",
+                      rej.msBeforeNext / 1000,
+                    );
+                    socket.emit("error", {
+                      message: "Rate limit exceeded",
+                      retryAfter: rej.msBeforeNext / 1000,
+                    });
+                  } else {
+                    console.log("SocketServer: Rate limit exceeded, blocked");
+                    socket.disconnect(true);
+                  }
+                });
+            });
+
+            // Sanitization for payloads
+            socket.use((packet, next) => {
+              if (profile !== "low") {
+                const sanitize = (data: any) => {
+                  if (typeof data === "string") return xss(data);
+                  if (typeof data === "object") {
+                    for (const key in data) {
+                      data[key] = sanitize(data[key]);
+                    }
+                  }
+                  return data;
+                };
+                try {
+                  console.log("SocketServer: Sanitizing", packet[1]);
+                  packet[1] = sanitize(packet[1]); // Sanitize event payload
+                  console.log("SocketServer: Sanitized", packet[1]);
+                } catch (e) {
+                  console.error("SocketServer: Sanitization error", e);
+                }
+              }
+              next();
+            });
+            next();
+          });
+          console.log("SocketServer: Setup complete");
 
           if (!server) {
             console.error("Socket setup error: No server");
@@ -171,7 +160,10 @@ export default class SocketController {
                     )
                     .emitsOnFail(`meta.socket.progress_failed:${deputyExecId}`);
 
-                  Cadenza.broker.emit("meta.socket.delegation_requested", ctx);
+                  Cadenza.broker.emit("meta.socket.delegation_requested", {
+                    ...ctx,
+                    __name: ctx.__remoteRoutineName,
+                  });
                 },
               );
 
@@ -328,43 +320,40 @@ export default class SocketController {
 
             console.log("Socket Delegate:", ctx);
 
-            let resultContext;
-            try {
-              socket.emit("handshake", ctx);
-              resultContext = await socket // TODO: Does not work
-                .timeout(ctx.__timeout ?? 10000)
-                .emitWithAck("delegation", ctx);
-              const metadata = resultContext.__metadata;
-              delete resultContext.__metadata;
-              emit(
-                `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
-                {
-                  ...resultContext,
-                  ...metadata,
-                },
-              );
-            } catch (e) {
-              console.log("socket error:", e);
-              resultContext = {
-                __error: `Timeout error: ${e}`,
-                errored: true,
-                ...ctx,
-                ...ctx.__metadata,
-              };
-            }
+            socket
+              .timeout(10000)
+              .emit("delegation", ctx, (err: any, resultContext: AnyObject) => {
+                if (err) {
+                  console.log("socket error:", err);
+                  resultContext = {
+                    __error: `Timeout error: ${err}`,
+                    errored: true,
+                    ...ctx,
+                    ...ctx.__metadata,
+                  };
+                  emit(
+                    `meta.socket_client.delegate_failed:${serviceInstanceId}`,
+                    resultContext,
+                  );
+                  return;
+                }
 
-            console.log("SocketClient: Delegate result", resultContext);
-
-            return resultContext;
+                const metadata = resultContext.__metadata;
+                delete resultContext.__metadata;
+                console.log("SocketClient: Delegate result", resultContext);
+                emit(
+                  `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
+                  {
+                    ...resultContext,
+                    ...metadata,
+                  },
+                );
+              });
           },
           `Delegate flow to instance ${serviceInstanceId} of service ${serviceName} with address ${serviceAddress}:${servicePort}`,
-        )
-          .doOn(
-            `meta.service_registry.selected_instance_for_socket:${serviceInstanceId}`,
-          )
-          .emitsOnFail(
-            `meta.socket_client.delegate_failed:${serviceInstanceId}`,
-          );
+        ).doOn(
+          `meta.service_registry.selected_instance_for_socket:${serviceInstanceId}`,
+        );
 
         Cadenza.createMetaTask(
           `Transmit signal to ${serviceInstanceId}`,
@@ -373,37 +362,36 @@ export default class SocketController {
               return;
             }
 
-            let response;
-            try {
-              response = await socket
-                .timeout(ctx.__timeout ?? 10000)
-                .emitWithAck("signal", ctx);
+            socket
+              .timeout(ctx.__timeout ?? 10000)
+              .emit("signal", ctx, (err: any, response: AnyObject) => {
+                if (err) {
+                  console.log("socket error:", err);
+                  response = {
+                    __error: `Timeout error: ${err}`,
+                    errored: true,
+                    ...ctx,
+                    ...ctx.__metadata,
+                  };
+                  emit(
+                    `meta.socket_client.signal_transmission_failed:${serviceInstanceId}`,
+                    response,
+                  );
+                  return;
+                }
 
-              if (ctx.__routineExecId) {
-                emit(
-                  `meta.socket_client.transmitted:${ctx.__routineExecId}`,
-                  response,
-                );
-              }
-            } catch (e) {
-              response = {
-                __error: `Timeout error: ${e}`,
-                errored: true,
-                ...ctx,
-                ...ctx.__metadata,
-              };
-            }
-
-            return response;
+                if (ctx.__routineExecId) {
+                  emit(
+                    `meta.socket_client.transmitted:${ctx.__routineExecId}`,
+                    response,
+                  );
+                }
+              });
           },
           `Transmits signal to instance ${serviceInstanceId} of service ${serviceName} with address ${serviceAddress}:${servicePort}`,
-        )
-          .doOn(
-            `meta.service_registry.selected_instance_for_socket:${serviceInstanceId}`,
-          )
-          .emitsOnFail(
-            `meta.socket_client.signal_transmission_failed:${serviceInstanceId}`,
-          );
+        ).doOn(
+          `meta.service_registry.selected_instance_for_socket:${serviceInstanceId}`,
+        );
 
         Cadenza.createMetaTask(
           "Shutdown SocketClient",
