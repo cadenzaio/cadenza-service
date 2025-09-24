@@ -1,3 +1,10 @@
+## [1.10.4](https://github.com/cadenzaio/cadenza-service/compare/v1.10.3...v1.10.4) (2025-09-24)
+
+
+### Bug Fixes
+
+* Socket server connection. ([b4c76e8](https://github.com/cadenzaio/cadenza-service/commit/b4c76e85ed496cbb4514da244fa1d62db193615a))
+
 ## [1.10.3](https://github.com/cadenzaio/cadenza-service/compare/v1.10.2...v1.10.3) (2025-09-23)
 
 
