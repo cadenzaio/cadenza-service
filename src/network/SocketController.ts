@@ -125,6 +125,7 @@ export default class SocketController {
             ws.on(
               "delegation",
               (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
+                console.log("Received socket delegation request", ctx);
                 const deputyExecId = ctx.__metadata.__deputyExecId;
 
                 Cadenza.createEphemeralMetaTask(

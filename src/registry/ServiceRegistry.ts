@@ -424,7 +424,14 @@ export default class ServiceRegistry {
 
     this.insertServiceTask = Cadenza.createCadenzaDBInsertTask(
       "service",
-      {},
+      {
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "nothing",
+          },
+        },
+      },
       {
         // validateInputContext: true,
         inputSchema: {
