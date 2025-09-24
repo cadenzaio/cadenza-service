@@ -37,67 +37,77 @@ export default class SocketController {
                 profile,
                 ctx.__networkType,
               );
-              // Origin check (CORS-like)
-              const origin = socket?.handshake?.headers?.origin;
-              const allowedOrigins = ["*"]; // TODO From firewall_rule
-              const networkType = ctx.__networkType ?? "internal"; // From meta-config
-              let effectiveOrigin = origin || "unknown";
-              if (networkType === "internal") effectiveOrigin = "internal"; // Assume trusted internal
+              try {
+                // Origin check (CORS-like)
+                const origin = socket?.handshake?.headers?.origin;
+                const allowedOrigins = ["*"]; // TODO From firewall_rule
+                const networkType = ctx.__networkType ?? "internal"; // From meta-config
+                let effectiveOrigin = origin || "unknown";
+                if (networkType === "internal") effectiveOrigin = "internal"; // Assume trusted internal
 
-              if (
-                profile !== "low" &&
-                !allowedOrigins.includes(effectiveOrigin) &&
-                !allowedOrigins.includes("*")
-              ) {
-                return next(new Error("Unauthorized origin"));
-              }
-
-              // Rate limiting per socket/IP
-              const limiterOptions: { [key: string]: IRateLimiterOptions } = {
-                low: { points: Infinity, duration: 300 },
-                medium: { points: 100, duration: 300 },
-                high: { points: 50, duration: 60, blockDuration: 300 },
-              };
-              const limiter = new RateLimiterMemory(limiterOptions[profile]);
-              socket.use((packet, next) => {
-                limiter
-                  .consume(socket.handshake.address)
-                  .then(() => next())
-                  .catch((rej) => {
-                    if (rej.msBeforeNext > 0) {
-                      console.log(
-                        "SocketServer: Rate limit exceeded",
-                        rej.msBeforeNext / 1000,
-                      );
-                      socket.emit("error", {
-                        message: "Rate limit exceeded",
-                        retryAfter: rej.msBeforeNext / 1000,
-                      });
-                    } else {
-                      console.log("SocketServer: Rate limit exceeded, blocked");
-                      socket.disconnect(true);
-                    }
-                  });
-              });
-
-              // Sanitization for payloads
-              socket.use((packet, next) => {
-                if (profile !== "low") {
-                  const sanitize = (data: any) => {
-                    if (typeof data === "string") return xss(data);
-                    if (typeof data === "object") {
-                      for (const key in data) {
-                        data[key] = sanitize(data[key]);
-                      }
-                    }
-                    return data;
-                  };
-                  console.log("SocketServer: Sanitizing", packet[1]);
-                  packet[1] = sanitize(packet[1]); // Sanitize event payload
-                  console.log("SocketServer: Sanitized", packet[1]);
+                if (
+                  profile !== "low" &&
+                  !allowedOrigins.includes(effectiveOrigin) &&
+                  !allowedOrigins.includes("*")
+                ) {
+                  return next(new Error("Unauthorized origin"));
                 }
-                next();
-              });
+
+                // Rate limiting per socket/IP
+                const limiterOptions: { [key: string]: IRateLimiterOptions } = {
+                  low: { points: Infinity, duration: 300 },
+                  medium: { points: 100, duration: 300 },
+                  high: { points: 50, duration: 60, blockDuration: 300 },
+                };
+                const limiter = new RateLimiterMemory(limiterOptions[profile]);
+                socket.use((packet, next) => {
+                  limiter
+                    .consume(socket?.handshake?.address || "unknown")
+                    .then(() => next())
+                    .catch((rej) => {
+                      if (rej.msBeforeNext > 0) {
+                        console.log(
+                          "SocketServer: Rate limit exceeded",
+                          rej.msBeforeNext / 1000,
+                        );
+                        socket.emit("error", {
+                          message: "Rate limit exceeded",
+                          retryAfter: rej.msBeforeNext / 1000,
+                        });
+                      } else {
+                        console.log(
+                          "SocketServer: Rate limit exceeded, blocked",
+                        );
+                        socket.disconnect(true);
+                      }
+                    });
+                });
+
+                // Sanitization for payloads
+                socket.use((packet, next) => {
+                  if (profile !== "low") {
+                    const sanitize = (data: any) => {
+                      if (typeof data === "string") return xss(data);
+                      if (typeof data === "object") {
+                        for (const key in data) {
+                          data[key] = sanitize(data[key]);
+                        }
+                      }
+                      return data;
+                    };
+                    try {
+                      console.log("SocketServer: Sanitizing", packet[1]);
+                      packet[1] = sanitize(packet[1]); // Sanitize event payload
+                      console.log("SocketServer: Sanitized", packet[1]);
+                    } catch (e) {
+                      console.error("SocketServer: Sanitization error", e);
+                    }
+                  }
+                  next();
+                });
+              } catch (e) {
+                console.error("SocketServer: middleware error", e);
+              }
               next();
             });
             console.log("SocketServer: Setup complete");
