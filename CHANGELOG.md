@@ -1,3 +1,10 @@
+## [1.10.9](https://github.com/cadenzaio/cadenza-service/compare/v1.10.8...v1.10.9) (2025-09-24)
+
+
+### Bug Fixes
+
+* Added onConflict clause for service registration. More socket logs. ([4e1b086](https://github.com/cadenzaio/cadenza-service/commit/4e1b08655e7eee6b9a84515d3a20be9a0783a8ba))
+
 ## [1.10.8](https://github.com/cadenzaio/cadenza-service/compare/v1.10.7...v1.10.8) (2025-09-24)
 
 
