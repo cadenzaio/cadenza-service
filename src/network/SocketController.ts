@@ -93,14 +93,14 @@ export default class SocketController {
             return false;
           }
 
-          return true;
+          return ctx;
         }).then(
           Cadenza.createMetaTask(
             "Start SocketServer",
             (ctx) => {
               const server = ctx.__socketServer;
 
-              console.log("SocketServer: Starting");
+              console.log("SocketServer: Starting", server);
 
               server.on("connection", (ws: any) => {
                 console.log("SocketServer: New connection");
@@ -250,7 +250,14 @@ export default class SocketController {
           retries: 5,
         });
 
+        console.log(
+          "SocketClient: Connecting to",
+          `${socketProtocol}://${serviceAddress}:${port}`,
+          socket,
+        );
+
         socket.on("connect", () => {
+          console.log("SocketClient: CONNECTED");
           Cadenza.broker.emit("meta.socket_client.connected", ctx);
           socket.emit("handshake", {
             serviceInstanceId: serviceInstanceId,
@@ -311,6 +318,8 @@ export default class SocketController {
                 ...ctx.__metadata,
               };
             }
+
+            console.log("SocketClient: Delegate result", resultContext);
 
             return resultContext;
           },
