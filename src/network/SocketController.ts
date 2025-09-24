@@ -22,10 +22,9 @@ export default class SocketController {
           }
 
           console.log("SocketServer: Setting up", ctx);
-
+          let server;
           try {
-            const server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
-            ctx.__socketServer = server;
+            server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
 
             console.log("SocketServer:", server);
 
@@ -90,139 +89,124 @@ export default class SocketController {
             console.log("SocketServer: Setup complete");
           } catch (err) {
             console.error("Socket setup error:", err);
-            return false;
+            return { ...ctx, __error: err, errored: true };
           }
 
-          return ctx;
-        }).then(
-          Cadenza.createMetaTask(
-            "Start SocketServer",
-            (ctx) => {
-              const server = ctx.__socketServer;
+          if (!server) {
+            console.error("Socket setup error: No server");
+            return { ...ctx, __error: "No server", errored: true };
+          }
 
-              console.log("SocketServer: Starting", server);
-
-              server.on("connection", (ws: any) => {
-                console.log("SocketServer: New connection");
-                ws.on("handshake", (ctx: AnyObject) => {
-                  console.log("Socket HANDSHAKE", ctx.serviceInstanceId);
-                  ws.emit("handshake", {
-                    serviceInstanceId:
-                      Cadenza.serviceRegistry.serviceInstanceId,
-                    __status: "success",
-                  });
-                  Cadenza.broker.emit("meta.socket.handshake", ctx);
-                });
-
-                ws.on(
-                  "delegation",
-                  (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
-                    const deputyExecId = ctx.__metadata.__deputyExecId;
-
-                    Cadenza.createEphemeralMetaTask(
-                      "Resolve delegation",
-                      callback,
-                      "Resolves a delegation request using the provided callback from the client (.emitWithAck())",
-                    )
-                      .doOn(`meta.node.graph_completed:${deputyExecId}`)
-                      .emits(`meta.socket.delegation_resolved:${deputyExecId}`);
-
-                    Cadenza.createEphemeralMetaTask(
-                      "Delegation progress update",
-                      (ctx) => {
-                        if (ctx.__progress !== undefined)
-                          ws.emit("delegation_progress", ctx);
-                      },
-                      "Updates delegation progress",
-                      {
-                        once: false,
-                        destroyCondition: (ctx: AnyObject) =>
-                          ctx.data.progress === 1.0 ||
-                          ctx.data?.progress === undefined,
-                      },
-                    )
-                      .doOn(
-                        `meta.node.routine_execution_progress:${deputyExecId}`,
-                        `meta.node.graph_completed:${deputyExecId}`,
-                      )
-                      .emitsOnFail(
-                        `meta.socket.progress_failed:${deputyExecId}`,
-                      );
-
-                    Cadenza.broker.emit(
-                      "meta.socket.delegation_requested",
-                      ctx,
-                    );
-                  },
-                );
-
-                ws.on(
-                  "signal",
-                  (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
-                    if (
-                      Cadenza.broker
-                        .listObservedSignals()
-                        .includes(ctx.__signalName)
-                    ) {
-                      callback({
-                        __status: "success",
-                        __signalName: ctx.__signalName,
-                      });
-                      Cadenza.broker.emit(ctx.__signalName, ctx);
-                    } else {
-                      callback({
-                        __status: "error",
-                        __error: "No such signal",
-                        errored: true,
-                      });
-                    }
-                  },
-                );
-
-                ws.on(
-                  "status_check",
-                  (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
-                    Cadenza.createEphemeralMetaTask(
-                      "Resolve status check",
-                      callback,
-                      "Resolves a status check request",
-                    ).doAfter(Cadenza.serviceRegistry.getStatusTask);
-
-                    Cadenza.broker.emit(
-                      "meta.socket.status_check_requested",
-                      ctx,
-                    );
-                  },
-                );
-
-                ws.on("disconnect", () => {
-                  Cadenza.broker.emit("meta.socket.disconnected", {
-                    __wsId: ws.id,
-                  });
-                });
-
-                Cadenza.broker.emit("meta.socket.connected", { __wsId: ws.id });
+          server.on("connection", (ws: any) => {
+            console.log("SocketServer: New connection");
+            ws.on("handshake", (ctx: AnyObject) => {
+              console.log("Socket HANDSHAKE", ctx.serviceInstanceId);
+              ws.emit("handshake", {
+                serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                __status: "success",
               });
+              Cadenza.broker.emit("meta.socket.handshake", ctx);
+            });
 
-              Cadenza.createMetaTask(
-                "Broadcast status",
-                (ctx) => server.emit("status_update", ctx),
-                "Broadcasts the status of the server to all clients",
-              ).doOn("meta.service.updated");
+            ws.on(
+              "delegation",
+              (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
+                const deputyExecId = ctx.__metadata.__deputyExecId;
 
-              Cadenza.createMetaTask(
-                "Shutdown SocketServer",
-                () => server.close(),
-                "Shuts down the socket server",
-              )
-                .doOn("meta.socket_server_shutdown_requested")
-                .emits("meta.socket.shutdown");
+                Cadenza.createEphemeralMetaTask(
+                  "Resolve delegation",
+                  callback,
+                  "Resolves a delegation request using the provided callback from the client (.emitWithAck())",
+                )
+                  .doOn(`meta.node.graph_completed:${deputyExecId}`)
+                  .emits(`meta.socket.delegation_resolved:${deputyExecId}`);
 
-              return true;
-            },
-            "Starts socket server and initiates meta-handling",
-          ).emitsOnFail("meta.socket.failed"),
-        ),
+                Cadenza.createEphemeralMetaTask(
+                  "Delegation progress update",
+                  (ctx) => {
+                    if (ctx.__progress !== undefined)
+                      ws.emit("delegation_progress", ctx);
+                  },
+                  "Updates delegation progress",
+                  {
+                    once: false,
+                    destroyCondition: (ctx: AnyObject) =>
+                      ctx.data.progress === 1.0 ||
+                      ctx.data?.progress === undefined,
+                  },
+                )
+                  .doOn(
+                    `meta.node.routine_execution_progress:${deputyExecId}`,
+                    `meta.node.graph_completed:${deputyExecId}`,
+                  )
+                  .emitsOnFail(`meta.socket.progress_failed:${deputyExecId}`);
+
+                Cadenza.broker.emit("meta.socket.delegation_requested", ctx);
+              },
+            );
+
+            ws.on(
+              "signal",
+              (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
+                if (
+                  Cadenza.broker
+                    .listObservedSignals()
+                    .includes(ctx.__signalName)
+                ) {
+                  callback({
+                    __status: "success",
+                    __signalName: ctx.__signalName,
+                  });
+                  Cadenza.broker.emit(ctx.__signalName, ctx);
+                } else {
+                  callback({
+                    __status: "error",
+                    __error: "No such signal",
+                    errored: true,
+                  });
+                }
+              },
+            );
+
+            ws.on(
+              "status_check",
+              (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
+                Cadenza.createEphemeralMetaTask(
+                  "Resolve status check",
+                  callback,
+                  "Resolves a status check request",
+                ).doAfter(Cadenza.serviceRegistry.getStatusTask);
+
+                Cadenza.broker.emit("meta.socket.status_check_requested", ctx);
+              },
+            );
+
+            ws.on("disconnect", () => {
+              console.log("SocketServer: Disconnected");
+              Cadenza.broker.emit("meta.socket.disconnected", {
+                __wsId: ws.id,
+              });
+            });
+
+            Cadenza.broker.emit("meta.socket.connected", { __wsId: ws.id });
+          });
+
+          Cadenza.createMetaTask(
+            "Broadcast status",
+            (ctx) => server.emit("status_update", ctx),
+            "Broadcasts the status of the server to all clients",
+          ).doOn("meta.service.updated");
+
+          Cadenza.createMetaTask(
+            "Shutdown SocketServer",
+            () => server.close(),
+            "Shuts down the socket server",
+          )
+            .doOn("meta.socket_server_shutdown_requested")
+            .emits("meta.socket.shutdown");
+
+          return ctx;
+        }),
       ],
       "Bootstraps the socket server",
     ).doOn("meta.rest.network_configured");
@@ -281,6 +265,7 @@ export default class SocketController {
         });
 
         socket.on("disconnect", () => {
+          console.log("SocketClient: Disconnected", serviceInstanceId);
           Cadenza.broker.emit("meta.socket_client.disconnected", {
             serviceInstanceId,
           });
