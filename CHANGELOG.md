@@ -1,3 +1,10 @@
+## [1.10.8](https://github.com/cadenzaio/cadenza-service/compare/v1.10.7...v1.10.8) (2025-09-24)
+
+
+### Bug Fixes
+
+* Fixed socket middleware bug ([2f22c02](https://github.com/cadenzaio/cadenza-service/commit/2f22c0219de7f9b23730794d017bd4e42cee3eba))
+
 ## [1.10.7](https://github.com/cadenzaio/cadenza-service/compare/v1.10.6...v1.10.7) (2025-09-24)
 
 
