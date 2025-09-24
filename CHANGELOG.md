@@ -1,3 +1,10 @@
+## [1.10.12](https://github.com/cadenzaio/cadenza-service/compare/v1.10.11...v1.10.12) (2025-09-24)
+
+
+### Bug Fixes
+
+* More Socket stability improvements ([d4cc875](https://github.com/cadenzaio/cadenza-service/commit/d4cc875f49ec41b9f8375629316a74def5904179))
+
 ## [1.10.11](https://github.com/cadenzaio/cadenza-service/compare/v1.10.10...v1.10.11) (2025-09-24)
 
 
