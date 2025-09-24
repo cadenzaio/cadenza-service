@@ -731,6 +731,8 @@ export default class DatabaseController {
     if (offset !== undefined) sql += ` OFFSET $${params.length + 1}`;
     params.push(offset);
 
+    console.log("Query", sql);
+
     try {
       const result = await this.dbClient.query(sql, params);
       return {

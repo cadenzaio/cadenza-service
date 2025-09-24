@@ -207,7 +207,7 @@ export default class ServiceRegistry {
         is_blocked: false,
       },
       fields: [
-        "id",
+        "uuid",
         "address",
         "port",
         "service_name",
