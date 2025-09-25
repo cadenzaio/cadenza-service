@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/cadenzaio/cadenza-service/compare/v1.11.1...v1.12.0) (2025-09-25)
+
+
+### Features
+
+* default signal for database tasks. ([bb96a88](https://github.com/cadenzaio/cadenza-service/commit/bb96a88d5de97f08ba1693ecc8d0174fad61c761))
+
 ## [1.11.1](https://github.com/cadenzaio/cadenza-service/compare/v1.11.0...v1.11.1) (2025-09-25)
 
 
