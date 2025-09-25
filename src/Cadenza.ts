@@ -466,7 +466,7 @@ export default class CadenzaService {
     if (options.cadenzaDB?.connect) {
       Cadenza.broker.emit("meta.initializing_service", {
         // Seed the CadenzaDB
-        service_instance: {
+        serviceInstance: {
           uuid: "cadenza-db",
           serviceName: "CadenzaDB",
           address: options.cadenzaDB?.address,
@@ -483,7 +483,7 @@ export default class CadenzaService {
 
     options.relatedServices?.forEach((service) => {
       Cadenza.broker.emit("meta.initializing_service", {
-        service_instance: {
+        serviceInstance: {
           uuid: service[0],
           serviceName: service[1],
           address: service[2].split(":")[0],

@@ -357,19 +357,14 @@ export default class RestController {
     Cadenza.createMetaTask(
       "Setup fetch client",
       (ctx, emit) => {
-        const {
-          serviceName,
-          serviceInstanceId,
-          serviceAddress,
-          servicePort,
-          protocol,
-        } = ctx;
+        const { serviceName, serviceAddress, servicePort, protocol } = ctx;
 
         const port = protocol === "https" ? 443 : servicePort;
         const URL = `${protocol}://${serviceAddress}:${port}`;
+        const fetchId = `${serviceAddress}_${port}`;
 
         Cadenza.createMetaTask(
-          "Send Handshake",
+          `Send Handshake to ${URL}`,
           async (ctx, emit) => {
             console.log("Sending handshake", ctx);
             const response = await fetch(`${URL}/handshake`, {
@@ -388,10 +383,7 @@ export default class RestController {
               );
             }
 
-            console.log(
-              `Connected to service ${serviceName} ${ctx.serviceInstanceId}`,
-              result,
-            );
+            console.log(`Connected to service ${serviceName} ${URL}`, result);
 
             for (const communicationType of ctx.communicationTypes) {
               // TODO: Should be done in other situations as well
@@ -415,11 +407,12 @@ export default class RestController {
             retryDelayFactor: 1.5,
           },
         )
-          .doOn(`meta.fetch.handshake_requested:${serviceInstanceId}`)
-          .emits("meta.fetch.handshake_complete");
+          .doOn(`meta.fetch.handshake_requested:${fetchId}`)
+          .emits("meta.fetch.handshake_complete")
+          .emitsOnFail("meta.fetch.handshake_failed"); // TODO: register as not active
 
         Cadenza.createMetaTask(
-          "Delegate flow to REST server",
+          `Delegate flow to REST server ${URL}`,
           async (ctx, emit) => {
             if (ctx.__remoteRoutineName === undefined) {
               return;
@@ -456,13 +449,13 @@ export default class RestController {
           "Sends delegation request",
         )
           .doOn(
-            `meta.service_registry.selected_instance_for_fetch:${serviceInstanceId}`,
-            `meta.service_registry.socket_failed:${serviceInstanceId}`,
+            `meta.service_registry.selected_instance_for_fetch:${fetchId}`,
+            `meta.service_registry.socket_failed:${fetchId}`,
           )
           .emitsOnFail("meta.fetch.delegate_failed");
 
         Cadenza.createMetaTask(
-          "Transmit signal to server",
+          `Transmit signal to server ${URL}`,
           async (ctx, emit) => {
             if (ctx.__signalName === undefined) {
               return;
@@ -495,14 +488,14 @@ export default class RestController {
           "Sends signal request",
         )
           .doOn(
-            `meta.service_registry.selected_instance_for_fetch:${serviceInstanceId}`,
+            `meta.service_registry.selected_instance_for_fetch:${fetchId}`,
             `meta.signal_controller.remote_signal_registered:${serviceName}`,
             "meta.signal_controller.wildcard_signal_registered",
           )
           .emitsOnFail("meta.fetch.signal_transmission_failed");
 
         Cadenza.createMetaTask(
-          "Request status",
+          `Request status from ${URL}`,
           async (ctx) => {
             let status;
             try {
@@ -524,6 +517,8 @@ export default class RestController {
           .emits("meta.fetch.status_checked")
           .emitsOnFail("meta.fetch.status_check_failed");
 
+        // TODO: destroy fetch client
+
         return true;
       },
       "Manages REST client requests as fallback",
@@ -532,12 +527,22 @@ export default class RestController {
         Cadenza.createMetaTask(
           "Prepare handshake",
           (ctx, emit) => {
-            const { serviceInstanceId, serviceName, communicationTypes } = ctx;
-            emit(`meta.fetch.handshake_requested:${serviceInstanceId}`, {
+            const {
+              serviceName,
+              serviceInstanceId,
+              communicationTypes,
+              serviceAddress,
+              servicePort,
+            } = ctx;
+
+            const fetchId = `${serviceAddress}_${servicePort}`;
+
+            emit(`meta.fetch.handshake_requested:${fetchId}`, {
               serviceInstanceId,
               serviceName,
               communicationTypes,
               handshakeData: {
+                instanceId: Cadenza.serviceRegistry.serviceInstanceId,
                 // JWT token...
               },
             });

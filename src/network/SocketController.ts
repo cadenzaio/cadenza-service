@@ -244,18 +244,14 @@ export default class SocketController {
     Cadenza.createMetaTask(
       "Connect to socket server",
       (ctx) => {
-        const {
-          serviceName,
-          serviceInstanceId,
-          serviceAddress,
-          servicePort,
-          protocol,
-        } = ctx;
+        const { serviceName, serviceAddress, servicePort, protocol } = ctx;
 
         const socketProtocol = protocol === "https" ? "wss" : "ws";
         const port = protocol === "https" ? 443 : servicePort;
+        const URL = `${socketProtocol}://${serviceAddress}:${port}`;
+        const fetchId = `${serviceAddress}_${port}`;
 
-        const socket = io(`${socketProtocol}://${serviceAddress}:${port}`, {
+        const socket = io(URL, {
           reconnection: true,
           reconnectionAttempts: 20,
           reconnectionDelay: 1000,
@@ -264,11 +260,7 @@ export default class SocketController {
           retries: 5,
         });
 
-        console.log(
-          "SocketClient: Connecting to",
-          `${socketProtocol}://${serviceAddress}:${port}`,
-          socket,
-        );
+        console.log("SocketClient: Connecting to", URL, socket);
 
         socket.on("connect", () => {
           console.log("SocketClient: CONNECTED");
@@ -286,7 +278,7 @@ export default class SocketController {
         socket.on("delegation_progress", (ctx) => {
           Cadenza.broker.emit(
             `meta.socket_client.delegation_progress:${ctx.__metadata.__deputyExecId}`,
-            { serviceInstanceId, ...ctx },
+            ctx,
           );
         });
 
@@ -305,14 +297,14 @@ export default class SocketController {
         });
 
         socket.on("disconnect", () => {
-          console.log("SocketClient: Disconnected", serviceInstanceId);
+          console.log("SocketClient: Disconnected", URL);
           Cadenza.broker.emit("meta.socket_client.disconnected", {
-            serviceInstanceId,
+            URL,
           });
         });
 
         Cadenza.createMetaTask(
-          `Delegate flow to ${serviceInstanceId}`,
+          `Delegate flow to ${URL}`,
           async (ctx, emit) => {
             if (ctx.__remoteRoutineName === undefined) {
               return;
@@ -331,10 +323,7 @@ export default class SocketController {
                     ...ctx,
                     ...ctx.__metadata,
                   };
-                  emit(
-                    `meta.socket_client.delegate_failed:${serviceInstanceId}`,
-                    resultContext,
-                  );
+                  emit(`meta.socket_client.delegate_failed`, resultContext);
                   return;
                 }
 
@@ -350,13 +339,11 @@ export default class SocketController {
                 );
               });
           },
-          `Delegate flow to instance ${serviceInstanceId} of service ${serviceName} with address ${serviceAddress}:${servicePort}`,
-        ).doOn(
-          `meta.service_registry.selected_instance_for_socket:${serviceInstanceId}`,
-        );
+          `Delegate flow to service ${serviceName} with address ${URL}`,
+        ).doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`);
 
         Cadenza.createMetaTask(
-          `Transmit signal to ${serviceInstanceId}`,
+          `Transmit signal to ${URL}`,
           async (ctx, emit) => {
             if (ctx.__signalName === undefined) {
               return;
@@ -374,7 +361,7 @@ export default class SocketController {
                     ...ctx.__metadata,
                   };
                   emit(
-                    `meta.socket_client.signal_transmission_failed:${serviceInstanceId}`,
+                    `meta.socket_client.signal_transmission_failed`,
                     response,
                   );
                   return;
@@ -388,17 +375,15 @@ export default class SocketController {
                 }
               });
           },
-          `Transmits signal to instance ${serviceInstanceId} of service ${serviceName} with address ${serviceAddress}:${servicePort}`,
-        ).doOn(
-          `meta.service_registry.selected_instance_for_socket:${serviceInstanceId}`,
-        );
+          `Transmits signal to service ${serviceName} with address ${URL}`,
+        ).doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`);
 
         Cadenza.createMetaTask(
-          "Shutdown SocketClient",
+          `Shutdown SocketClient ${URL}`,
           () => socket.close(),
           "Shuts down the socket client",
         )
-          .doOn("meta.socket_shutdown_requested") // TODO destroy tasks on close or instance removed? Also in fetch client
+          .doOn(`meta.socket_shutdown_requested:${fetchId}`) // TODO destroy tasks on close or instance removed? Also in fetch client
           .emits("meta.socket_client_shutdown_complete");
 
         return true;

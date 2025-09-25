@@ -7,7 +7,7 @@ import {
 } from "../types/database";
 import Cadenza, { DatabaseOptions, ServerOptions } from "../Cadenza";
 import { Pool, PoolClient } from "pg";
-import { snakeCase } from "lodash-es";
+import { camelCase, snakeCase } from "lodash-es";
 import { AnyObject } from "@cadenza.io/core";
 import {
   DbOperationPayload,
@@ -688,6 +688,16 @@ export default class DatabaseController {
     }
   }
 
+  toCamelCase(rows: any[]) {
+    return rows.map((row: any) => {
+      const camelCasedRow: any = {};
+      for (const [key, value] of Object.entries(row)) {
+        camelCasedRow[camelCase(key)] = value;
+      }
+      return camelCasedRow;
+    });
+  }
+
   async queryFunction(
     tableName: string,
     context: DbOperationPayload,
@@ -734,12 +744,13 @@ export default class DatabaseController {
       params.push(offset);
     }
 
-    console.log("Query", sql, params);
-
     try {
       const result = await this.dbClient.query(sql, params);
+
+      const rows = this.toCamelCase(result.rows);
+
       return {
-        [`${tableName}s`]: result.rows,
+        [`${camelCase(tableName)}s`]: rows,
         rowCount: result.rowCount,
         __success: true,
         ...context,
@@ -827,10 +838,12 @@ export default class DatabaseController {
         params,
       );
       if (transaction) await client.query("COMMIT");
+      const resultRows = this.toCamelCase(result.rows);
+
       return {
-        [`${tableName}${isBatch ? "s" : ""}`]: isBatch
-          ? result.rows
-          : result.rows[0],
+        [`${camelCase(tableName)}${isBatch ? "s" : ""}`]: isBatch
+          ? resultRows
+          : resultRows[0],
         rowCount: result.rowCount,
         __inserted: true,
       };
@@ -875,8 +888,10 @@ export default class DatabaseController {
       const sql = `UPDATE ${tableName} SET ${setClause} ${whereClause} RETURNING *;`;
       const result = await client.query(sql, params);
       if (transaction) await client.query("COMMIT");
+      const rows = this.toCamelCase(result.rows);
+
       return {
-        [`${tableName}`]: result.rows[0],
+        [`${camelCase(tableName)}`]: rows[0],
         __updated: true,
       };
     } catch (error: any) {
@@ -914,8 +929,9 @@ export default class DatabaseController {
       const sql = `DELETE FROM ${tableName} ${whereClause} RETURNING *`;
       const result = await client.query(sql, params);
       if (transaction) await client.query("COMMIT");
+      const rows = this.toCamelCase(result.rows);
       return {
-        [`${tableName}`]: result.rows[0],
+        [`${camelCase(tableName)}`]: rows[0],
         __deleted: true,
       };
     } catch (error: any) {

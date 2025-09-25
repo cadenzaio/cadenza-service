@@ -7,6 +7,7 @@ export interface ServiceInstanceDescriptor {
   port: number;
   serviceName: string;
   numberOfRunningGraphs?: number;
+  isPrimary: boolean;
   isActive: boolean;
   isNonResponsive: boolean;
   isBlocked: boolean;
@@ -66,50 +67,47 @@ export default class ServiceRegistry {
     this.handleInstanceUpdateTask = Cadenza.createMetaTask(
       "Handle Instance Update",
       (ctx, emit) => {
-        const { service_instance } = ctx;
-        const { uuid, serviceName, address, port, exposed } = service_instance;
+        const { serviceInstance } = ctx;
+        const { uuid, serviceName, address, port, exposed } = serviceInstance;
+        if (uuid === this.serviceInstanceId) return;
+
         if (!this.instances.has(serviceName))
           this.instances.set(serviceName, []);
         const instances = this.instances.get(serviceName)!;
         const existing = instances.find((i) => i.uuid === uuid);
         if (existing) {
-          Object.assign(existing, service_instance); // Update
+          Object.assign(existing, serviceInstance); // Update
         } else {
           if (
             this.deputies.has(serviceName) ||
             this.remoteSignals.has(serviceName) ||
             (this.remoteSignals.has("*") && this.serviceName !== serviceName)
           ) {
-            const communicationTypes = Array.from(
-              new Set(
-                this.deputies
-                  .get(serviceName)!
-                  .map((d) => d.communicationType) ?? [],
-              ),
+            const clientCreated = instances?.some(
+              (i) =>
+                i.address === address &&
+                i.port === port &&
+                i.clientCreated &&
+                i.isActive,
             );
 
-            if (
-              !communicationTypes.includes("signal") &&
-              (this.remoteSignals.has(serviceName) ||
-                this.remoteSignals.has("*"))
-            ) {
-              communicationTypes.push("signal");
-            }
+            if (!clientCreated) {
+              const communicationTypes = Array.from(
+                new Set(
+                  this.deputies
+                    .get(serviceName)!
+                    .map((d) => d.communicationType) ?? [],
+                ),
+              );
 
-            emit("meta.service_registry.dependee_registered", {
-              serviceName: serviceName,
-              serviceInstanceId: uuid,
-              serviceAddress: address,
-              servicePort: port,
-              protocol: exposed ? "https" : "http",
-              communicationTypes,
-            });
+              if (
+                !communicationTypes.includes("signal") &&
+                (this.remoteSignals.has(serviceName) ||
+                  this.remoteSignals.has("*"))
+              ) {
+                communicationTypes.push("signal");
+              }
 
-            service_instance.clientCreated = true;
-
-            for (const instance of this.instances.get(serviceName)!) {
-              if (instance.clientCreated) continue;
-              instance.clientCreated = true;
               emit("meta.service_registry.dependee_registered", {
                 serviceName: serviceName,
                 serviceInstanceId: uuid,
@@ -118,10 +116,25 @@ export default class ServiceRegistry {
                 protocol: exposed ? "https" : "http",
                 communicationTypes,
               });
+
+              serviceInstance.clientCreated = true;
+
+              for (const instance of this.instances.get(serviceName)!) {
+                if (instance.clientCreated) continue;
+                instance.clientCreated = true;
+                emit("meta.service_registry.dependee_registered", {
+                  serviceName: serviceName,
+                  serviceInstanceId: uuid,
+                  serviceAddress: address,
+                  servicePort: port,
+                  protocol: exposed ? "https" : "http",
+                  communicationTypes,
+                });
+              }
             }
           }
 
-          instances.push(service_instance); // Insert
+          instances.push(serviceInstance); // Insert
         }
 
         return true;
@@ -216,17 +229,21 @@ export default class ServiceRegistry {
         "is_blocked",
         "health",
         "exposed",
+        "created",
       ],
     })
       .doOn("meta.service_registry_sync_requested")
       .then(
-        Cadenza.createMetaTask("Split service instances", function* (ctx) {
-          const { serviceInstances } = ctx;
-          if (!serviceInstances) return;
-          for (const serviceInstance of serviceInstances) {
-            yield { serviceInstance };
-          }
-        }).then(this.handleInstanceUpdateTask),
+        Cadenza.createMetaTask(
+          "Split service instances",
+          function* (ctx: AnyObject) {
+            const { serviceInstances } = ctx;
+            if (!serviceInstances) return;
+            for (const serviceInstance of serviceInstances) {
+              yield { serviceInstance };
+            }
+          },
+        ).then(this.handleInstanceUpdateTask),
         // .emits("meta.process_signal_queue_requested"), // TODO Has to happen after the endpoints has been created...
       );
 
@@ -349,7 +366,7 @@ export default class ServiceRegistry {
         if (instancesToTry.length === 0) {
           if (this.useSocket) {
             emit(
-              `meta.service_registry.socket_failed:${context.__instance}`,
+              `meta.service_registry.socket_failed:${context.__fetchId}`,
               context,
             );
           }
@@ -365,18 +382,19 @@ export default class ServiceRegistry {
         }
 
         context.__instance = selected.uuid;
+        context.__fetchId = `${selected.address}_${selected.port}`;
         context.__triedInstances = triedInstances;
         context.__triedInstances.push(selected.uuid);
         context.__retries = retries;
 
         if (this.useSocket) {
           emit(
-            `meta.service_registry.selected_instance_for_socket:${context.__instance}`,
+            `meta.service_registry.selected_instance_for_socket:${context.__fetchId}`,
             context,
           );
         } else {
           emit(
-            `meta.service_registry.selected_instance_for_fetch:${context.__instance}`,
+            `meta.service_registry.selected_instance_for_fetch:${context.__fetchId}`,
             context,
           );
         }
@@ -553,11 +571,11 @@ export default class ServiceRegistry {
         Cadenza.createMetaTask(
           "Setup service",
           (ctx) => {
-            const { service_instance, data, __useSocket, __retryCount } = ctx;
-            this.serviceInstanceId = service_instance?.uuid ?? data?.uuid;
+            const { serviceInstance, data, __useSocket, __retryCount } = ctx;
+            this.serviceInstanceId = serviceInstance?.uuid ?? data?.uuid;
             this.instances.set(
-              data?.service_name ?? service_instance?.service_name,
-              [{ ...(service_instance ?? data) }],
+              data?.service_name ?? serviceInstance?.service_name,
+              [{ ...(serviceInstance ?? data) }],
             );
             this.useSocket = __useSocket;
             this.retryCount = __retryCount;
