@@ -70,6 +70,7 @@ export default class ServiceRegistry {
         const { serviceInstance } = ctx;
         const { uuid, serviceName, address, port, exposed } = serviceInstance;
         if (uuid === this.serviceInstanceId) return;
+        console.log("Instance update", ctx);
 
         if (!this.instances.has(serviceName))
           this.instances.set(serviceName, []);
