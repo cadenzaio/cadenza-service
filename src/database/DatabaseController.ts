@@ -760,7 +760,6 @@ export default class DatabaseController {
         ...context,
         errored: true,
         __error: `Query failed: ${error.message}`,
-        __errors: { query: error.message },
       };
     }
   }
@@ -853,7 +852,6 @@ export default class DatabaseController {
         ...context,
         errored: true,
         __error: `Insert failed: ${error.message}`,
-        __errors: { insert: error.message },
       };
     } finally {
       if (transaction && client) {
@@ -887,6 +885,7 @@ export default class DatabaseController {
 
       const sql = `UPDATE ${tableName} SET ${setClause} ${whereClause} RETURNING *;`;
       const result = await client.query(sql, params);
+      console.log("UPDATE", sql, params, result);
       if (transaction) await client.query("COMMIT");
       const rows = this.toCamelCase(result.rows);
 
@@ -900,7 +899,6 @@ export default class DatabaseController {
         ...context,
         errored: true,
         __error: `Update failed: ${error.message}`,
-        __errors: { update: error.message },
       };
     } finally {
       if (transaction && client) {
@@ -1040,11 +1038,23 @@ export default class DatabaseController {
     queryFunction: (tableName: string, context: AnyObject) => Promise<any>,
     options: ServerOptions,
   ) {
-    // const defaultSignal = `${tableName}.${op}`;
+    const opAction =
+      op === "query"
+        ? "queried"
+        : op === "insert"
+          ? "inserted"
+          : op === "update"
+            ? "updated"
+            : op === "delete"
+              ? "deleted"
+              : "";
+    const defaultSignal = `${options.isMeta ? "meta." : ""}${tableName}.${opAction}`;
+
     const tableNameFormatted = tableName
       .split("_")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join("");
+
     Cadenza.createThrottledTask(
       `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableNameFormatted}`,
       async (context: AnyObject, emit: any) => {
@@ -1113,10 +1123,12 @@ export default class DatabaseController {
           },
         },
       },
-    ).doOn(
-      ...(table.customSignals?.triggers?.[op]?.map((signal: any) => {
-        return typeof signal === "string" ? signal : signal.signal;
-      }) ?? []),
-    );
+    )
+      .doOn(
+        ...(table.customSignals?.triggers?.[op]?.map((signal: any) => {
+          return typeof signal === "string" ? signal : signal.signal;
+        }) ?? []),
+      )
+      .emits(defaultSignal);
   }
 }
