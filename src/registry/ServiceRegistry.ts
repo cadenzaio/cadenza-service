@@ -152,7 +152,18 @@ export default class ServiceRegistry {
     this.handleRemoteSignalRegistrationTask = Cadenza.createMetaTask(
       "Handle Remote Signal Registration",
       (ctx) => {
-        const { __remoteServiceName, __emitterSignalName } = ctx;
+        const {
+          __remoteServiceName,
+          __emitterSignalName,
+          __signalName,
+          __listenerServiceName,
+        } = ctx;
+        console.log(
+          "REGISTERING REMOTE SIGNAL",
+          this.remoteSignals,
+          __remoteServiceName,
+          __emitterSignalName,
+        );
         let remoteSignals = this.remoteSignals.get(__remoteServiceName);
         if (!remoteSignals) {
           this.remoteSignals.set(__remoteServiceName, []);
@@ -166,9 +177,9 @@ export default class ServiceRegistry {
           ) === -1
         ) {
           remoteSignals.push({
-            __listenerServiceName: ctx.__listenerServiceName,
+            __listenerServiceName: __listenerServiceName,
             __emitterSignalName: __emitterSignalName,
-            __signalName: ctx.__signalName,
+            __signalName: __signalName,
             __remoteServiceName,
           });
           return true;

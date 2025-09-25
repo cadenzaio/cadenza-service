@@ -58,6 +58,8 @@ export default class SignalController {
                 "meta.signal_controller.foreign_signal_registered";
               ctx.__remoteServiceName = serviceName;
 
+              console.log("REMOTE SIGNAL DETECTED", ctx);
+
               if (serviceName === "*") {
                 emit("meta.signal_controller.wildcard_signal_registered", ctx);
               } else {
