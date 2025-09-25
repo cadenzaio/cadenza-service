@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/cadenzaio/cadenza-service/compare/v1.10.18...v1.11.0) (2025-09-25)
+
+
+### Features
+
+* Database results are now in camelCase. ([1d14ce8](https://github.com/cadenzaio/cadenza-service/commit/1d14ce82d2874f775b2a6fd227f375ffbb0ab5b6))
+
 ## [1.10.18](https://github.com/cadenzaio/cadenza-service/compare/v1.10.17...v1.10.18) (2025-09-24)
 
 
