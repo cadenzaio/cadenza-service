@@ -117,8 +117,6 @@ export default class ServiceRegistry {
                 communicationTypes,
               });
 
-              serviceInstance.clientCreated = true;
-
               for (const instance of this.instances.get(serviceName)!) {
                 if (instance.clientCreated) continue;
                 instance.clientCreated = true;
@@ -133,7 +131,7 @@ export default class ServiceRegistry {
               }
             }
           }
-
+          serviceInstance.clientCreated = true;
           instances.push(serviceInstance); // Insert
         }
 
@@ -146,6 +144,8 @@ export default class ServiceRegistry {
         "meta.initializing_service",
         "CadenzaDB.meta.service_instance.inserted",
         "CadenzaDB.meta.service_instance.updated",
+        "meta.service_instance.inserted",
+        "meta.service_instance.updated",
       );
 
     this.handleRemoteSignalRegistrationTask = Cadenza.createMetaTask(

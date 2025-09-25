@@ -30,6 +30,7 @@ export default class SignalController {
       },
       "Handles signal registration from a service instance",
     )
+      .doOn("meta.signal_broker.added")
       .then(
         Cadenza.createMetaTask(
           "Handle foreign signal registration",
@@ -70,8 +71,7 @@ export default class SignalController {
             }
           },
         ).then(Cadenza.serviceRegistry.handleRemoteSignalRegistrationTask),
-      )
-      .doOn("meta.signal_broker.added");
+      );
 
     Cadenza.createMetaTask(
       "Forward signal observations to remote service",
