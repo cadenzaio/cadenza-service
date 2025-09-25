@@ -1,3 +1,10 @@
+## [1.11.1](https://github.com/cadenzaio/cadenza-service/compare/v1.11.0...v1.11.1) (2025-09-25)
+
+
+### Bug Fixes
+
+* local database reaction to new service instances. Bootstrap order change. ([32614e5](https://github.com/cadenzaio/cadenza-service/commit/32614e557e17a0f16973aebedfa589d3f979d604))
+
 # [1.11.0](https://github.com/cadenzaio/cadenza-service/compare/v1.10.18...v1.11.0) (2025-09-25)
 
 
