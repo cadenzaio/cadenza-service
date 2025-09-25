@@ -363,6 +363,8 @@ export default class RestController {
         const URL = `${protocol}://${serviceAddress}:${port}`;
         const fetchId = `${serviceAddress}_${port}`;
 
+        console.log("Fetch connecting to", URL);
+
         Cadenza.createMetaTask(
           `Send Handshake to ${URL}`,
           async (ctx, emit) => {

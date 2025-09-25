@@ -70,12 +70,21 @@ export default class ServiceRegistry {
         const { serviceInstance } = ctx;
         const { uuid, serviceName, address, port, exposed } = serviceInstance;
         if (uuid === this.serviceInstanceId) return;
-        console.log("Instance update", ctx);
 
         if (!this.instances.has(serviceName))
           this.instances.set(serviceName, []);
         const instances = this.instances.get(serviceName)!;
         const existing = instances.find((i) => i.uuid === uuid);
+        console.log(
+          "Instance update",
+          serviceName,
+          existing,
+          serviceInstance,
+          instances,
+          this.deputies,
+          this.remoteSignals,
+        );
+
         if (existing) {
           Object.assign(existing, serviceInstance); // Update
         } else {
@@ -91,6 +100,7 @@ export default class ServiceRegistry {
                 i.clientCreated &&
                 i.isActive,
             );
+            console.log("Client created", clientCreated);
 
             if (!clientCreated) {
               const communicationTypes = Array.from(

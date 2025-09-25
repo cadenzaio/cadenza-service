@@ -248,7 +248,7 @@ export default class SocketController {
           retries: 5,
         });
 
-        console.log("SocketClient: Connecting to", URL, socket);
+        console.log("SocketClient: Connecting to", URL);
 
         socket.on("connect", () => {
           console.log("SocketClient: CONNECTED");
