@@ -1,3 +1,10 @@
+## [1.12.1](https://github.com/cadenzaio/cadenza-service/compare/v1.12.0...v1.12.1) (2025-09-25)
+
+
+### Bug Fixes
+
+* cleanup, update package.json ([316a591](https://github.com/cadenzaio/cadenza-service/commit/316a5916b9e6d70c5e63a6c1c1707bdc8678b181))
+
 # [1.12.0](https://github.com/cadenzaio/cadenza-service/compare/v1.11.1...v1.12.0) (2025-09-25)
 
 
