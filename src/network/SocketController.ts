@@ -30,12 +30,6 @@ export default class SocketController {
           const profile = ctx.__securityProfile ?? "medium";
 
           server.use((socket, next) => {
-            console.log(
-              "SocketServer: middleware",
-              socket?.handshake?.headers?.origin,
-              profile,
-              ctx.__networkType,
-            );
             // Origin check (CORS-like)
             const origin = socket?.handshake?.headers?.origin;
             const allowedOrigins = ["*"]; // TODO From firewall_rule
@@ -79,28 +73,26 @@ export default class SocketController {
                 });
             });
 
-            // Sanitization for payloads
-            socket.use((packet, next) => {
-              if (profile !== "low") {
-                const sanitize = (data: any) => {
-                  if (typeof data === "string") return xss(data);
-                  if (typeof data === "object") {
-                    for (const key in data) {
-                      data[key] = sanitize(data[key]);
-                    }
-                  }
-                  return data;
-                };
-                try {
-                  console.log("SocketServer: Sanitizing", packet[1]);
-                  packet[1] = sanitize(packet[1]); // Sanitize event payload
-                  console.log("SocketServer: Sanitized", packet[1]);
-                } catch (e) {
-                  console.error("SocketServer: Sanitization error", e);
-                }
-              }
-              next();
-            });
+            // Sanitization for payloads needed?
+            // socket.use((packet, next) => {
+            //   if (profile !== "low") {
+            //     const sanitize = (data: any) => {
+            //       if (typeof data === "string") return xss(data);
+            //       if (typeof data === "object") {
+            //         for (const key in data) {
+            //           data[key] = sanitize(data[key]);
+            //         }
+            //       }
+            //       return data;
+            //     };
+            //     try {
+            //       packet[1] = sanitize(packet[1]); // Sanitize event payload
+            //     } catch (e) {
+            //       console.error("SocketServer: Sanitization error", e);
+            //     }
+            //   }
+            //   next();
+            // });
             next();
           });
           console.log("SocketServer: Setup complete");
@@ -113,10 +105,6 @@ export default class SocketController {
           server.on("connection", (ws: any) => {
             console.log("SocketServer: New connection");
             try {
-              ws.onAny((eventName: any, data: any) => {
-                console.log("SocketServer: Received", eventName, data);
-              });
-
               ws.on("handshake", (ctx: AnyObject) => {
                 console.log("Socket HANDSHAKE", ctx.serviceInstanceId);
                 ws.emit("handshake", {

@@ -885,7 +885,6 @@ export default class DatabaseController {
 
       const sql = `UPDATE ${tableName} SET ${setClause} ${whereClause} RETURNING *;`;
       const result = await client.query(sql, params);
-      console.log("UPDATE", sql, params, result);
       if (transaction) await client.query("COMMIT");
       const rows = this.toCamelCase(result.rows);
 
