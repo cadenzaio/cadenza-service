@@ -200,19 +200,31 @@ export default class RestController {
                 let ctx;
                 try {
                   ctx = req.body;
+                  console.log(
+                    "SIGNAL RECEIVED",
+                    ctx,
+                    Cadenza.broker.listObservedSignals(),
+                  );
                   if (
                     Cadenza.broker
                       .listObservedSignals()
                       .includes(ctx.__signalName)
                   ) {
-                    res.send({ __status: "error", __error: "No such signal" });
+                    res.send({
+                      ...ctx,
+                      __status: "error",
+                      __error: `No such signal: ${ctx.__signalName}`,
+                      errored: true,
+                    });
                     return;
                   }
-                  console.log("signal", ctx);
                   res.send({ __status: "success" });
                 } catch (e) {
                   console.error("Error in signal", e);
-                  res.send({ __status: "error", __error: e });
+                  res.send({
+                    __status: "error",
+                    __error: e,
+                  });
                   return;
                 }
 
@@ -481,6 +493,8 @@ export default class RestController {
                 body: JSON.stringify(ctx),
               });
               response = (await response.json()) as AnyObject;
+
+              console.log("SIGNAL TRANSMITTED", response);
 
               if (ctx.__routineExecId) {
                 emit(`meta.fetch.transmitted:${ctx.__routineExecId}`, response);

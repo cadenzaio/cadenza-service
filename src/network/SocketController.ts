@@ -170,8 +170,9 @@ export default class SocketController {
                     Cadenza.broker.emit(ctx.__signalName, ctx);
                   } else {
                     callback({
+                      ...ctx,
                       __status: "error",
-                      __error: "No such signal",
+                      __error: `No such signal: ${ctx.__signalName}`,
                       errored: true,
                     });
                   }
