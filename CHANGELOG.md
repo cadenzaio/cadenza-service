@@ -1,3 +1,10 @@
+## [1.12.5](https://github.com/cadenzaio/cadenza-service/compare/v1.12.4...v1.12.5) (2025-09-26)
+
+
+### Bug Fixes
+
+* Error handling ([580dfb4](https://github.com/cadenzaio/cadenza-service/commit/580dfb4bf8fa7f92e41e3dea997ac581bed339be))
+
 ## [1.12.4](https://github.com/cadenzaio/cadenza-service/compare/v1.12.3...v1.12.4) (2025-09-25)
 
 
