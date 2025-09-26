@@ -1,3 +1,10 @@
+## [1.12.8](https://github.com/cadenzaio/cadenza-service/compare/v1.12.7...v1.12.8) (2025-09-26)
+
+
+### Bug Fixes
+
+* Debugging foreign signal registration. ([369d9a5](https://github.com/cadenzaio/cadenza-service/commit/369d9a5a1ffabfed158aa36bd66a242b955724cb))
+
 ## [1.12.7](https://github.com/cadenzaio/cadenza-service/compare/v1.12.6...v1.12.7) (2025-09-26)
 
 
