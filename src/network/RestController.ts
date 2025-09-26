@@ -200,11 +200,19 @@ export default class RestController {
                 let ctx;
                 try {
                   ctx = req.body;
+                  if (
+                    Cadenza.broker
+                      .listObservedSignals()
+                      .includes(ctx.__signalName)
+                  ) {
+                    res.send({ __status: "error", __error: "No such signal" });
+                    return;
+                  }
                   console.log("signal", ctx);
                   res.send({ __status: "success" });
                 } catch (e) {
                   console.error("Error in signal", e);
-                  res.send({ __status: "error" });
+                  res.send({ __status: "error", __error: e });
                   return;
                 }
 

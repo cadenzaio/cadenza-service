@@ -27,7 +27,6 @@ export interface DeputyDescriptor {
 export interface RemoteSignalDescriptor {
   __listenerServiceName: string;
   __emitterSignalName: string;
-  __signalName: string;
   __remoteServiceName: string;
 }
 
@@ -159,7 +158,6 @@ export default class ServiceRegistry {
         const {
           __remoteServiceName,
           __emitterSignalName,
-          __signalName,
           __listenerServiceName,
         } = ctx;
         console.log(
@@ -181,9 +179,8 @@ export default class ServiceRegistry {
           ) === -1
         ) {
           remoteSignals.push({
-            __listenerServiceName: __listenerServiceName,
-            __emitterSignalName: __emitterSignalName,
-            __signalName: __signalName,
+            __listenerServiceName,
+            __emitterSignalName,
             __remoteServiceName,
           });
           return true;

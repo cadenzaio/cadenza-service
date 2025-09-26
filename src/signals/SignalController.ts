@@ -81,6 +81,9 @@ export default class SignalController {
         const { remoteSignals, serviceName } = ctx;
 
         for (const remoteSignal of remoteSignals) {
+          remoteSignal.__signalName =
+            "meta.signal_controller.foreign_signal_registered";
+
           emit(
             `meta.signal_controller.remote_signal_registered:${serviceName}`,
             remoteSignal,
@@ -94,6 +97,12 @@ export default class SignalController {
 
     Cadenza.createMetaTask("Handle foreign signal registration", (ctx) => {
       const { __emitterSignalName, __listenerServiceName } = ctx;
+
+      console.log(
+        "CREATING SIGNAL TRANSMISSION",
+        __emitterSignalName,
+        __listenerServiceName,
+      );
 
       Cadenza.createSignalTransmissionTask(
         __emitterSignalName,
