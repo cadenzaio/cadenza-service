@@ -1,3 +1,10 @@
+## [1.12.6](https://github.com/cadenzaio/cadenza-service/compare/v1.12.5...v1.12.6) (2025-09-26)
+
+
+### Bug Fixes
+
+* Bug in dependee registration. ([cb88563](https://github.com/cadenzaio/cadenza-service/commit/cb88563c07762b81a16bea0c2cd556e0b614614e))
+
 ## [1.12.5](https://github.com/cadenzaio/cadenza-service/compare/v1.12.4...v1.12.5) (2025-09-26)
 
 
