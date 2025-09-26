@@ -1,3 +1,10 @@
+## [1.12.9](https://github.com/cadenzaio/cadenza-service/compare/v1.12.8...v1.12.9) (2025-09-26)
+
+
+### Bug Fixes
+
+* sub insert fix. ([2fb89b3](https://github.com/cadenzaio/cadenza-service/commit/2fb89b31f3206fd91a255622a4c243f6a6d5e1ac))
+
 ## [1.12.8](https://github.com/cadenzaio/cadenza-service/compare/v1.12.7...v1.12.8) (2025-09-26)
 
 
