@@ -50,18 +50,22 @@ export default class GraphMetadataController {
 
     Cadenza.createMetaTask("Handle task signal observation", (ctx) => {
       const firstChar = ctx.data.signalName.charAt(0);
+      let _signal = ctx.data.signalName;
       let signalServiceName;
       if (
         firstChar === firstChar.toUpperCase() &&
         firstChar !== firstChar.toLowerCase()
       ) {
+        // TODO handle wildcards
         signalServiceName = ctx.data.signalName.split(".")[0];
+        _signal = ctx.data.signalName.split(".").slice(1).join(".");
       }
       return {
         data: {
           ...ctx.data,
-          task_service_name: Cadenza.serviceRegistry.serviceName,
-          signal_service_name:
+          signalName: _signal,
+          taskServiceName: Cadenza.serviceRegistry.serviceName,
+          signalServiceName:
             signalServiceName ?? Cadenza.serviceRegistry.serviceName,
         },
       };

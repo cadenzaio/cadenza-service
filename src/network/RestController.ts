@@ -201,11 +201,7 @@ export default class RestController {
                 let ctx;
                 try {
                   ctx = req.body;
-                  console.log(
-                    "SIGNAL RECEIVED",
-                    ctx,
-                    Cadenza.broker.listObservedSignals(),
-                  );
+                  console.log("SIGNAL RECEIVED", ctx);
                   if (
                     !Cadenza.broker
                       .listObservedSignals()
@@ -219,7 +215,10 @@ export default class RestController {
                     });
                     return;
                   }
-                  res.send({ __status: "success" });
+                  res.send({
+                    __status: "success",
+                    __signalName: ctx.__signalName,
+                  });
                 } catch (e) {
                   console.error("Error in signal", e);
                   res.send({

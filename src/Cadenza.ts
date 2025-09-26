@@ -26,6 +26,7 @@ import { SchemaDefinition } from "./types/database";
 import { snakeCase } from "lodash-es";
 import DatabaseController from "./database/DatabaseController";
 import { v4 as uuid } from "uuid";
+import GraphSyncController from "./graph/controllers/GraphSyncController";
 
 export type SecurityProfile = "low" | "medium" | "high";
 export type NetworkMode =
@@ -529,14 +530,11 @@ export default class CadenzaService {
 
     this.createEphemeralMetaTask(
       "Handle service setup completion",
-      (ctx, emit) => {
+      (_, emit) => {
         GraphMetadataController.instance;
+        GraphSyncController.instance;
         // TODO: add all tasks, routines and signals to database...
-        emit("meta.service_registry_sync_requested", {});
-        emit("meta.register_remote_signals_requested", { serviceName });
-        emit("meta.register_all_routines", {});
-        emit("meta.register_all_tasks", {});
-        emit("meta.register_all_signals", {});
+        emit("meta.sync_requested", {});
         return true;
       },
     ).doOn("meta.service_registry.instance_inserted");

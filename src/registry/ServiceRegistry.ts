@@ -245,7 +245,7 @@ export default class ServiceRegistry {
         "created",
       ],
     })
-      .doOn("meta.service_registry_sync_requested")
+      .doOn("meta.sync_requested")
       .then(
         Cadenza.createMetaTask(
           "Split service instances",
@@ -257,7 +257,6 @@ export default class ServiceRegistry {
             }
           },
         ).then(this.handleInstanceUpdateTask),
-        // .emits("meta.process_signal_queue_requested"), // TODO Has to happen after the endpoints has been created...
       );
 
     this.updateInstanceId = Cadenza.createMetaTask(

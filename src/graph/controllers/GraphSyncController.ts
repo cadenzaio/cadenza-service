@@ -1,0 +1,172 @@
+import Cadenza from "../../Cadenza";
+import { Task } from "@cadenza.io/core";
+
+export default class GraphSyncController {
+  private static _instance: GraphSyncController;
+  public static get instance(): GraphSyncController {
+    if (!this._instance) this._instance = new GraphSyncController();
+    return this._instance;
+  }
+  constructor() {
+    Cadenza.broker.clearSignalsTask?.doOn("meta.sync_requested");
+    Cadenza.broker.getSignalsTask?.doOn("meta.sync_requested");
+    Cadenza.registry.getAllTasks.doAfter(Cadenza.broker.getSignalsTask!);
+    Cadenza.registry.getAllRoutines.doAfter(Cadenza.registry.getAllTasks);
+
+    Cadenza.createMetaTask("Split routines for registration", (ctx, emit) => {
+      const { __routines } = ctx;
+      if (!__routines) return;
+      for (const routine of __routines) {
+        emit("meta.sync_controller.routine_added", {
+          data: {
+            name: routine.name,
+            version: routine.version,
+            description: routine.description,
+            serviceName: Cadenza.serviceRegistry.serviceName,
+            isMeta: routine.isMeta,
+          },
+        });
+
+        for (const task of routine.tasks) {
+          const tasks = task.getIterator();
+
+          while (tasks.hasNext()) {
+            const nextTask = tasks.next();
+            emit("meta.sync_controller.task_to_routine_map", {
+              data: {
+                taskName: nextTask.name,
+                taskVersion: nextTask.version,
+                routineName: routine.name,
+                routineVersion: routine.version,
+                serviceName: Cadenza.serviceRegistry.serviceName,
+              },
+            });
+          }
+        }
+      }
+    })
+      .doAfter(Cadenza.registry.getAllRoutines)
+      .emits("meta.register_all_routines");
+
+    Cadenza.createMetaTask("Split signals for registration", (ctx, emit) => {
+      const { __signals } = ctx;
+      if (!__signals) return;
+      for (const signal of __signals) {
+        const parts = signal.split(".");
+        const domain = parts[0] === "meta" ? parts[1] : parts[0];
+        const action = parts[parts.length - 1];
+        emit("meta.sync_controller.signal_added", {
+          data: {
+            name: signal,
+            domain,
+            action,
+            isMeta: parts[0] === "meta",
+            serviceName: Cadenza.serviceRegistry.serviceName,
+          },
+        });
+      }
+    }).emits("meta.register_all_signals");
+
+    Cadenza.createMetaTask("Split tasks for registration", (ctx, emit) => {
+      const { __tasks } = ctx;
+      if (!__tasks) return;
+      for (const task of __tasks) {
+        if (task.hidden || !task.register) continue;
+        const { __functionString, __getTagCallback } = task.export();
+        emit("meta.sync_controller.task_added", {
+          data: {
+            name: task.name,
+            version: task.version,
+            description: task.description,
+            functionString: __functionString,
+            tagIdGetter: __getTagCallback,
+            layerIndex: task.layerIndex,
+            concurrency: task.concurrency,
+            timeout: task.timeout,
+            isUnique: task.isUnique,
+            isSignal: task.isSignal,
+            isThrottled: task.isThrottled,
+            isDebounce: task.isDebounce,
+            isEphemeral: task.isEphemeral,
+            isMeta: task.isMeta,
+            isSubMeta: task.isSubMeta,
+            isHidden: task.isHidden,
+            // inputSchema: task.inputSchema,
+            validateInputContext: task.validateInputContext,
+            // outputSchema: task.outputSchema,
+            validateOutputContext: task.validateOutputContext,
+            retryCount: task.retryCount,
+            retryDelay: task.retryDelay,
+            retryDelayMax: task.retryDelayMax,
+            retryDelayFactor: task.retryDelayFactor,
+            service_name: Cadenza.serviceRegistry.serviceName,
+          },
+        });
+
+        for (const signal of task.mapObservedSignals()) {
+          const firstChar = signal.charAt(0);
+          let _signal = signal;
+          let signalServiceName;
+          if (
+            firstChar === firstChar.toUpperCase() &&
+            firstChar !== firstChar.toLowerCase()
+          ) {
+            // TODO handle wildcards
+            signalServiceName = signal.split(".")[0];
+            _signal = signal.split(".").slice(1).join(".");
+          }
+
+          emit("meta.sync_controller.signal_to_task_map", {
+            data: {
+              signalName: _signal,
+              taskName: task.name,
+              taskVersion: task.version,
+              taskServiceName: Cadenza.serviceRegistry.serviceName,
+              signalServiceName:
+                signalServiceName ?? Cadenza.serviceRegistry.serviceName,
+            },
+          });
+        }
+
+        for (const signal of task.mapSignals()) {
+          emit("meta.sync_controller.task_to_signal_map", {
+            data: {
+              signalName: signal,
+              taskName: task.name,
+              taskVersion: task.version,
+              serviceName: Cadenza.serviceRegistry.serviceName,
+            },
+          });
+        }
+
+        for (const signal of task.mapOnFailSignals()) {
+          emit("meta.sync_controller.task_to_signal_map", {
+            data: {
+              signalName: signal,
+              taskName: task.name,
+              taskVersion: task.version,
+              serviceName: Cadenza.serviceRegistry.serviceName,
+            },
+          });
+        }
+      }
+
+      for (const task of __tasks) {
+        if (task.hidden || !task.register) continue;
+        task.mapNext((t: Task) =>
+          emit("meta.sync_controller.task_map", {
+            data: {
+              taskName: t.name,
+              taskVersion: t.version,
+              predecessorTaskName: task.name,
+              predecessorTaskVersion: task.version,
+              serviceName: Cadenza.serviceRegistry.serviceName,
+            },
+          }),
+        );
+      }
+    })
+      .doAfter(Cadenza.registry.getAllTasks)
+      .emits("meta.register_all_tasks");
+  }
+}
