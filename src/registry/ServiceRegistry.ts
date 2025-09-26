@@ -103,34 +103,23 @@ export default class ServiceRegistry {
             console.log("Client created", clientCreated);
 
             if (!clientCreated) {
-              const communicationTypes = Array.from(
-                new Set(
-                  this.deputies
-                    .get(serviceName)!
-                    .map((d) => d.communicationType) ?? [],
-                ),
-              );
+              try {
+                const communicationTypes = Array.from(
+                  new Set(
+                    this.deputies
+                      .get(serviceName)!
+                      .map((d) => d.communicationType) ?? [],
+                  ),
+                );
 
-              if (
-                !communicationTypes.includes("signal") &&
-                (this.remoteSignals.has(serviceName) ||
-                  this.remoteSignals.has("*"))
-              ) {
-                communicationTypes.push("signal");
-              }
+                if (
+                  !communicationTypes.includes("signal") &&
+                  (this.remoteSignals.has(serviceName) ||
+                    this.remoteSignals.has("*"))
+                ) {
+                  communicationTypes.push("signal");
+                }
 
-              emit("meta.service_registry.dependee_registered", {
-                serviceName: serviceName,
-                serviceInstanceId: uuid,
-                serviceAddress: address,
-                servicePort: port,
-                protocol: exposed ? "https" : "http",
-                communicationTypes,
-              });
-
-              for (const instance of this.instances.get(serviceName)!) {
-                if (instance.clientCreated) continue;
-                instance.clientCreated = true;
                 emit("meta.service_registry.dependee_registered", {
                   serviceName: serviceName,
                   serviceInstanceId: uuid,
@@ -139,6 +128,21 @@ export default class ServiceRegistry {
                   protocol: exposed ? "https" : "http",
                   communicationTypes,
                 });
+
+                for (const instance of this.instances.get(serviceName)!) {
+                  if (instance.clientCreated) continue;
+                  instance.clientCreated = true;
+                  emit("meta.service_registry.dependee_registered", {
+                    serviceName: serviceName,
+                    serviceInstanceId: uuid,
+                    serviceAddress: address,
+                    servicePort: port,
+                    protocol: exposed ? "https" : "http",
+                    communicationTypes,
+                  });
+                }
+              } catch (e) {
+                console.error("Error in dependee registration", e);
               }
             }
           }
