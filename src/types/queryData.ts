@@ -24,7 +24,7 @@ export interface SubOperation {
   data?: AnyObject | AnyObject[]; // For insert
   filter?: AnyObject; // For query
   fields?: string[]; // For query
-  return?: "id" | "single" | "array" | "full"; // What to return (e.g., 'id' for insert ID)
+  return?: "uuid" | "single" | "array" | "full"; // What to return (e.g., 'id' for insert ID)
   // No joins in sub-ops to limit depth/complexity
 }
 

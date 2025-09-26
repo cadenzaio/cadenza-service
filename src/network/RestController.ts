@@ -167,6 +167,7 @@ export default class RestController {
                     });
                   },
                   "Resolves a delegation request",
+                  { register: false },
                 )
                   .doOn(`meta.node.graph_completed:${deputyExecId}`)
                   .emits(`meta.rest.delegation_resolved:${deputyExecId}`);
@@ -206,7 +207,7 @@ export default class RestController {
                     Cadenza.broker.listObservedSignals(),
                   );
                   if (
-                    Cadenza.broker
+                    !Cadenza.broker
                       .listObservedSignals()
                       .includes(ctx.__signalName)
                   ) {
@@ -228,7 +229,7 @@ export default class RestController {
                   return;
                 }
 
-                Cadenza.broker.emit(ctx.__signalName, ctx.__context);
+                Cadenza.broker.emit(ctx.__signalName, ctx);
               });
 
               app.get("/status", (req: Request, res: Response) => {
@@ -236,6 +237,7 @@ export default class RestController {
                   "Resolve status check",
                   (statusCtx) => res.json(statusCtx),
                   "Resolves a status check request",
+                  { register: false },
                 ).doAfter(Cadenza.serviceRegistry.getStatusTask);
 
                 Cadenza.broker.emit(

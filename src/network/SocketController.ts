@@ -124,6 +124,7 @@ export default class SocketController {
                     "Resolve delegation",
                     callback,
                     "Resolves a delegation request using the provided callback from the client (.emitWithAck())",
+                    { register: false },
                   )
                     .doOn(`meta.node.graph_completed:${deputyExecId}`)
                     .emits(`meta.socket.delegation_resolved:${deputyExecId}`);
@@ -140,6 +141,7 @@ export default class SocketController {
                       destroyCondition: (ctx: AnyObject) =>
                         ctx.data.progress === 1.0 ||
                         ctx.data?.progress === undefined,
+                      register: false,
                     },
                   )
                     .doOn(
@@ -186,6 +188,7 @@ export default class SocketController {
                     "Resolve status check",
                     callback,
                     "Resolves a status check request",
+                    { register: false },
                   ).doAfter(Cadenza.serviceRegistry.getStatusTask);
 
                   Cadenza.broker.emit(

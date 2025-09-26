@@ -151,6 +151,9 @@ export default class GraphMetadataController {
       .emits("meta.graph_metadata.task_added_to_routine");
 
     Cadenza.createMetaTask("Handle new trace", (ctx) => {
+      const context = ctx.data.context;
+      delete ctx.data.context;
+
       return {
         data: {
           ...ctx.data,
@@ -160,8 +163,8 @@ export default class GraphMetadataController {
             subOperation: "insert",
             table: "context",
             data: {
-              uuid: ctx.data.context.id,
-              context: ctx.data.context.context,
+              uuid: context.id,
+              context: context.context,
               is_meta: ctx.data.isMeta,
             },
             return: "uuid",
@@ -182,16 +185,19 @@ export default class GraphMetadataController {
             ...ctx.data,
             service_name: Cadenza.serviceRegistry.serviceName,
             service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
-            context_id: {
-              subOperation: "insert",
-              table: "context",
-              data: {
-                uuid: context.id,
-                context: context.context,
-                is_meta: ctx.data.isMeta,
-              },
-              return: "uuid",
-            },
+            context_id:
+              typeof context === "string"
+                ? context
+                : {
+                    subOperation: "insert",
+                    table: "context",
+                    data: {
+                      uuid: context.id,
+                      context: context.context,
+                      is_meta: ctx.data.isMeta,
+                    },
+                    return: "uuid",
+                  },
           },
         };
       },
@@ -200,6 +206,17 @@ export default class GraphMetadataController {
     )
       .doOn("meta.runner.added_tasks")
       .emits("meta.graph_metadata.routine_execution_created");
+
+    Cadenza.createMetaTask(
+      "Handle routine execution started",
+      () => {
+        return true;
+      },
+      "Handles routine execution started",
+      { concurrency: 100, isSubMeta: true },
+    )
+      .doOn("meta.node.started_routine_execution")
+      .emits("meta.graph_metadata.routine_execution_started");
 
     Cadenza.createMetaTask(
       "Handle routine execution ended",
@@ -267,6 +284,28 @@ export default class GraphMetadataController {
     )
       .doOn("meta.node.scheduled")
       .emits("meta.graph_metadata.task_execution_created");
+
+    Cadenza.createMetaTask(
+      "Handle task execution mapped",
+      () => {
+        return true;
+      },
+      "Handles task execution mapping",
+      { concurrency: 100, isSubMeta: true },
+    )
+      .doOn("meta.node.mapped")
+      .emits("meta.graph_metadata.task_execution_mapped");
+
+    Cadenza.createMetaTask(
+      "Handle task execution started",
+      () => {
+        return true;
+      },
+      "Handles task execution started",
+      { concurrency: 100, isSubMeta: true },
+    )
+      .doOn("meta.node.started")
+      .emits("meta.graph_metadata.task_execution_started");
 
     Cadenza.createMetaTask(
       "Handle task execution ended",

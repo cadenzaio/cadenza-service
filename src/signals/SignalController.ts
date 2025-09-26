@@ -50,10 +50,7 @@ export default class SignalController {
               }
 
               ctx.__listenerServiceName = Cadenza.serviceRegistry.serviceName;
-              ctx.__emitterSignalName = __signalName
-                .split(".")
-                .slice(1)
-                .join(".");
+              ctx.__emitterSignalName = __signalName;
               ctx.__signalName =
                 "meta.signal_controller.foreign_signal_registered";
               ctx.__remoteServiceName = serviceName;
@@ -107,7 +104,7 @@ export default class SignalController {
       Cadenza.createSignalTransmissionTask(
         __emitterSignalName,
         __listenerServiceName,
-      ).doOn(__emitterSignalName);
+      ).doOn(__emitterSignalName.split(".").slice(1).join("."));
 
       return true;
     }).doOn("meta.signal_controller.foreign_signal_registered");

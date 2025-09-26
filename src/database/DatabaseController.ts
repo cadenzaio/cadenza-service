@@ -1006,14 +1006,12 @@ export default class DatabaseController {
           .map((_, i) => `$${i + 1}`)
           .join(
             ", ",
-          )}) ON CONFLICT DO NOTHING RETURNING ${op.return === "id" ? "id" : "*"}`;
-        result =
-          ((await client.query(sql, Object.values(resolvedData))).rows[0] ??
-          op.return === "id")
-            ? resolvedData.id
-              ? { id: resolvedData.id }
-              : undefined
-            : undefined;
+          )}) ON CONFLICT DO NOTHING RETURNING ${op.return === "uuid" ? "uuid" : "*"}`;
+        result = await client.query(sql, Object.values(resolvedData));
+        result = result.rows[0];
+        if (!result && op.return === "uuid") {
+          result = resolvedData.uuid ? { uuid: resolvedData.uuid } : undefined;
+        }
       } else if (op.subOperation === "query") {
         const params: any[] = [];
         const whereClause = this.buildWhereClause(op.filter || {}, params);

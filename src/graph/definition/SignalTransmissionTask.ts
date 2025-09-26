@@ -83,6 +83,10 @@ export default class SignalTransmissionTask extends Task {
             }
           },
           `Ephemeral resolver for signal transmission ${processId}`,
+          {
+            isSubMeta: true,
+            register: false,
+          },
         ).doOn(
           `meta.socket_client.transmitted:${processId}`,
           `meta.fetch.transmitted:${processId}`,

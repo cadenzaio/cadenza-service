@@ -96,6 +96,7 @@ export default class DeputyTask extends Task {
             once: false,
             destroyCondition: (ctx: AnyObject) =>
               ctx.progress === 1 || ctx.progress === undefined,
+            register: false,
           },
         ).doOn(`meta.socket_client.delegation_progress:${processId}`);
 
@@ -113,6 +114,7 @@ export default class DeputyTask extends Task {
             progressTask.destroy();
           },
           `Ephemeral resolver for deputy process ${processId}`,
+          { register: false },
         ).doOn(
           `meta.socket_client.delegated:${processId}`,
           `meta.fetch.delegated:${processId}`,
