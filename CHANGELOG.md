@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/cadenzaio/cadenza-service/compare/v1.12.9...v1.13.0) (2025-09-26)
+
+
+### Features
+
+* Full registry sync. ([295ffe9](https://github.com/cadenzaio/cadenza-service/commit/295ffe95b9686ab96d1db28270d4fb671f8e3272))
+
 ## [1.12.9](https://github.com/cadenzaio/cadenza-service/compare/v1.12.8...v1.12.9) (2025-09-26)
 
 
