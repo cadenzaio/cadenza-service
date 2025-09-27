@@ -72,6 +72,7 @@ export default class GraphSyncController {
         __tasks.length,
         __tasks.map((t: any) => t.name),
       );
+
       for (const task of __tasks) {
         const { __functionString, __getTagCallback } = task.export();
         emit("meta.sync_controller.task_added", {
