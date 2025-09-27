@@ -70,7 +70,7 @@ export default class GraphSyncController {
       console.log(
         "SPLITTING TASKS",
         __tasks.length,
-        __tasks.map((t) => t.name),
+        __tasks.map((t: any) => t.name),
       );
       for (const task of __tasks) {
         const { __functionString, __getTagCallback } = task.export();
