@@ -67,8 +67,12 @@ export default class GraphSyncController {
     Cadenza.createMetaTask("Split tasks for registration", (ctx, emit) => {
       const { __tasks } = ctx;
       if (!__tasks) return;
+      console.log(
+        "SPLITTING TASKS",
+        __tasks.length,
+        __tasks.map((t) => t.name),
+      );
       for (const task of __tasks) {
-        if (task.hidden || !task.register) continue;
         const { __functionString, __getTagCallback } = task.export();
         emit("meta.sync_controller.task_added", {
           data: {
@@ -162,6 +166,8 @@ export default class GraphSyncController {
           }),
         );
       }
+
+      return true;
     })
       .doAfter(Cadenza.registry.getAllTasks)
       .then(Cadenza.registry.getAllRoutines);
