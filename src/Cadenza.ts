@@ -533,7 +533,6 @@ export default class CadenzaService {
       (_, emit) => {
         GraphMetadataController.instance;
         GraphSyncController.instance;
-        // TODO: add all tasks, routines and signals to database...
         emit("meta.sync_requested", {});
         return true;
       },

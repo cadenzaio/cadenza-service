@@ -48,8 +48,8 @@ export default class SocketController {
             // Rate limiting per socket/IP
             const limiterOptions: { [key: string]: IRateLimiterOptions } = {
               low: { points: Infinity, duration: 300 },
-              medium: { points: 100, duration: 300 },
-              high: { points: 50, duration: 60, blockDuration: 300 },
+              medium: { points: 1000, duration: 300 },
+              high: { points: 100, duration: 60, blockDuration: 300 },
             };
             const limiter = new RateLimiterMemory(limiterOptions[profile]);
             socket.use((packet, next) => {

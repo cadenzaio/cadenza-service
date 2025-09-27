@@ -8,10 +8,9 @@ export default class GraphSyncController {
     return this._instance;
   }
   constructor() {
-    Cadenza.broker.clearSignalsTask?.doOn("meta.sync_requested");
+    // Cadenza.broker.clearSignalsTask?.doOn("meta.sync_requested");
     Cadenza.broker.getSignalsTask?.doOn("meta.sync_requested");
     Cadenza.registry.getAllTasks.doAfter(Cadenza.broker.getSignalsTask!);
-    Cadenza.registry.getAllRoutines.doAfter(Cadenza.registry.getAllTasks);
 
     Cadenza.createMetaTask("Split routines for registration", (ctx, emit) => {
       const { __routines } = ctx;
@@ -44,9 +43,7 @@ export default class GraphSyncController {
           }
         }
       }
-    })
-      .doAfter(Cadenza.registry.getAllRoutines)
-      .emits("meta.register_all_routines");
+    }).doAfter(Cadenza.registry.getAllRoutines);
 
     Cadenza.createMetaTask("Split signals for registration", (ctx, emit) => {
       const { __signals } = ctx;
@@ -65,7 +62,7 @@ export default class GraphSyncController {
           },
         });
       }
-    }).emits("meta.register_all_signals");
+    }).doAfter(Cadenza.broker.getSignalsTask!);
 
     Cadenza.createMetaTask("Split tasks for registration", (ctx, emit) => {
       const { __tasks } = ctx;
@@ -167,6 +164,6 @@ export default class GraphSyncController {
       }
     })
       .doAfter(Cadenza.registry.getAllTasks)
-      .emits("meta.register_all_tasks");
+      .then(Cadenza.registry.getAllRoutines);
   }
 }
