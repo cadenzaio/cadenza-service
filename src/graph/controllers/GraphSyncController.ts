@@ -105,51 +105,55 @@ export default class GraphSyncController {
           },
         });
 
-        for (const signal of task.mapObservedSignals()) {
-          const firstChar = signal.charAt(0);
-          let _signal = signal;
-          let signalServiceName;
-          if (
-            firstChar === firstChar.toUpperCase() &&
-            firstChar !== firstChar.toLowerCase()
-          ) {
-            // TODO handle wildcards
-            signalServiceName = signal.split(".")[0];
-            _signal = signal.split(".").slice(1).join(".");
+        try {
+          for (const signal of task.mapObservedSignals()) {
+            const firstChar = signal.charAt(0);
+            let _signal = signal;
+            let signalServiceName;
+            if (
+              firstChar === firstChar.toUpperCase() &&
+              firstChar !== firstChar.toLowerCase()
+            ) {
+              // TODO handle wildcards
+              signalServiceName = signal.split(".")[0];
+              _signal = signal.split(".").slice(1).join(".");
+            }
+
+            emit("meta.sync_controller.signal_to_task_map", {
+              data: {
+                signalName: _signal,
+                taskName: task.name,
+                taskVersion: task.version,
+                taskServiceName: Cadenza.serviceRegistry.serviceName,
+                signalServiceName:
+                  signalServiceName ?? Cadenza.serviceRegistry.serviceName,
+              },
+            });
           }
 
-          emit("meta.sync_controller.signal_to_task_map", {
-            data: {
-              signalName: _signal,
-              taskName: task.name,
-              taskVersion: task.version,
-              taskServiceName: Cadenza.serviceRegistry.serviceName,
-              signalServiceName:
-                signalServiceName ?? Cadenza.serviceRegistry.serviceName,
-            },
-          });
-        }
+          for (const signal of task.mapSignals()) {
+            emit("meta.sync_controller.task_to_signal_map", {
+              data: {
+                signalName: signal,
+                taskName: task.name,
+                taskVersion: task.version,
+                serviceName: Cadenza.serviceRegistry.serviceName,
+              },
+            });
+          }
 
-        for (const signal of task.mapSignals()) {
-          emit("meta.sync_controller.task_to_signal_map", {
-            data: {
-              signalName: signal,
-              taskName: task.name,
-              taskVersion: task.version,
-              serviceName: Cadenza.serviceRegistry.serviceName,
-            },
-          });
-        }
-
-        for (const signal of task.mapOnFailSignals()) {
-          emit("meta.sync_controller.task_to_signal_map", {
-            data: {
-              signalName: signal,
-              taskName: task.name,
-              taskVersion: task.version,
-              serviceName: Cadenza.serviceRegistry.serviceName,
-            },
-          });
+          for (const signal of task.mapOnFailSignals()) {
+            emit("meta.sync_controller.task_to_signal_map", {
+              data: {
+                signalName: signal,
+                taskName: task.name,
+                taskVersion: task.version,
+                serviceName: Cadenza.serviceRegistry.serviceName,
+              },
+            });
+          }
+        } catch (e) {
+          console.error("Error in task split", task.name, e);
         }
       }
 
