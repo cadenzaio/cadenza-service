@@ -1,3 +1,10 @@
+## [1.13.5](https://github.com/cadenzaio/cadenza-service/compare/v1.13.4...v1.13.5) (2025-09-28)
+
+
+### Bug Fixes
+
+* Increment on row update. stability improvements. ([f285737](https://github.com/cadenzaio/cadenza-service/commit/f285737f50dccb8eac1cc276e5a26cb6804a3ced))
+
 ## [1.13.4](https://github.com/cadenzaio/cadenza-service/compare/v1.13.3...v1.13.4) (2025-09-27)
 
 
