@@ -143,6 +143,7 @@ export default class GraphSyncController {
 
         task.mapOnFailSignals((signal: string) => {
           emit("meta.sync_controller.task_to_signal_map", {
+            // TODO: handle signals that are not observed.
             data: {
               signalName: signal,
               taskName: task.name,

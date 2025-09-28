@@ -127,7 +127,7 @@ export default class SignalController {
             task_version: signalEmission.taskVersion,
             task_execution_id: signalEmission.taskExecutionId,
             is_meta: signalEmission.isMeta,
-            is_metric: signalEmission.isMetric,
+            is_metric: signalEmission.isMetric ?? false,
             data: ctx,
             service_name: Cadenza.serviceRegistry.serviceName,
             service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,

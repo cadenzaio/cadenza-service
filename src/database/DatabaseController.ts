@@ -879,7 +879,19 @@ export default class DatabaseController {
       const params = Object.values(resolvedData);
 
       const setClause = Object.entries(Object.keys(resolvedData))
-        .map(([i, key]) => `${snakeCase(key)} = $${parseInt(i) + 1}`)
+        .map(([i, key]) => {
+          const value = resolvedData[key];
+          if (value.__effect === "increment") {
+            return `${snakeCase(key)} = ${snakeCase(key)} + 1`;
+          }
+          if (value.__effect === "decrement") {
+            return `${snakeCase(key)} = ${snakeCase(key)} - 1`;
+          }
+          if (value.__effect === "set") {
+            return `${snakeCase(key)} = ${value.__value}`; // TODO: placeholder, not working
+          }
+          return `${snakeCase(key)} = $${parseInt(i) + 1}`;
+        })
         .join(", ");
       const whereClause = this.buildWhereClause(filter, params);
 
@@ -887,6 +899,13 @@ export default class DatabaseController {
       const result = await client.query(sql, params);
       if (transaction) await client.query("COMMIT");
       const rows = this.toCamelCase(result.rows);
+
+      if (rows.length === 0) {
+        return {
+          ...context,
+          __updated: false,
+        };
+      }
 
       return {
         [`${camelCase(tableName)}`]: rows[0],

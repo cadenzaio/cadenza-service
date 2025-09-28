@@ -351,7 +351,6 @@ export default class GraphMetadataController {
       (ctx) => {
         return {
           data: {
-            ...ctx.data,
             executionCount: "increment",
           },
           filter: {
