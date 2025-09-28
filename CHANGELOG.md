@@ -1,3 +1,10 @@
+## [1.13.6](https://github.com/cadenzaio/cadenza-service/compare/v1.13.5...v1.13.6) (2025-09-28)
+
+
+### Bug Fixes
+
+* fix increment and decrement ([4c1d903](https://github.com/cadenzaio/cadenza-service/commit/4c1d903ce6f54dcd630f918efc6c9892d9cb2850))
+
 ## [1.13.5](https://github.com/cadenzaio/cadenza-service/compare/v1.13.4...v1.13.5) (2025-09-28)
 
 
