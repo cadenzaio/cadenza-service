@@ -269,7 +269,7 @@ export default class RestController {
                           address = "localhost";
                         } else if (process.env.IS_DOCKER === "true") {
                           address =
-                            process.env.PG_GRAPH_SERVER_URL || "localhost";
+                            process.env.CADENZA_SERVER_URL || "localhost";
                         }
                       } else {
                         // @ts-ignore
@@ -312,7 +312,7 @@ export default class RestController {
                       } else if (httpsServer?.address()?.address === "::") {
                         if (process.env.IS_DOCKER === "true") {
                           address =
-                            process.env.PG_GRAPH_SERVER_URL || "localhost";
+                            process.env.CADENZA_SERVER_URL || "localhost";
                         }
                       } else {
                         // @ts-ignore

@@ -58,7 +58,7 @@
     "ai-agents",
     "self-evolving-systems"
   ],
-  "author": "",
+  "author": "Emil Forsvall",
   "license": "ISC",
   "devDependencies": {
     "@commitlint/cli": "^19.8.0",
