@@ -1,3 +1,10 @@
+## [1.13.8](https://github.com/cadenzaio/cadenza-service/compare/v1.13.7...v1.13.8) (2025-09-30)
+
+
+### Bug Fixes
+
+* deputy resolve bug ([8858bb5](https://github.com/cadenzaio/cadenza-service/commit/8858bb537d621a46ddefe10df5f999614c0a9091))
+
 ## [1.13.7](https://github.com/cadenzaio/cadenza-service/compare/v1.13.6...v1.13.7) (2025-09-28)
 
 
