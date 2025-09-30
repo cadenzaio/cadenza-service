@@ -86,7 +86,7 @@ export default class DeputyTask extends Task {
         });
 
         // Ephemeral meta-task for progress
-        const progressTask = Cadenza.createEphemeralMetaTask(
+        Cadenza.createEphemeralMetaTask(
           `On progress deputy ${this.remoteRoutineName}`,
           (ctx) => {
             if (ctx.progress) progressCallback(ctx.progress * ctx.weight);
@@ -98,20 +98,25 @@ export default class DeputyTask extends Task {
               ctx.progress === 1 || ctx.progress === undefined,
             register: false,
           },
-        ).doOn(`meta.socket_client.delegation_progress:${processId}`);
+        ).doOn(
+          `meta.socket_client.delegation_progress:${processId}`,
+          `meta.socket_client.delegated:${processId}`,
+          `meta.fetch.delegated:${processId}`,
+          `meta.service_registry.load_balance_failed:${processId}`,
+        );
 
         // Ephemeral meta-task for resolution
         Cadenza.createEphemeralMetaTask(
           `Resolve deputy ${this.remoteRoutineName}`,
           (responseCtx) => {
-            if (responseCtx.errored) {
+            console.log("resolve deputy", responseCtx);
+            if (responseCtx?.errored) {
               reject(new Error(responseCtx.__error));
             } else {
               // TODO clean up metadata
+              delete responseCtx.__isDeputy;
               resolve(responseCtx);
             }
-
-            progressTask.destroy();
           },
           `Ephemeral resolver for deputy process ${processId}`,
           { register: false },

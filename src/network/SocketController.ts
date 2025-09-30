@@ -321,7 +321,6 @@ export default class SocketController {
 
                 const metadata = resultContext.__metadata;
                 delete resultContext.__metadata;
-                console.log("SocketClient: Delegate result", resultContext);
                 emit(
                   `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
                   {

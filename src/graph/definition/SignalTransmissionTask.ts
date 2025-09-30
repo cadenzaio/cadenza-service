@@ -76,7 +76,7 @@ export default class SignalTransmissionTask extends Task {
         Cadenza.createEphemeralMetaTask(
           `Resolve signal transmission for ${this.signalName}`,
           (responseCtx) => {
-            if (responseCtx.errored) {
+            if (responseCtx?.errored) {
               reject(new Error(responseCtx.__error));
             } else {
               resolve(responseCtx);

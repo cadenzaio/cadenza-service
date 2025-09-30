@@ -225,8 +225,8 @@ export default class GraphMetadataController {
     Cadenza.createMetaTask(
       "Handle routine execution ended",
       (ctx) => {
-        const context = ctx.data.context;
-        delete ctx.data.context;
+        const context = ctx.data.resultContext;
+        delete ctx.data.resultContext;
         return {
           data: {
             ...ctx.data,
@@ -262,6 +262,9 @@ export default class GraphMetadataController {
       (ctx) => {
         const context = ctx.data.context;
         delete ctx.data.context;
+        if (!ctx.data.isMeta) {
+          console.log("Handle task execution creation", context);
+        }
         return {
           data: {
             ...ctx.data,
@@ -314,8 +317,9 @@ export default class GraphMetadataController {
     Cadenza.createMetaTask(
       "Handle task execution ended",
       (ctx) => {
-        const context = ctx.data.context;
-        delete ctx.data.context;
+        const context = ctx.data.resultContext;
+        delete ctx.data.resultContext;
+        console.log("Handle task execution ended", context);
         return {
           data: {
             ...ctx.data,
@@ -330,7 +334,7 @@ export default class GraphMetadataController {
                     data: {
                       uuid: context.id,
                       context: context.context,
-                      is_meta: ctx.data.isMeta,
+                      is_meta: ctx.data.isMeta ?? false,
                     },
                     return: "uuid",
                   },
