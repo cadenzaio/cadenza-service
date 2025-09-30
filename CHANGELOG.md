@@ -1,3 +1,10 @@
+## [1.13.9](https://github.com/cadenzaio/cadenza-service/compare/v1.13.8...v1.13.9) (2025-09-30)
+
+
+### Bug Fixes
+
+* drop existing ([bd33f2b](https://github.com/cadenzaio/cadenza-service/commit/bd33f2b59cbb643df6cd39844b550c4088febf1e))
+
 ## [1.13.8](https://github.com/cadenzaio/cadenza-service/compare/v1.13.7...v1.13.8) (2025-09-30)
 
 
