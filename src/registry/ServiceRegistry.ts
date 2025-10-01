@@ -42,6 +42,7 @@ export default class ServiceRegistry {
   private remoteSignals: Map<string, RemoteSignalDescriptor[]> = new Map();
   serviceName: string | null = null;
   serviceInstanceId: string | null = null;
+  numberOfRunningGraphs: number = 0;
   useSocket: boolean = false;
   retryCount: number = 3;
 
@@ -54,13 +55,14 @@ export default class ServiceRegistry {
   doForEachInstance: Task;
   deleteInstance: Task;
   getBalancedInstance: Task;
-  updateInstanceId: Task;
   getInstanceById: Task;
   getInstancesByServiceName: Task;
   handleDeputyRegistrationTask: Task;
   getStatusTask: Task;
   insertServiceTask: Task;
   insertServiceInstanceTask: Task;
+  handleServiceNotRespondingTask: Task;
+  handleServiceHandshakeTask: Task;
 
   private constructor() {
     this.handleInstanceUpdateTask = Cadenza.createMetaTask(
@@ -150,6 +152,7 @@ export default class ServiceRegistry {
         "CadenzaDB.meta.service_instance.updated",
         "meta.service_instance.inserted",
         "meta.service_instance.updated",
+        "meta.socket_client.status_received",
       );
 
     this.handleRemoteSignalRegistrationTask = Cadenza.createMetaTask(
@@ -209,6 +212,67 @@ export default class ServiceRegistry {
       "meta.fetch.handshake_complete",
     );
 
+    this.handleServiceNotRespondingTask = Cadenza.createMetaTask(
+      "Handle service not responding",
+      (ctx, emit) => {
+        const { serviceName, serviceAddress, servicePort } = ctx;
+        const serviceInstances = this.instances.get(serviceName);
+        const instances = serviceInstances?.filter(
+          (i) => i.address === serviceAddress && i.port === servicePort,
+        );
+        for (const instance of instances ?? []) {
+          instance.isActive = false;
+          instance.isNonResponsive = true;
+          emit("meta.service_registry.service_not_responding", {
+            data: {
+              isActive: false,
+              isNonResponsive: true,
+            },
+            filter: {
+              uuid: instance.uuid,
+            },
+          });
+        }
+        return true;
+      },
+      "Handles service not responding",
+    ).doOn("meta.fetch.handshake_failed");
+
+    this.handleServiceHandshakeTask = Cadenza.createMetaTask(
+      "Handle service handshake",
+      (ctx, emit) => {
+        const { serviceName, serviceAddress, servicePort, serviceInstanceId } =
+          ctx;
+        console.log(
+          "SERVICE HANDSHAKE",
+          serviceName,
+          serviceAddress,
+          servicePort,
+          serviceInstanceId,
+          this.instances.get(serviceName),
+        );
+        const serviceInstances = this.instances.get(serviceName);
+        const instances = serviceInstances?.filter(
+          (i) => i.address === serviceAddress && i.port === servicePort,
+        );
+        for (const instance of instances ?? []) {
+          instance.isActive = serviceInstanceId === instance.uuid;
+          instance.isNonResponsive = serviceInstanceId !== instance.uuid;
+          emit("meta.service_registry.service_handshake", {
+            data: {
+              isActive: instance.isActive,
+              isNonResponsive: instance.isNonResponsive,
+            },
+            filter: {
+              uuid: instance.uuid,
+            },
+          });
+        }
+        return true;
+      },
+      "Handles service handshake",
+    ).doOn("meta.fetch.handshake_complete");
+
     this.handleSocketStatusUpdateTask = Cadenza.createMetaTask(
       "Handle Socket Status Update",
       (ctx) => {
@@ -258,19 +322,6 @@ export default class ServiceRegistry {
           },
         ).then(this.handleInstanceUpdateTask),
       );
-
-    this.updateInstanceId = Cadenza.createMetaTask(
-      "Update instance id",
-      (context) => {
-        const { __id, __oldId } = context;
-        const instance = this.instances.get(__oldId);
-        if (!instance) return context;
-        this.instances.set(__id, instance);
-        this.instances.delete(__oldId);
-        return context;
-      },
-      "Updates instance id.",
-    ).doOn("meta.service.global_id_set");
 
     this.getInstanceById = Cadenza.createMetaTask(
       "Get instance by id",

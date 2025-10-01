@@ -183,6 +183,9 @@ export default class GraphMetadataController {
       "Handle routine execution creation",
       (ctx) => {
         const context = ctx.data.context;
+        if (!ctx.data.isMeta) {
+          console.log("Handle routine execution creation", ctx.data);
+        }
         delete ctx.data.context;
         return {
           data: {
@@ -318,8 +321,8 @@ export default class GraphMetadataController {
       "Handle task execution ended",
       (ctx) => {
         const context = ctx.data.resultContext;
-        delete ctx.data.resultContext;
         console.log("Handle task execution ended", context);
+        delete ctx.data.resultContext;
         return {
           data: {
             ...ctx.data,

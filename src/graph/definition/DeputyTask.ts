@@ -184,6 +184,7 @@ export default class DeputyTask extends Task {
       __localTaskName: this.name,
       __remoteRoutineName: this.remoteRoutineName,
       __serviceName: this.serviceName,
+      __localRoutineExecId: metadata.__routineExecId,
       __executionTraceId: metadata.__executionTraceId ?? null,
       __metadata: {
         ...metadata,
@@ -191,6 +192,8 @@ export default class DeputyTask extends Task {
       },
       ...ctx,
     };
+
+    console.log("DEPUTY CONTEXT", deputyContext);
 
     return this.taskFunction(deputyContext, emit, progressCallback);
   }

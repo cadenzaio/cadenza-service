@@ -126,7 +126,7 @@ export default class CadenzaService {
   ): DeputyTask {
     this.bootstrap();
     this.validateName(routineName);
-    const name = `Deputy task for "${routineName}"`;
+    const name = `Deputy task for: ${routineName}`;
 
     options = {
       concurrency: 0,
@@ -256,12 +256,12 @@ export default class CadenzaService {
 
     options.isMeta = true;
 
-    const name = `SignalTransmission task for "${signalName}"`;
+    const name = `Transmission of signal: ${signalName}`;
     return new SignalTransmissionTask(
       name,
       signalName,
       serviceName,
-      `Transmits signal "${signalName}" to service "${serviceName}"`,
+      `Transmits signal ${signalName} to ${serviceName} service.`,
       options.concurrency,
       options.timeout,
       options.register,
@@ -296,7 +296,7 @@ export default class CadenzaService {
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join("");
     const name = `${operation} ${tableName} in ${databaseServiceName ?? "default database service"}`;
-    const description = `Executes a database "${operation}" on table "${tableName}" in ${databaseServiceName ?? "default database service"}`;
+    const description = `Executes a ${operation} on table ${tableName} in ${databaseServiceName ?? "default database service"}`;
     const taskName = `db${operation.charAt(0).toUpperCase() + operation.slice(1)}${tableNameFormatted}`;
 
     options = {

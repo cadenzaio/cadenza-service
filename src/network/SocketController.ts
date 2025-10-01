@@ -243,6 +243,8 @@ export default class SocketController {
         const URL = `${socketProtocol}://${serviceAddress}:${port}`;
         const fetchId = `${serviceAddress}_${port}`;
 
+        console.log("SocketClient: Connecting to", serviceName, URL);
+
         const socket = io(URL, {
           reconnection: true,
           reconnectionAttempts: 20,
@@ -252,14 +254,9 @@ export default class SocketController {
           retries: 5,
         });
 
-        console.log("SocketClient: Connecting to", URL);
-
         socket.on("connect", () => {
           console.log("SocketClient: CONNECTED");
           Cadenza.broker.emit("meta.socket_client.connected", ctx);
-          // socket.emit("handshake", {
-          //   serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-          // });
         });
 
         socket.on("handshake", (ctx) => {

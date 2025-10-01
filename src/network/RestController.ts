@@ -129,7 +129,11 @@ export default class RestController {
                 try {
                   console.log("handshake", req.body);
                   Cadenza.broker.emit("meta.rest.handshake", req.body);
-                  res.send({ __status: "success" });
+                  res.send({
+                    __status: "success",
+                    __serviceInstanceId:
+                      Cadenza.serviceRegistry.serviceInstanceId,
+                  });
                 } catch (e) {
                   console.error("Error in handshake", e);
                   res.send({ __status: "error" });
@@ -305,6 +309,8 @@ export default class RestController {
 
                     const httpsServer = https.createServer(options, ctx.__app);
                     ctx.__httpsServer = httpsServer;
+                    ctx.__port = 443;
+                    port = 443;
                     httpsServer.listen(443, () => {
                       if (typeof httpsServer?.address() === "string") {
                         address = httpsServer.address() as string;
@@ -399,12 +405,15 @@ export default class RestController {
             });
             const result = (await response.json()) as AnyObject;
             console.log("Handshake result", result);
-            if (result.__status === "error") {
-              throw new Error(
+            if (result.__status !== "success") {
+              const error =
                 result.__error ??
-                  `Failed to connect to service ${serviceName} ${ctx.serviceInstanceId}`,
-              );
+                `Failed to connect to service ${serviceName} ${ctx.serviceInstanceId}`;
+              console.error(error);
+              return { ...ctx, __error: error, errored: true };
             }
+
+            ctx.serviceInstanceId = result.__serviceInstanceId;
 
             console.log(`Connected to service ${serviceName} ${URL}`, result);
 
@@ -420,15 +429,9 @@ export default class RestController {
               });
             }
 
-            return true;
+            return ctx;
           },
           "Sends handshake request",
-          {
-            retryCount: 20,
-            retryDelay: 200,
-            retryDelayMax: 5000,
-            retryDelayFactor: 1.5,
-          },
         )
           .doOn(`meta.fetch.handshake_requested:${fetchId}`)
           .emits("meta.fetch.handshake_complete")
@@ -558,6 +561,7 @@ export default class RestController {
               communicationTypes,
               serviceAddress,
               servicePort,
+              protocol,
             } = ctx;
 
             const fetchId = `${serviceAddress}_${servicePort}`;
@@ -566,6 +570,9 @@ export default class RestController {
               serviceInstanceId,
               serviceName,
               communicationTypes,
+              serviceAddress,
+              servicePort,
+              protocol,
               handshakeData: {
                 instanceId: Cadenza.serviceRegistry.serviceInstanceId,
                 // JWT token...
