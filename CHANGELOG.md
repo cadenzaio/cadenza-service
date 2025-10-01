@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/cadenzaio/cadenza-service/compare/v1.13.9...v1.14.0) (2025-10-01)
+
+
+### Features
+
+* Handling of servers not responding. ([273dbe7](https://github.com/cadenzaio/cadenza-service/commit/273dbe75162d0b856e4b5cca598e764d74ac2eba))
+
 ## [1.13.9](https://github.com/cadenzaio/cadenza-service/compare/v1.13.8...v1.13.9) (2025-09-30)
 
 
