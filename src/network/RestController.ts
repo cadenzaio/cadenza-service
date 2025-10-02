@@ -54,8 +54,8 @@ export default class RestController {
                 // Rate limiting (1000 req/5min per IP)
                 app.use((req: any, res: any, next: any) => {
                   new RateLimiterMemory({
-                    points: 1000,
-                    duration: 300,
+                    points: 10000,
+                    duration: 10,
                   })
                     .consume(req.ip)
                     .then(() => next())
@@ -92,7 +92,7 @@ export default class RestController {
                 // Rate limiting (50 req/1min per IP, block on exceed)
                 app.use((req: any, res: any, next: any) => {
                   new RateLimiterMemory({
-                    points: 50,
+                    points: 1000,
                     duration: 60,
                     blockDuration: 300,
                   })

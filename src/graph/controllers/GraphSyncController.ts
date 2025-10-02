@@ -9,9 +9,19 @@ export default class GraphSyncController {
   }
   constructor() {
     // Cadenza.broker.clearSignalsTask?.doOn("meta.sync_requested");
-    Cadenza.broker.getSignalsTask
-      ?.doOn("meta.service_registry.synced_instances")
-      .then(Cadenza.registry.getAllTasks.then(Cadenza.registry.getAllRoutines));
+
+    Cadenza.createDebounceMetaTask(
+      "Debounce syncing of resources",
+      () => true,
+      "",
+      500,
+    )
+      .doAfter(Cadenza.serviceRegistry.handleInstanceUpdateTask)
+      .then(
+        Cadenza.broker.getSignalsTask!.then(
+          Cadenza.registry.getAllTasks.then(Cadenza.registry.getAllRoutines),
+        ),
+      );
 
     Cadenza.createMetaTask("Split routines for registration", (ctx, emit) => {
       const { __routines } = ctx;
