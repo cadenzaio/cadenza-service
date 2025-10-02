@@ -1,3 +1,10 @@
+## [1.15.3](https://github.com/cadenzaio/cadenza-service/compare/v1.15.2...v1.15.3) (2025-10-02)
+
+
+### Bug Fixes
+
+* update core package. Signal bug. ([c19663a](https://github.com/cadenzaio/cadenza-service/commit/c19663adf356c72877fbac0fa5b52abbc77c68f6))
+
 ## [1.15.2](https://github.com/cadenzaio/cadenza-service/compare/v1.15.1...v1.15.2) (2025-10-02)
 
 
