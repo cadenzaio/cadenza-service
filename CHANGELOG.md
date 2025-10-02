@@ -1,3 +1,10 @@
+## [1.15.2](https://github.com/cadenzaio/cadenza-service/compare/v1.15.1...v1.15.2) (2025-10-02)
+
+
+### Bug Fixes
+
+* increased fetch rate limit and fixed non responsive bug. ([4fb9480](https://github.com/cadenzaio/cadenza-service/commit/4fb9480d611d4f1e1a5dc850151a583354863b1e))
+
 ## [1.15.1](https://github.com/cadenzaio/cadenza-service/compare/v1.15.0...v1.15.1) (2025-10-02)
 
 
