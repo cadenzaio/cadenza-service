@@ -1,3 +1,10 @@
+## [1.15.1](https://github.com/cadenzaio/cadenza-service/compare/v1.15.0...v1.15.1) (2025-10-02)
+
+
+### Bug Fixes
+
+* debugging service not responding logic. ([69cab6a](https://github.com/cadenzaio/cadenza-service/commit/69cab6a6ec2b7a0d8af79d5b844a86816363cf8c))
+
 # [1.15.0](https://github.com/cadenzaio/cadenza-service/compare/v1.14.0...v1.15.0) (2025-10-02)
 
 
