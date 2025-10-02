@@ -143,7 +143,7 @@ export default class ServiceRegistry {
 
         return true;
       },
-      "Handles instance update from DB signal",
+      "Handles instance updates to service instances",
     )
       .emits("meta.service_registry.service_discovered")
       .doOn(
@@ -223,6 +223,7 @@ export default class ServiceRegistry {
         for (const instance of instances ?? []) {
           instance.isActive = false;
           instance.isNonResponsive = true;
+          instance.clientCreated = false;
           emit("meta.service_registry.service_not_responding", {
             data: {
               isActive: false,
@@ -236,7 +237,7 @@ export default class ServiceRegistry {
         return true;
       },
       "Handles service not responding",
-    ).doOn("meta.fetch.handshake_failed");
+    ).doOn("meta.fetch.handshake_failed", "meta.socket_client.disconnected");
 
     this.handleServiceHandshakeTask = Cadenza.createMetaTask(
       "Handle service handshake",
@@ -256,8 +257,8 @@ export default class ServiceRegistry {
           (i) => i.address === serviceAddress && i.port === servicePort,
         );
         for (const instance of instances ?? []) {
-          instance.isActive = serviceInstanceId === instance.uuid;
-          instance.isNonResponsive = serviceInstanceId !== instance.uuid;
+          // instance.isActive = serviceInstanceId === instance.uuid; // TODO cadenza-db will be deactivated by this.
+          // instance.isNonResponsive = serviceInstanceId !== instance.uuid;
           emit("meta.service_registry.service_handshake", {
             data: {
               isActive: instance.isActive,
@@ -310,6 +311,7 @@ export default class ServiceRegistry {
       ],
     })
       .doOn("meta.sync_requested")
+      .emits("meta.service_registry.synced_instances")
       .then(
         Cadenza.createMetaTask(
           "Split service instances",

@@ -287,91 +287,112 @@ export default class SocketController {
 
         socket.on("disconnect", () => {
           console.log("SocketClient: Disconnected", URL);
-          Cadenza.broker.emit("meta.socket_client.disconnected", {
-            URL,
+          Cadenza.broker.emit(`meta.socket_client.disconnected:${fetchId}`, {
+            serviceName,
+            serviceAddress,
+            servicePort,
           });
         });
 
-        Cadenza.createMetaTask(
+        const delegateTask = Cadenza.createMetaTask(
           `Delegate flow to ${URL}`,
           async (ctx, emit) => {
             if (ctx.__remoteRoutineName === undefined) {
               return;
             }
 
-            console.log("Socket Delegate:", ctx);
+            return new Promise((resolve, reject) => {
+              console.log("Socket Delegate:", ctx);
+              socket
+                .timeout(10000)
+                .emit(
+                  "delegation",
+                  ctx,
+                  (err: any, resultContext: AnyObject) => {
+                    if (err) {
+                      console.log("socket error:", err);
+                      resultContext = {
+                        __error: `Timeout error: ${err}`,
+                        errored: true,
+                        ...ctx,
+                        ...ctx.__metadata,
+                      };
+                      emit(`meta.socket_client.delegate_failed`, resultContext);
+                      resolve(resultContext);
+                      return;
+                    }
 
-            socket
-              .timeout(10000)
-              .emit("delegation", ctx, (err: any, resultContext: AnyObject) => {
-                if (err) {
-                  console.log("socket error:", err);
-                  resultContext = {
-                    __error: `Timeout error: ${err}`,
-                    errored: true,
-                    ...ctx,
-                    ...ctx.__metadata,
-                  };
-                  emit(`meta.socket_client.delegate_failed`, resultContext);
-                  return;
-                }
-
-                const metadata = resultContext.__metadata;
-                delete resultContext.__metadata;
-                emit(
-                  `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
-                  {
-                    ...resultContext,
-                    ...metadata,
+                    const metadata = resultContext.__metadata;
+                    delete resultContext.__metadata;
+                    emit(
+                      `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
+                      {
+                        ...resultContext,
+                        ...metadata,
+                      },
+                    );
+                    resolve(resultContext);
                   },
                 );
-              });
+            });
           },
           `Delegate flow to service ${serviceName} with address ${URL}`,
         ).doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`);
 
-        Cadenza.createMetaTask(
+        const transmitTask = Cadenza.createMetaTask(
           `Transmit signal to ${URL}`,
           async (ctx, emit) => {
             if (ctx.__signalName === undefined) {
               return;
             }
 
-            socket
-              .timeout(ctx.__timeout ?? 10000)
-              .emit("signal", ctx, (err: any, response: AnyObject) => {
-                if (err) {
-                  console.log("socket error:", err);
-                  response = {
-                    __error: `Timeout error: ${err}`,
-                    errored: true,
-                    ...ctx,
-                    ...ctx.__metadata,
-                  };
-                  emit(
-                    `meta.socket_client.signal_transmission_failed`,
-                    response,
-                  );
-                  return;
-                }
+            return new Promise((resolve, reject) => {
+              socket
+                .timeout(ctx.__timeout ?? 10000)
+                .emit("signal", ctx, (err: any, response: AnyObject) => {
+                  if (err) {
+                    console.log("socket error:", err);
+                    response = {
+                      __error: `Timeout error: ${err}`,
+                      errored: true,
+                      ...ctx,
+                      ...ctx.__metadata,
+                    };
+                    emit(
+                      `meta.socket_client.signal_transmission_failed`,
+                      response,
+                    );
+                    resolve(response);
+                    return;
+                  }
 
-                if (ctx.__routineExecId) {
-                  emit(
-                    `meta.socket_client.transmitted:${ctx.__routineExecId}`,
-                    response,
-                  );
-                }
-              });
+                  if (ctx.__routineExecId) {
+                    emit(
+                      `meta.socket_client.transmitted:${ctx.__routineExecId}`,
+                      response,
+                    );
+                  }
+                  resolve(response);
+                });
+            });
           },
           `Transmits signal to service ${serviceName} with address ${URL}`,
         ).doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`);
 
-        Cadenza.createMetaTask(
+        Cadenza.createEphemeralMetaTask(
           `Shutdown SocketClient ${URL}`,
-          () => socket.close(),
+          () => {
+            socket?.close();
+            delegateTask.destroy();
+            transmitTask.destroy();
+          },
           "Shuts down the socket client",
         )
-          .doOn(`meta.socket_shutdown_requested:${fetchId}`) // TODO destroy tasks on close or instance removed? Also in fetch client
+          .doOn(
+            `meta.socket_shutdown_requested:${fetchId}`,
+            `meta.socket_client.disconnected:${fetchId}`,
+            `meta.fetch.handshake_failed:${fetchId}`,
+          )
           .emits("meta.socket_client_shutdown_complete");
 
         return true;

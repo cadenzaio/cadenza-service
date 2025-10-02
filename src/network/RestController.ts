@@ -245,7 +245,7 @@ export default class RestController {
 
                 Cadenza.broker.emit(
                   "meta.rest.status_check_requested",
-                  req.query,
+                  req.body.query,
                 );
               });
 
@@ -392,7 +392,7 @@ export default class RestController {
 
         console.log("Fetch connecting to", URL);
 
-        Cadenza.createMetaTask(
+        const handshakeTask = Cadenza.createMetaTask(
           `Send Handshake to ${URL}`,
           async (ctx, emit) => {
             console.log("Sending handshake", ctx);
@@ -410,6 +410,7 @@ export default class RestController {
                 result.__error ??
                 `Failed to connect to service ${serviceName} ${ctx.serviceInstanceId}`;
               console.error(error);
+              emit(`meta.fetch.handshake_failed:${fetchId}`, result);
               return { ...ctx, __error: error, errored: true };
             }
 
@@ -434,10 +435,9 @@ export default class RestController {
           "Sends handshake request",
         )
           .doOn(`meta.fetch.handshake_requested:${fetchId}`)
-          .emits("meta.fetch.handshake_complete")
-          .emitsOnFail("meta.fetch.handshake_failed"); // TODO: register as not active
+          .emits("meta.fetch.handshake_complete");
 
-        Cadenza.createMetaTask(
+        const delegateTask = Cadenza.createMetaTask(
           `Delegate flow to REST server ${URL}`,
           async (ctx, emit) => {
             if (ctx.__remoteRoutineName === undefined) {
@@ -480,7 +480,7 @@ export default class RestController {
           )
           .emitsOnFail("meta.fetch.delegate_failed");
 
-        Cadenza.createMetaTask(
+        const transmitTask = Cadenza.createMetaTask(
           `Transmit signal to server ${URL}`,
           async (ctx, emit) => {
             if (ctx.__signalName === undefined) {
@@ -522,12 +522,14 @@ export default class RestController {
           )
           .emitsOnFail("meta.fetch.signal_transmission_failed");
 
-        Cadenza.createMetaTask(
+        const statusTask = Cadenza.createMetaTask(
           `Request status from ${URL}`,
           async (ctx) => {
             let status;
             try {
-              const response = await fetch(`${URL}/status`, { method: "GET" });
+              const response = await fetch(`${URL}/status`, {
+                method: "GET",
+              });
               status = await response.json();
             } catch (e) {
               status = {
@@ -545,7 +547,19 @@ export default class RestController {
           .emits("meta.fetch.status_checked")
           .emitsOnFail("meta.fetch.status_check_failed");
 
-        // TODO: destroy fetch client
+        Cadenza.createEphemeralMetaTask("Destroy fetch client", (ctx, emit) => {
+          console.log("Destroying fetch client");
+          handshakeTask.destroy();
+          delegateTask.destroy();
+          transmitTask.destroy();
+          statusTask.destroy();
+        })
+          .doOn(
+            "meta.fetch.destroy_requested",
+            `meta.socket_client.disconnected:${fetchId}`,
+            `meta.fetch.handshake_failed:${fetchId}`,
+          )
+          .emits("meta.fetch.destroyed");
 
         return true;
       },
