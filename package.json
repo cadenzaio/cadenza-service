@@ -6,7 +6,7 @@
     "start": "node --loader ts-node/esm src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc && tsup"
+    "build": "tsup"
   },
   "main": "dist/index.js",
   "module": "dist/index.mjs",
