@@ -1,3 +1,10 @@
+## [1.15.4](https://github.com/cadenzaio/cadenza-service/compare/v1.15.3...v1.15.4) (2025-10-02)
+
+
+### Bug Fixes
+
+* Fixed sync debouncing. Adjusted rate limits. ([54c1e2b](https://github.com/cadenzaio/cadenza-service/commit/54c1e2b3f331fbac1491c6ea255caf2503618cee))
+
 ## [1.15.3](https://github.com/cadenzaio/cadenza-service/compare/v1.15.2...v1.15.3) (2025-10-02)
 
 
