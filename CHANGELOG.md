@@ -1,3 +1,10 @@
+# [1.15.0](https://github.com/cadenzaio/cadenza-service/compare/v1.14.0...v1.15.0) (2025-10-02)
+
+
+### Features
+
+* Destroy clients on disconnect. ([00fb5e4](https://github.com/cadenzaio/cadenza-service/commit/00fb5e4e5f8e9c96a4bfc10d8638568f6fd61ab3))
+
 # [1.14.0](https://github.com/cadenzaio/cadenza-service/compare/v1.13.9...v1.14.0) (2025-10-01)
 
 
