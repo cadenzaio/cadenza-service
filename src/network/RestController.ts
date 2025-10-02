@@ -51,10 +51,10 @@ export default class RestController {
                   }),
                 );
 
-                // Rate limiting (100 req/5min per IP)
+                // Rate limiting (1000 req/5min per IP)
                 app.use((req: any, res: any, next: any) => {
                   new RateLimiterMemory({
-                    points: 100,
+                    points: 1000,
                     duration: 300,
                   })
                     .consume(req.ip)
@@ -457,6 +457,7 @@ export default class RestController {
               });
               resultContext = await response.json();
             } catch (e) {
+              // TODO: Retry on too many requests
               resultContext = {
                 __error: `Error: ${e}`,
                 errored: true,
@@ -504,6 +505,8 @@ export default class RestController {
                 emit(`meta.fetch.transmitted:${ctx.__routineExecId}`, response);
               }
             } catch (e) {
+              // TODO: Retry on too many requests
+
               response = {
                 __error: `Error: ${e}`,
                 errored: true,
@@ -532,6 +535,8 @@ export default class RestController {
               });
               status = await response.json();
             } catch (e) {
+              // TODO: Retry on too many requests
+
               status = {
                 __error: `Error: ${e}`,
                 errored: true,

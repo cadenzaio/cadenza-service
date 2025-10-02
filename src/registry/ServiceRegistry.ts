@@ -244,7 +244,7 @@ export default class ServiceRegistry {
         return true;
       },
       "Handles service not responding",
-    ).doOn("meta.fetch.handshake_failed", "meta.socket_client.disconnected");
+    ).doOn("meta.fetch.handshake_failed", "meta.socket_client.disconnected.*");
 
     this.handleServiceHandshakeTask = Cadenza.createMetaTask(
       "Handle service handshake",

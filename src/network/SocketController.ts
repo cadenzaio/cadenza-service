@@ -281,6 +281,8 @@ export default class SocketController {
         });
 
         socket.on("error", (err) => {
+          // TODO: Retry on too many requests
+
           console.error("SocketClient: error", err);
           Cadenza.broker.emit("meta.socket_client.error", err);
         });
