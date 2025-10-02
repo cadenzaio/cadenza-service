@@ -1,3 +1,10 @@
+# [1.16.0](https://github.com/cadenzaio/cadenza-service/compare/v1.15.4...v1.16.0) (2025-10-02)
+
+
+### Features
+
+* typescript update ([e1f98c8](https://github.com/cadenzaio/cadenza-service/commit/e1f98c8b2b608487757f5a7e638123a688315bc2))
+
 ## [1.15.4](https://github.com/cadenzaio/cadenza-service/compare/v1.15.3...v1.15.4) (2025-10-02)
 
 
