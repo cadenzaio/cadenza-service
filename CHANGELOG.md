@@ -1,3 +1,10 @@
+## [1.16.1](https://github.com/cadenzaio/cadenza-service/compare/v1.16.0...v1.16.1) (2025-10-02)
+
+
+### Bug Fixes
+
+* build fix ([596377a](https://github.com/cadenzaio/cadenza-service/commit/596377a1fbf8e2459a42e488801912875bd888b4))
+
 # [1.16.0](https://github.com/cadenzaio/cadenza-service/compare/v1.15.4...v1.16.0) (2025-10-02)
 
 
