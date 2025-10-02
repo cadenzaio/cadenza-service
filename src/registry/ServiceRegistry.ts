@@ -220,6 +220,13 @@ export default class ServiceRegistry {
         const instances = serviceInstances?.filter(
           (i) => i.address === serviceAddress && i.port === servicePort,
         );
+        console.log(
+          "Service not responding",
+          serviceAddress,
+          servicePort,
+          instances,
+        );
+
         for (const instance of instances ?? []) {
           instance.isActive = false;
           instance.isNonResponsive = true;
