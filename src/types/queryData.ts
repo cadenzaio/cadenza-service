@@ -1,5 +1,5 @@
 // Define supported operation types
-import { AnyObject } from "@cadenza.io/core";
+import type { AnyObject } from "@cadenza.io/core";
 
 export type DbOperationType = "query" | "insert" | "update" | "delete";
 

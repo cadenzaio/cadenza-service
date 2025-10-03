@@ -1,7 +1,7 @@
 import DeputyTask from "./DeputyTask";
-import {
+import { GraphContext } from "@cadenza.io/core";
+import type {
   AnyObject,
-  GraphContext,
   SchemaDefinition,
   TaskResult,
   ThrottleTagGetter,

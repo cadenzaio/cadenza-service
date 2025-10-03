@@ -1,9 +1,8 @@
 import { v4 as uuid } from "uuid";
-import {
+import { GraphContext, Task } from "@cadenza.io/core";
+import type {
   AnyObject,
-  GraphContext,
   SchemaDefinition,
-  Task,
   TaskResult,
   ThrottleTagGetter,
 } from "@cadenza.io/core";

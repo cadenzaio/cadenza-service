@@ -4,13 +4,15 @@ import CadenzaService, {
   ServerOptions,
 } from "./Cadenza";
 import {
-  AnyObject,
-  DebounceOptions,
   DebounceTask,
   EphemeralTask,
-  EphemeralTaskOptions,
   GraphRoutine,
   Task,
+} from "@cadenza.io/core";
+import type {
+  AnyObject,
+  DebounceOptions,
+  EphemeralTaskOptions,
   TaskFunction,
   TaskOptions,
   ThrottleTagGetter,
@@ -38,17 +40,9 @@ import {
 } from "./types/queryData";
 
 export default CadenzaService;
-export {
-  GraphMetadataController,
-  DeputyTask,
-  DatabaseTask,
-  SignalTransmissionTask,
-  RestController,
-  SocketController,
-  ServiceRegistry,
+export type {
   ServiceInstanceDescriptor,
   DeputyDescriptor,
-  SignalController,
   DbOperationType,
   SortDirection,
   JoinDefinition,
@@ -64,10 +58,20 @@ export {
   TaskOptions,
   ThrottleTagGetter,
   TaskFunction,
-  Task,
   DebounceOptions,
-  DebounceTask,
   EphemeralTaskOptions,
+};
+export {
+  GraphMetadataController,
+  DeputyTask,
+  DatabaseTask,
+  SignalTransmissionTask,
+  RestController,
+  SocketController,
+  ServiceRegistry,
+  SignalController,
+  Task,
+  DebounceTask,
   EphemeralTask,
   GraphRoutine,
 };

@@ -1,4 +1,5 @@
-import { AnyObject, Task } from "@cadenza.io/core";
+import { Task } from "@cadenza.io/core";
+import type { AnyObject } from "@cadenza.io/core";
 import Cadenza from "../Cadenza";
 
 export interface ServiceInstanceDescriptor {

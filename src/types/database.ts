@@ -1,4 +1,4 @@
-import { AnyObject } from "@cadenza.io/core";
+import type { AnyObject } from "@cadenza.io/core";
 
 export type SchemaType =
   | "varchar"

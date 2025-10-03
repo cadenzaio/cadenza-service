@@ -8,7 +8,7 @@ import http from "node:http";
 import fs from "node:fs";
 import https from "node:https";
 import fetch from "node-fetch";
-import { AnyObject } from "@cadenza.io/core";
+import type { AnyObject } from "@cadenza.io/core";
 
 export default class RestController {
   private static _instance: RestController;

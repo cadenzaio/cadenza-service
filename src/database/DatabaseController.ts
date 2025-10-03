@@ -8,7 +8,7 @@ import {
 import Cadenza, { DatabaseOptions, ServerOptions } from "../Cadenza";
 import { Pool, PoolClient } from "pg";
 import { camelCase, snakeCase } from "lodash-es";
-import { AnyObject } from "@cadenza.io/core";
+import type { AnyObject } from "@cadenza.io/core";
 import {
   DbOperationPayload,
   JoinDefinition,

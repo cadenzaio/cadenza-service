@@ -2,7 +2,7 @@ import Cadenza from "../Cadenza";
 import { Server } from "socket.io";
 import { IRateLimiterOptions, RateLimiterMemory } from "rate-limiter-flexible";
 import xss from "xss";
-import { AnyObject } from "@cadenza.io/core";
+import type { AnyObject } from "@cadenza.io/core";
 import { io } from "socket.io-client";
 
 export default class SocketController {
