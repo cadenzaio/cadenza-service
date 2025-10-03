@@ -1,3 +1,10 @@
+# [1.17.0](https://github.com/cadenzaio/cadenza-service/compare/v1.16.2...v1.17.0) (2025-10-03)
+
+
+### Features
+
+* Separated type and value exports ([b35b539](https://github.com/cadenzaio/cadenza-service/commit/b35b539dca6d35199f38a498e0b0b3e9c8129361))
+
 ## [1.16.2](https://github.com/cadenzaio/cadenza-service/compare/v1.16.1...v1.16.2) (2025-10-03)
 
 
