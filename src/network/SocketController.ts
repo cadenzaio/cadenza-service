@@ -402,7 +402,7 @@ export default class SocketController {
       },
       "Connects to a specified socket server",
     )
-      .doOn("meta.service_registry.dependee_registered")
+      .doOn("meta.fetch.handshake_complete")
       .emitsOnFail("meta.socket_client.connect_failed");
   }
 }
