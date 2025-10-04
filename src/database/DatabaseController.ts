@@ -222,9 +222,10 @@ export default class DatabaseController {
                       .join(", ");
 
                     if (schema.meta?.dropExisting) {
-                      await this.dbClient.query(
-                        `DROP TABLE IF EXISTS ${tableName} CASCADE;`,
+                      const result = await this.dbClient.query(
+                        `DELETE FROM ${tableName};`,
                       );
+                      console.log("DROP TABLE", tableName, result);
                     }
 
                     const sql = `CREATE TABLE IF NOT EXISTS ${tableName} (${fieldDefs})`;
