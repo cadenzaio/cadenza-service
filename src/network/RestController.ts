@@ -256,43 +256,46 @@ export default class RestController {
             .then(
               Cadenza.createMetaTask(
                 "Configure network",
-                (ctx) => {
+                async (ctx) => {
                   let address: string = "localhost";
                   let port: number = ctx.__port;
                   let exposed: boolean = false;
 
-                  const createHttpServer = (ctx: any) => {
-                    const server = http.createServer(ctx.__app);
-                    ctx.__httpServer = server;
-                    server.listen(ctx.__port, () => {
-                      if (typeof server?.address() === "string") {
-                        address = server.address() as string;
-                        // @ts-ignore
-                      } else if (server?.address()?.address === "::") {
-                        if (process.env.NODE_ENV === "development") {
-                          address = "localhost";
-                        } else if (process.env.IS_DOCKER === "true") {
-                          address =
-                            process.env.CADENZA_SERVER_URL || "localhost";
+                  const createHttpServer = async (ctx: any) => {
+                    await new Promise((resolve, reject) => {
+                      const server = http.createServer(ctx.__app);
+                      ctx.__httpServer = server;
+                      server.listen(ctx.__port, () => {
+                        if (typeof server?.address() === "string") {
+                          address = server.address() as string;
+                          // @ts-ignore
+                        } else if (server?.address()?.address === "::") {
+                          if (process.env.NODE_ENV === "development") {
+                            address = "localhost";
+                          } else if (process.env.IS_DOCKER === "true") {
+                            address =
+                              process.env.CADENZA_SERVER_URL || "localhost";
+                          }
+                        } else {
+                          // @ts-ignore
+                          address = server?.address()?.address || "";
                         }
-                      } else {
-                        // @ts-ignore
-                        address = server?.address()?.address || "";
-                      }
 
-                      console.log(`Server is running on ${address}:${port}`);
+                        console.log(`Server is running on ${address}:${port}`);
+                        resolve(address);
+                      });
+
+                      Cadenza.createMetaTask(
+                        "Shutdown HTTP Server",
+                        () => server.close(),
+                        "Shuts down the HTTP server",
+                      )
+                        .doOn("meta.server_shutdown_requested")
+                        .emits("meta.rest.shutdown:http");
                     });
-
-                    Cadenza.createMetaTask(
-                      "Shutdown HTTP Server",
-                      () => server.close(),
-                      "Shuts down the HTTP server",
-                    )
-                      .doOn("meta.server_shutdown_requested")
-                      .emits("meta.rest.shutdown:http");
                   };
 
-                  const createHttpsServer = (ctx: any) => {
+                  const createHttpsServer = async (ctx: any) => {
                     if (
                       !process.env.SSL_KEY_PATH ||
                       !process.env.SSL_CERT_PATH
@@ -307,51 +310,59 @@ export default class RestController {
                       cert: fs.readFileSync(process.env.SSL_CERT_PATH),
                     };
 
-                    const httpsServer = https.createServer(options, ctx.__app);
-                    ctx.__httpsServer = httpsServer;
-                    ctx.__port = 443;
-                    port = 443;
-                    httpsServer.listen(443, () => {
-                      if (typeof httpsServer?.address() === "string") {
-                        address = httpsServer.address() as string;
-                        // @ts-ignore
-                      } else if (httpsServer?.address()?.address === "::") {
-                        if (process.env.IS_DOCKER === "true") {
-                          address =
-                            process.env.CADENZA_SERVER_URL || "localhost";
+                    await new Promise((resolve, reject) => {
+                      const httpsServer = https.createServer(
+                        options,
+                        ctx.__app,
+                      );
+                      ctx.__httpsServer = httpsServer;
+                      ctx.__port = 443;
+                      port = 443;
+                      httpsServer.listen(443, () => {
+                        if (typeof httpsServer?.address() === "string") {
+                          address = httpsServer.address() as string;
+                          // @ts-ignore
+                        } else if (httpsServer?.address()?.address === "::") {
+                          if (process.env.IS_DOCKER === "true") {
+                            address =
+                              process.env.CADENZA_SERVER_URL || "localhost";
+                          }
+                        } else {
+                          // @ts-ignore
+                          address = httpsServer?.address()?.address || "";
                         }
-                      } else {
-                        // @ts-ignore
-                        address = httpsServer?.address()?.address || "";
-                      }
 
-                      exposed = true;
+                        exposed = true;
 
-                      console.log(`HTTPS Server is running on ${address}:443`);
+                        console.log(
+                          `HTTPS Server is running on ${address}:443`,
+                        );
+                        resolve(address);
+                      });
+
+                      Cadenza.createMetaTask(
+                        "Shutdown HTTPS Server",
+                        () => httpsServer.close(),
+                        "Shuts down the HTTPS server",
+                      )
+                        .doOn("meta.server_shutdown_requested")
+                        .emits("meta.rest.shutdown:https");
                     });
-
-                    Cadenza.createMetaTask(
-                      "Shutdown HTTPS Server",
-                      () => httpsServer.close(),
-                      "Shuts down the HTTPS server",
-                    )
-                      .doOn("meta.server_shutdown_requested")
-                      .emits("meta.rest.shutdown:https");
                   };
 
                   if (
                     ctx.__networkMode === "internal" ||
                     ctx.__networkMode === "dev"
                   ) {
-                    createHttpServer(ctx);
+                    await createHttpServer(ctx);
                   } else if (ctx.__networkMode === "exposed") {
-                    createHttpServer(ctx);
-                    createHttpsServer(ctx);
+                    await createHttpServer(ctx);
+                    await createHttpsServer(ctx);
                   } else if (ctx.__networkMode === "exposed-high-sec") {
-                    createHttpsServer(ctx);
+                    await createHttpsServer(ctx);
                   } else if (ctx.__networkMode === "auto") {
                     // TODO: auto-detect based on trusted network or dev mode etc.
-                    createHttpServer(ctx);
+                    await createHttpServer(ctx);
                     // createHttpsServer(ctx);
                   }
 
