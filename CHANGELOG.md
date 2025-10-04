@@ -1,3 +1,10 @@
+## [1.17.1](https://github.com/cadenzaio/cadenza-service/compare/v1.17.0...v1.17.1) (2025-10-04)
+
+
+### Bug Fixes
+
+* another attempt to fix dropExisting feature. ([745a0c3](https://github.com/cadenzaio/cadenza-service/commit/745a0c3870ff34a9a28eb7561f19f80a04355a94))
+
 # [1.17.0](https://github.com/cadenzaio/cadenza-service/compare/v1.16.2...v1.17.0) (2025-10-03)
 
 
