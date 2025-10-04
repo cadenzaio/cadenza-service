@@ -17,6 +17,29 @@ export default class RestController {
     return this._instance;
   }
 
+  fetchDataWithTimeout = async function (
+    url: string,
+    requestInit: any,
+    timeoutMs: number,
+  ): Promise<any> {
+    const signal = AbortSignal.timeout(timeoutMs); // Create a signal that aborts after timeoutMs
+
+    try {
+      const response = await fetch(url, { ...requestInit, signal }); // Send the request with the signal
+      // Process the response
+      return await response.json();
+    } catch (error: any) {
+      if (error?.name === "AbortError") {
+        console.error("Fetch request timed out:", error);
+        // Handle timeout specifically
+      } else {
+        console.error("Fetch error:", error);
+        // Handle other errors
+      }
+      throw error; // Re-throw to propagate the error
+    }
+  };
+
   constructor() {
     Cadenza.registry.getTaskByName.doOn(
       "meta.rest.delegation_requested",
@@ -407,43 +430,56 @@ export default class RestController {
           `Send Handshake to ${URL}`,
           async (ctx, emit) => {
             console.log("Sending handshake", ctx);
-            const response = await fetch(`${URL}/handshake`, {
-              headers: {
-                "Content-Type": "application/json",
-              },
-              method: "POST",
-              body: JSON.stringify(ctx.handshakeData),
-            });
-            const result = (await response.json()) as AnyObject;
-            console.log("Handshake result", result);
-            if (result.__status !== "success") {
-              const error =
-                result.__error ??
-                `Failed to connect to service ${serviceName} ${ctx.serviceInstanceId}`;
-              console.error(error);
-              emit(`meta.fetch.handshake_failed:${fetchId}`, result);
-              return { ...ctx, __error: error, errored: true };
-            }
-
-            ctx.serviceInstanceId = result.__serviceInstanceId;
-
-            console.log(`Connected to service ${serviceName} ${URL}`, result);
-
-            for (const communicationType of ctx.communicationTypes) {
-              // TODO: Should be done in other situations as well
-              emit("meta.fetch.service_communication_established", {
-                data: {
-                  serviceInstanceId: ctx.serviceInstanceId,
-                  serviceInstanceClientId:
-                    Cadenza.serviceRegistry.serviceInstanceId,
-                  communicationType,
+            try {
+              const response = await this.fetchDataWithTimeout(
+                `${URL}/handshake`,
+                {
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  method: "POST",
+                  body: JSON.stringify(ctx.handshakeData),
                 },
-              });
+                1000,
+              );
+              // const result = (await response.json()) as AnyObject;
+              console.log("Handshake result", response);
+              if (response.__status !== "success") {
+                const error =
+                  response.__error ??
+                  `Failed to connect to service ${serviceName} ${ctx.serviceInstanceId}`;
+                console.error(error);
+                emit(`meta.fetch.handshake_failed:${fetchId}`, response);
+                return { ...ctx, __error: error, errored: true };
+              }
+
+              ctx.serviceInstanceId = response.__serviceInstanceId;
+
+              console.log(
+                `Connected to service ${serviceName} ${URL}`,
+                response,
+              );
+
+              for (const communicationType of ctx.communicationTypes) {
+                // TODO: Should be done in other situations as well
+                emit("meta.fetch.service_communication_established", {
+                  data: {
+                    serviceInstanceId: ctx.serviceInstanceId,
+                    serviceInstanceClientId:
+                      Cadenza.serviceRegistry.serviceInstanceId,
+                    communicationType,
+                  },
+                });
+              }
+            } catch (e) {
+              console.error("Error in handshake", e);
+              return { ...ctx, __error: e, errored: true };
             }
 
             return ctx;
           },
           "Sends handshake request",
+          { retryCount: 5, retryDelay: 1000 },
         )
           .doOn(`meta.fetch.handshake_requested:${fetchId}`)
           .emits("meta.fetch.handshake_complete");
@@ -501,14 +537,17 @@ export default class RestController {
 
             let response;
             try {
-              response = await fetch(`${URL}/signal`, {
-                headers: {
-                  "Content-Type": "application/json",
+              response = await this.fetchDataWithTimeout(
+                `${URL}/signal`,
+                {
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  method: "POST",
+                  body: JSON.stringify(ctx),
                 },
-                method: "POST",
-                body: JSON.stringify(ctx),
-              });
-              response = (await response.json()) as AnyObject;
+                1000,
+              );
 
               console.log("SIGNAL TRANSMITTED", response);
 
@@ -541,10 +580,13 @@ export default class RestController {
           async (ctx) => {
             let status;
             try {
-              const response = await fetch(`${URL}/status`, {
-                method: "GET",
-              });
-              status = await response.json();
+              status = await this.fetchDataWithTimeout(
+                `${URL}/status`,
+                {
+                  method: "GET",
+                },
+                1000,
+              );
             } catch (e) {
               // TODO: Retry on too many requests
 
