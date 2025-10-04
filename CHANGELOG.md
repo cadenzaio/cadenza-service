@@ -1,3 +1,10 @@
+## [1.17.3](https://github.com/cadenzaio/cadenza-service/compare/v1.17.2...v1.17.3) (2025-10-04)
+
+
+### Bug Fixes
+
+* Fixed race condition in network configuration. ([8323f1c](https://github.com/cadenzaio/cadenza-service/commit/8323f1c357e680d85ec9074451cb43bc1368fe87))
+
 ## [1.17.2](https://github.com/cadenzaio/cadenza-service/compare/v1.17.1...v1.17.2) (2025-10-04)
 
 
