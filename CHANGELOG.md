@@ -1,3 +1,10 @@
+# [1.18.0](https://github.com/cadenzaio/cadenza-service/compare/v1.17.4...v1.18.0) (2025-10-04)
+
+
+### Features
+
+* added timeout to fetch calls. ([c3c9ed4](https://github.com/cadenzaio/cadenza-service/commit/c3c9ed422aa1ba40e7b07d9a14e8852bcb70a962))
+
 ## [1.17.4](https://github.com/cadenzaio/cadenza-service/compare/v1.17.3...v1.17.4) (2025-10-04)
 
 
