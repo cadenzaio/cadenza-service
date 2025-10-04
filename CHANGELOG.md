@@ -1,3 +1,10 @@
+## [1.17.2](https://github.com/cadenzaio/cadenza-service/compare/v1.17.1...v1.17.2) (2025-10-04)
+
+
+### Bug Fixes
+
+* Now clearing table instead of dropping. ([9e7d575](https://github.com/cadenzaio/cadenza-service/commit/9e7d5756b6e28b82ebf7e83a963b96c1438f37f9))
+
 ## [1.17.1](https://github.com/cadenzaio/cadenza-service/compare/v1.17.0...v1.17.1) (2025-10-04)
 
 
