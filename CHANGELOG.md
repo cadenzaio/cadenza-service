@@ -1,3 +1,10 @@
+## [1.18.1](https://github.com/cadenzaio/cadenza-service/compare/v1.18.0...v1.18.1) (2025-10-05)
+
+
+### Bug Fixes
+
+* typo fix. ([1050edb](https://github.com/cadenzaio/cadenza-service/commit/1050edb5248a8651705744978800fef114ea71f2))
+
 # [1.18.0](https://github.com/cadenzaio/cadenza-service/compare/v1.17.4...v1.18.0) (2025-10-04)
 
 
