@@ -344,7 +344,7 @@ export default class CadenzaService {
     );
   }
 
-  static createDatabaseInertTask(
+  static createDatabaseInsertTask(
     tableName: string,
     databaseServiceName: string | undefined = undefined,
     queryData: DbOperationPayload = {},
@@ -396,7 +396,7 @@ export default class CadenzaService {
     options: TaskOptions = {},
   ) {
     options.isMeta = true;
-    return this.createDatabaseInertTask(
+    return this.createDatabaseInsertTask(
       tableName,
       "CadenzaDB",
       queryData,
