@@ -8,7 +8,6 @@ import http from "node:http";
 import fs from "node:fs";
 import https from "node:https";
 import fetch from "node-fetch";
-import type { AnyObject } from "@cadenza.io/core";
 
 export default class RestController {
   private static _instance: RestController;
@@ -442,7 +441,6 @@ export default class RestController {
                 },
                 1000,
               );
-              // const result = (await response.json()) as AnyObject;
               console.log("Handshake result", response);
               if (response.__status !== "success") {
                 const error =
@@ -479,7 +477,7 @@ export default class RestController {
             return ctx;
           },
           "Sends handshake request",
-          { retryCount: 5, retryDelay: 1000 },
+          { retryCount: 5, retryDelay: 1000, retryDelayFactor: 1.5 },
         )
           .doOn(`meta.fetch.handshake_requested:${fetchId}`)
           .emits("meta.fetch.handshake_complete");

@@ -164,12 +164,6 @@ export default class ServiceRegistry {
           __emitterSignalName,
           __listenerServiceName,
         } = ctx;
-        console.log(
-          "REGISTERING REMOTE SIGNAL",
-          this.remoteSignals,
-          __remoteServiceName,
-          __emitterSignalName,
-        );
         let remoteSignals = this.remoteSignals.get(__remoteServiceName);
         if (!remoteSignals) {
           this.remoteSignals.set(__remoteServiceName, []);
