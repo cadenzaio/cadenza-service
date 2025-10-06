@@ -528,21 +528,18 @@ export default class CadenzaService {
       Cadenza.broker.emit("meta.create_service_requested", initContext);
     }
 
-    this.createEphemeralMetaTask(
-      "Handle service setup completion",
-      (_, emit) => {
-        GraphMetadataController.instance;
-        GraphSyncController.instance;
-        setTimeout(() => {
-          emit("meta.sync_requested", {});
-        }, 2000);
+    this.createEphemeralMetaTask("Handle service setup completion", () => {
+      GraphMetadataController.instance;
+      GraphSyncController.instance;
+      setTimeout(() => {
+        this.broker.emit("meta.sync_requested", {});
+      }, 2000);
 
-        setInterval(() => {
-          Cadenza.broker.emit("meta.sync_requested", {});
-        }, 30000);
-        return true;
-      },
-    ).doOn("meta.service_registry.instance_inserted");
+      setInterval(() => {
+        this.broker.emit("meta.sync_requested", {});
+      }, 30000);
+      return true;
+    }).doOn("meta.service_registry.instance_inserted");
 
     this.serviceCreated = true;
   }
