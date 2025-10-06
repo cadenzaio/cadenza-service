@@ -533,7 +533,13 @@ export default class CadenzaService {
       (_, emit) => {
         GraphMetadataController.instance;
         GraphSyncController.instance;
-        emit("meta.sync_requested", {});
+        setTimeout(() => {
+          emit("meta.sync_requested", {});
+        }, 2000);
+
+        setInterval(() => {
+          Cadenza.broker.emit("meta.sync_requested", {});
+        }, 30000);
         return true;
       },
     ).doOn("meta.service_registry.instance_inserted");
