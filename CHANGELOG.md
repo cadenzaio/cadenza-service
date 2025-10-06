@@ -1,3 +1,10 @@
+## [1.18.2](https://github.com/cadenzaio/cadenza-service/compare/v1.18.1...v1.18.2) (2025-10-06)
+
+
+### Bug Fixes
+
+* Better handshake logic. Some cleanup. ([34f13d7](https://github.com/cadenzaio/cadenza-service/commit/34f13d7f39af02b5071994fdff19a5b36842e055))
+
 ## [1.18.1](https://github.com/cadenzaio/cadenza-service/compare/v1.18.0...v1.18.1) (2025-10-05)
 
 
