@@ -1,3 +1,10 @@
+# [1.19.0](https://github.com/cadenzaio/cadenza-service/compare/v1.18.3...v1.19.0) (2025-10-06)
+
+
+### Features
+
+* added sync interval. ([ba2c267](https://github.com/cadenzaio/cadenza-service/commit/ba2c26704cc69b4389d168619c9267ae8652f6e5))
+
 ## [1.18.3](https://github.com/cadenzaio/cadenza-service/compare/v1.18.2...v1.18.3) (2025-10-06)
 
 
