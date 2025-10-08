@@ -1,3 +1,10 @@
+## [1.19.2](https://github.com/cadenzaio/cadenza-service/compare/v1.19.1...v1.19.2) (2025-10-08)
+
+
+### Bug Fixes
+
+* optimized syncing so that not everything is synced every time. Extended the sync interval. ([99df492](https://github.com/cadenzaio/cadenza-service/commit/99df492c5bbc7c3aa99b539eb8e1fcf06e5a3f7e))
+
 ## [1.19.1](https://github.com/cadenzaio/cadenza-service/compare/v1.19.0...v1.19.1) (2025-10-06)
 
 
