@@ -1,3 +1,10 @@
+## [1.19.3](https://github.com/cadenzaio/cadenza-service/compare/v1.19.2...v1.19.3) (2025-10-08)
+
+
+### Bug Fixes
+
+* optimized syncing of signals. ([d7ca5b9](https://github.com/cadenzaio/cadenza-service/commit/d7ca5b966774febb0f1c3f7eb7065023537af1a8))
+
 ## [1.19.2](https://github.com/cadenzaio/cadenza-service/compare/v1.19.1...v1.19.2) (2025-10-08)
 
 
