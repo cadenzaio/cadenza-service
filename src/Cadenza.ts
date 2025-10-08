@@ -535,9 +535,12 @@ export default class CadenzaService {
         this.broker.emit("meta.sync_requested", {});
       }, 2000);
 
-      setInterval(() => {
-        this.broker.emit("meta.sync_requested", {});
-      }, 30000);
+      if (options.cadenzaDB?.connect) {
+        setInterval(() => {
+          this.broker.emit("meta.sync_requested", {});
+        }, 120000);
+      }
+
       return true;
     }).doOn("meta.service_registry.instance_inserted");
 

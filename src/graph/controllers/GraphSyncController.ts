@@ -59,18 +59,26 @@ export default class GraphSyncController {
     Cadenza.createMetaTask("Split signals for registration", (ctx, emit) => {
       const { __signals } = ctx;
       if (!__signals) return;
-      for (const signal of __signals) {
-        const parts = signal.split(".");
+
+      const filteredSignals = __signals.filter(
+        (signal: { signal: string; data: any }) => !signal.data.registered,
+      );
+
+      for (const signal of filteredSignals) {
+        const parts = signal.signal.split(".");
         const domain = parts[0] === "meta" ? parts[1] : parts[0];
         const action = parts[parts.length - 1];
         emit("meta.sync_controller.signal_added", {
           data: {
-            name: signal,
+            name: signal.signal,
             domain,
             action,
             isMeta: parts[0] === "meta",
             serviceName: Cadenza.serviceRegistry.serviceName,
           },
+        });
+        emit("meta.signal.registered", {
+          __signalName: signal.signal,
         });
       }
     }).doAfter(Cadenza.broker.getSignalsTask!);
@@ -85,6 +93,8 @@ export default class GraphSyncController {
       );
 
       for (const task of __tasks) {
+        if (task.registered) continue;
+        task.registered = true;
         const { __functionString, __getTagCallback } = task.export();
         emit("meta.sync_controller.task_added", {
           data: {
