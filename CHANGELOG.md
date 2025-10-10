@@ -1,3 +1,10 @@
+## [1.20.8](https://github.com/cadenzaio/cadenza-service/compare/v1.20.7...v1.20.8) (2025-10-10)
+
+
+### Bug Fixes
+
+* Package update. ([3a10482](https://github.com/cadenzaio/cadenza-service/commit/3a10482aea24f821b3ff751ff11523470924bb1c))
+
 ## [1.20.7](https://github.com/cadenzaio/cadenza-service/compare/v1.20.6...v1.20.7) (2025-10-10)
 
 
