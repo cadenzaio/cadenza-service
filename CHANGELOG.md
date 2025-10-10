@@ -1,3 +1,10 @@
+## [1.20.6](https://github.com/cadenzaio/cadenza-service/compare/v1.20.5...v1.20.6) (2025-10-10)
+
+
+### Bug Fixes
+
+* better database logging ([82b53f2](https://github.com/cadenzaio/cadenza-service/commit/82b53f20c4128ce00894adafa73bc1fc6ad4a8ae))
+
 ## [1.20.5](https://github.com/cadenzaio/cadenza-service/compare/v1.20.4...v1.20.5) (2025-10-10)
 
 
