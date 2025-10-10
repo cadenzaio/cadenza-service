@@ -27,6 +27,8 @@ export default class GraphSyncController {
       const { __routines } = ctx;
       if (!__routines) return;
       for (const routine of __routines) {
+        if (routine.registered) continue;
+        routine.registered = true;
         emit("meta.sync_controller.routine_added", {
           data: {
             name: routine.name,
@@ -38,7 +40,6 @@ export default class GraphSyncController {
         });
 
         for (const task of routine.tasks) {
-          if (task.registered) continue;
           const tasks = task.getIterator();
 
           while (tasks.hasNext()) {
