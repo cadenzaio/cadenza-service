@@ -944,7 +944,8 @@ export default class DatabaseController {
 
       if (rows.length === 0) {
         return {
-          ...context,
+          sql,
+          params,
           __updated: false,
         };
       }
@@ -1106,6 +1107,7 @@ export default class DatabaseController {
             : op === "delete"
               ? "deleted"
               : "";
+
     const defaultSignal = `${options.isMeta ? "meta." : ""}${tableName}.${opAction}`;
 
     const tableNameFormatted = tableName
@@ -1160,7 +1162,9 @@ export default class DatabaseController {
                 limit: context.limit,
                 offset: context.offset,
               })
-            : JSON.stringify(context).slice(0, 140),
+            : context[camelCase(tableName)]
+              ? JSON.stringify(context[camelCase(tableName)]).slice(0, 140)
+              : JSON.stringify(context).slice(0, 140),
           context.__error,
         );
 
