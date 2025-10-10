@@ -1,3 +1,10 @@
+# [1.20.0](https://github.com/cadenzaio/cadenza-service/compare/v1.19.3...v1.20.0) (2025-10-10)
+
+
+### Features
+
+* added awaitExists feature. ([465a66b](https://github.com/cadenzaio/cadenza-service/commit/465a66bb20757223f2e02ed0ba15701c09c10566))
+
 ## [1.19.3](https://github.com/cadenzaio/cadenza-service/compare/v1.19.2...v1.19.3) (2025-10-08)
 
 
