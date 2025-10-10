@@ -1,3 +1,10 @@
+## [1.20.1](https://github.com/cadenzaio/cadenza-service/compare/v1.20.0...v1.20.1) (2025-10-10)
+
+
+### Bug Fixes
+
+* Bug fix with awaitExists. ([3dc6249](https://github.com/cadenzaio/cadenza-service/commit/3dc62495afdb5ccd181dd32f65e6a08d29d6ad22))
+
 # [1.20.0](https://github.com/cadenzaio/cadenza-service/compare/v1.19.3...v1.20.0) (2025-10-10)
 
 
