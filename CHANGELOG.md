@@ -1,3 +1,10 @@
+## [1.20.5](https://github.com/cadenzaio/cadenza-service/compare/v1.20.4...v1.20.5) (2025-10-10)
+
+
+### Bug Fixes
+
+* sync optimizations. Stability improvements. ([f476df5](https://github.com/cadenzaio/cadenza-service/commit/f476df5a8a410c077682add6fe211ba0b8919782))
+
 ## [1.20.4](https://github.com/cadenzaio/cadenza-service/compare/v1.20.3...v1.20.4) (2025-10-10)
 
 
