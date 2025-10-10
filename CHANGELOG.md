@@ -1,3 +1,10 @@
+## [1.20.4](https://github.com/cadenzaio/cadenza-service/compare/v1.20.3...v1.20.4) (2025-10-10)
+
+
+### Bug Fixes
+
+* previous routine execution bug on delegation and transmission. ([e3fe44d](https://github.com/cadenzaio/cadenza-service/commit/e3fe44db5329a9b4ac742b71aff79f28903f0803))
+
 ## [1.20.3](https://github.com/cadenzaio/cadenza-service/compare/v1.20.2...v1.20.3) (2025-10-10)
 
 
