@@ -50,8 +50,15 @@ export interface DbOperationPayload {
   transaction?: boolean; // Wrap in transaction (default true for nested)
   batch?: boolean; // For array data
   onConflict?: {
-    target: string[]; // Target table
+    target: string[]; // Target columns
     action: OnConflictAction;
   };
+  awaitExists?: Record<
+    string,
+    {
+      table: string;
+      column: string;
+    }
+  >; // For foreign key insert, waits until column exists, {columnName: {}
   // Future expansions: groupBy, having, batchSize, etc.
 }

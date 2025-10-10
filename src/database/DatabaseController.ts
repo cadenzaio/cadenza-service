@@ -14,6 +14,7 @@ import {
   JoinDefinition,
   SubOperation,
 } from "../types/queryData";
+import { sleep } from "../utils/promise";
 
 export default class DatabaseController {
   private static _instance: DatabaseController;
@@ -773,7 +774,13 @@ export default class DatabaseController {
     tableName: string,
     context: DbOperationPayload,
   ): Promise<any> {
-    const { data, transaction = true, fields = [], onConflict } = context;
+    const {
+      data,
+      transaction = true,
+      fields = [],
+      onConflict,
+      awaitExists,
+    } = context;
 
     if (!data || (Array.isArray(data) && data.length === 0)) {
       return { errored: true, __error: "No data provided for insert" };
@@ -781,6 +788,27 @@ export default class DatabaseController {
 
     const client = transaction ? await this.getClient() : this.dbClient;
     try {
+      if (awaitExists) {
+        for (const fk of Object.keys(awaitExists)) {
+          // @ts-ignore
+          if (data[fk] === undefined || data[fk] === null) continue;
+
+          const { table, column } = awaitExists[fk];
+          let exists = false;
+          let retries = 0;
+          const maxRetries = 100;
+          while (!exists && retries < maxRetries) {
+            const result = await client.query(
+              `SELECT EXISTS(SELECT 1 from ${table} where ${column}=${(data as any)[fk]}) AS "exists"`,
+            );
+            console.log("Exists check", fk, result);
+            exists = result.rows[0].exists;
+            if (exists) break;
+            retries++;
+            await sleep(100);
+          }
+        }
+      }
       if (transaction) await client.query("BEGIN");
 
       const resolvedData = await this.resolveNestedData(data, tableName);
@@ -1119,7 +1147,9 @@ export default class DatabaseController {
         console.log(
           "EXECUTED",
           `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableNameFormatted}`,
-          JSON.stringify(context).slice(0, 100),
+          context.errored
+            ? JSON.stringify(context).slice(0, 500)
+            : JSON.stringify(context).slice(0, 100),
           context.__error,
         );
 

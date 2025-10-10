@@ -188,23 +188,31 @@ export default class GraphMetadataController {
         }
         delete ctx.data.context;
         return {
-          data: {
-            ...ctx.data,
-            service_name: Cadenza.serviceRegistry.serviceName,
-            service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
-            context_id:
-              typeof context === "string"
-                ? context
-                : {
-                    subOperation: "insert",
-                    table: "context",
-                    data: {
-                      uuid: context.id,
-                      context: context.context,
-                      is_meta: ctx.data.isMeta,
+          queryData: {
+            data: {
+              ...ctx.data,
+              service_name: Cadenza.serviceRegistry.serviceName,
+              service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
+              context_id:
+                typeof context === "string"
+                  ? context
+                  : {
+                      subOperation: "insert",
+                      table: "context",
+                      data: {
+                        uuid: context.id,
+                        context: context.context,
+                        is_meta: ctx.data.isMeta,
+                      },
+                      return: "uuid",
                     },
-                    return: "uuid",
-                  },
+            },
+            awaitExists: {
+              previousRoutineExecution: {
+                table: "routine_execution",
+                column: "uuid",
+              },
+            },
           },
         };
       },

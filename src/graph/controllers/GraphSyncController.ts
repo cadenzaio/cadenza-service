@@ -38,6 +38,7 @@ export default class GraphSyncController {
         });
 
         for (const task of routine.tasks) {
+          if (task.registered) continue;
           const tasks = task.getIterator();
 
           while (tasks.hasNext()) {
@@ -176,6 +177,7 @@ export default class GraphSyncController {
 
       for (const task of __tasks) {
         if (task.hidden || !task.register) continue;
+        if (task.registered) continue;
         task.mapNext((t: Task) =>
           emit("meta.sync_controller.task_map", {
             data: {

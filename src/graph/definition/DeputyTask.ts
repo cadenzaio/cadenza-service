@@ -183,7 +183,8 @@ export default class DeputyTask extends Task {
       __localTaskName: this.name,
       __remoteRoutineName: this.remoteRoutineName,
       __serviceName: this.serviceName,
-      __localRoutineExecId: metadata.__routineExecId,
+      __localRoutineExecId:
+        metadata.__routineExecId ?? metadata.__metadata?.__routineExecId,
       __executionTraceId: metadata.__executionTraceId ?? null,
       __metadata: {
         ...metadata,

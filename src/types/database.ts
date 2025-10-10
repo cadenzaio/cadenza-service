@@ -89,6 +89,7 @@ export interface TableDefinition {
     tableName: string;
     fields: string[];
     referenceFields: string[];
+    onDelete?: "cascade" | "set null" | "no action";
   }[];
   triggers?: Record<
     string,
