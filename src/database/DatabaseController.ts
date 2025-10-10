@@ -802,7 +802,7 @@ export default class DatabaseController {
           while (!exists && retries < maxRetries) {
             console.log("Exists check", fk, awaitExists);
             const result = await client.query(
-              `SELECT EXISTS(SELECT 1 from ${table} where ${column}=${typeof value === "string" ? `"${value}"` : value}) AS "exists"`,
+              `SELECT EXISTS(SELECT 1 from ${table} WHERE ${column} = ${typeof value === "string" ? `'${value}'` : value}) AS "exists"`,
             );
             console.log("Exists check result", result);
             exists = result.rows[0].exists;
