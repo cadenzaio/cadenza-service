@@ -1150,8 +1150,17 @@ export default class DatabaseController {
           "EXECUTED",
           taskName,
           context.errored
-            ? JSON.stringify(context).slice(0, 700)
-            : JSON.stringify(context).slice(0, 100),
+            ? JSON.stringify({
+                data: context.data,
+                queryData: context.queryData,
+                filter: context.filter,
+                fields: context.fields,
+                joins: context.joins,
+                sort: context.sort,
+                limit: context.limit,
+                offset: context.offset,
+              })
+            : JSON.stringify(context).slice(0, 140),
           context.__error,
         );
 
