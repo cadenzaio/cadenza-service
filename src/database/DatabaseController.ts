@@ -798,12 +798,13 @@ export default class DatabaseController {
           const { table, column } = awaitExists[fk];
           let exists = false;
           let retries = 0;
-          const maxRetries = 100;
+          const maxRetries = 20;
           while (!exists && retries < maxRetries) {
+            console.log("Exists check", fk, awaitExists);
             const result = await client.query(
               `SELECT EXISTS(SELECT 1 from ${table} where ${column}=${typeof value === "string" ? `"${value}"` : value}) AS "exists"`,
             );
-            console.log("Exists check", fk, result);
+            console.log("Exists check result", result);
             exists = result.rows[0].exists;
             if (exists) break;
             retries++;
