@@ -110,6 +110,8 @@ export default class DatabaseTask extends DeputyTask {
       __remoteRoutineName: this.remoteRoutineName,
       __serviceName: this.serviceName,
       __executionTraceId: metadata.__executionTraceId ?? null,
+      __localRoutineExecId:
+        metadata.__routineExecId ?? metadata.__metadata?.__routineExecId,
       __metadata: {
         ...metadata,
         __deputyTaskName: this.name,

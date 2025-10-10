@@ -792,7 +792,6 @@ export default class DatabaseController {
         for (const fk of Object.keys(awaitExists)) {
           const value = (data as any)[fk];
 
-          // @ts-ignore
           if (value === undefined || value === null) continue;
 
           const { table, column } = awaitExists[fk];
@@ -800,11 +799,9 @@ export default class DatabaseController {
           let retries = 0;
           const maxRetries = 20;
           while (!exists && retries < maxRetries) {
-            console.log("Exists check", fk, awaitExists);
             const result = await client.query(
               `SELECT EXISTS(SELECT 1 from ${table} WHERE ${column} = ${typeof value === "string" ? `'${value}'` : value}) AS "exists"`,
             );
-            console.log("Exists check result", result);
             exists = result.rows[0].exists;
             if (exists) break;
             retries++;

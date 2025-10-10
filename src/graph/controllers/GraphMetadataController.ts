@@ -207,12 +207,6 @@ export default class GraphMetadataController {
                       return: "uuid",
                     },
             },
-            awaitExists: {
-              previousRoutineExecution: {
-                table: "routine_execution",
-                column: "uuid",
-              },
-            },
           },
         };
       },
