@@ -1,3 +1,10 @@
+## [1.20.9](https://github.com/cadenzaio/cadenza-service/compare/v1.20.8...v1.20.9) (2025-10-16)
+
+
+### Bug Fixes
+
+* Directional graph map fix ([ed58380](https://github.com/cadenzaio/cadenza-service/commit/ed58380a39d0ace30e88021d2ce49753d503482b))
+
 ## [1.20.8](https://github.com/cadenzaio/cadenza-service/compare/v1.20.7...v1.20.8) (2025-10-10)
 
 
