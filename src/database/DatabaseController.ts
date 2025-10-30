@@ -1148,7 +1148,15 @@ export default class DatabaseController {
           }
         }
 
-        context = await queryFunction(tableName, context.queryData ?? context);
+        try {
+          context = await queryFunction(
+            tableName,
+            context.queryData ?? context,
+          );
+        } catch (e) {
+          console.error("Database task:", taskName, "errored.", e);
+          throw e;
+        }
 
         if (!context.errored) {
           for (const signal of table.customSignals?.emissions?.[op] ??
