@@ -1,3 +1,10 @@
+# [1.21.0](https://github.com/cadenzaio/cadenza-service/compare/v1.20.9...v1.21.0) (2025-10-30)
+
+
+### Features
+
+* Added database service registration. ([3572a00](https://github.com/cadenzaio/cadenza-service/commit/3572a00e22bd6dcc2530517c3005e243fe960644))
+
 ## [1.20.9](https://github.com/cadenzaio/cadenza-service/compare/v1.20.8...v1.20.9) (2025-10-16)
 
 
