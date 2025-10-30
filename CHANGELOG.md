@@ -1,3 +1,10 @@
+## [1.21.1](https://github.com/cadenzaio/cadenza-service/compare/v1.21.0...v1.21.1) (2025-10-30)
+
+
+### Bug Fixes
+
+* Added debugging to database functions. ([53eb5d3](https://github.com/cadenzaio/cadenza-service/commit/53eb5d3f72c731ff861d1de881886bde5a6be306))
+
 # [1.21.0](https://github.com/cadenzaio/cadenza-service/compare/v1.20.9...v1.21.0) (2025-10-30)
 
 
