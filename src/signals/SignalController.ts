@@ -1,4 +1,5 @@
 import Cadenza from "../Cadenza";
+import { decomposeSignalName } from "../utils/tools";
 
 export default class SignalController {
   private static _instance: SignalController;
@@ -12,16 +13,16 @@ export default class SignalController {
       "Handle Signal Registration",
       (ctx, emit) => {
         const { __signalName } = ctx;
-        const parts = __signalName.split(".");
-        const domain = parts[0] === "meta" ? parts[1] : parts[0];
-        const action = parts[parts.length - 1];
+        const { isMeta, sourceServiceName, domain, action } =
+          decomposeSignalName(__signalName);
 
         emit("meta.signal_controller.signal_added", {
           data: {
             name: __signalName,
-            domain: domain,
-            action: action,
-            is_meta: parts[0] === "meta",
+            sourceServiceName,
+            domain,
+            action,
+            isMeta,
             service_name: Cadenza.serviceRegistry.serviceName,
           },
         });
@@ -107,7 +108,10 @@ export default class SignalController {
       ).doOn(__emitterSignalName.split(".").slice(1).join("."));
 
       return true;
-    }).doOn("meta.signal_controller.foreign_signal_registered");
+    }).doOn(
+      "meta.signal_controller.foreign_signal_registered",
+      "meta.service_registry.foreign_signal_registered",
+    );
 
     // TODO: Cleanup transmission tasks?
 

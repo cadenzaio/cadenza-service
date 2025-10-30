@@ -1,6 +1,7 @@
 import { Task } from "@cadenza.io/core";
 import type { AnyObject } from "@cadenza.io/core";
 import Cadenza from "../Cadenza";
+import { isBrowser } from "../utils/environment";
 
 export interface ServiceInstanceDescriptor {
   uuid: string;
@@ -15,6 +16,7 @@ export interface ServiceInstanceDescriptor {
   health: AnyObject;
   exposed: boolean;
   clientCreated?: boolean;
+  isFrontend: boolean;
 }
 
 export interface DeputyDescriptor {
@@ -70,7 +72,8 @@ export default class ServiceRegistry {
       "Handle Instance Update",
       (ctx, emit) => {
         const { serviceInstance } = ctx;
-        const { uuid, serviceName, address, port, exposed } = serviceInstance;
+        const { uuid, serviceName, address, port, exposed, isFrontend } =
+          serviceInstance;
         if (uuid === this.serviceInstanceId) return;
 
         if (!this.instances.has(serviceName))
@@ -82,7 +85,7 @@ export default class ServiceRegistry {
           Object.assign(existing, serviceInstance); // Update
         } else {
           if (
-            this.deputies.has(serviceName) ||
+            (!isFrontend && this.deputies.has(serviceName)) ||
             this.remoteSignals.has(serviceName) ||
             (this.remoteSignals.has("*") && this.serviceName !== serviceName)
           ) {
@@ -138,6 +141,7 @@ export default class ServiceRegistry {
               }
             }
           }
+
           serviceInstance.clientCreated = true;
           instances.push(serviceInstance); // Insert
         }
@@ -310,6 +314,7 @@ export default class ServiceRegistry {
         "health",
         "exposed",
         "created",
+        "is_frontend",
       ],
     })
       .doOn("meta.sync_requested")
@@ -369,6 +374,8 @@ export default class ServiceRegistry {
           localTaskName: ctx.localTaskName,
           communicationType: ctx.communicationType,
         });
+
+        emit("meta.service_registry.deputy_registered", ctx);
       },
     ).doOn("meta.deputy.created");
 
@@ -423,6 +430,19 @@ export default class ServiceRegistry {
             `meta.service_registry.load_balance_failed:${context.__metadata.__deputyExecId}`,
             context,
           );
+          return context;
+        }
+
+        // TODO: A way to specify if you want to send to all instances
+
+        if (instances[0].isFrontend) {
+          for (const instance of instances) {
+            emit(
+              `meta.service_registry.selected_instance_for_socket:${instance.address}`,
+              context,
+            );
+          }
+
           return context;
         }
 
@@ -640,7 +660,7 @@ export default class ServiceRegistry {
         retryDelay: 1000,
       },
     )
-      .doOn("meta.rest.network_configured")
+      .doOn("meta.rest.network_configured", "meta.rest.browser_detected")
       .then(
         Cadenza.createMetaTask(
           "Setup service",
@@ -668,6 +688,81 @@ export default class ServiceRegistry {
         }
 
         console.log("service creation", ctx);
+
+        if (isBrowser) {
+          Cadenza.createMetaTask("Prepare for signal sync", () => {
+            return {};
+          })
+            .doAfter(this.fullSyncTask)
+            .then(
+              Cadenza.createCadenzaDBQueryTask("signal_registry", {
+                fields: ["name", "service_name"],
+                filter: {
+                  source_service_name: [ctx.__serviceName, "*"],
+                },
+              }).then(
+                Cadenza.createMetaTask(
+                  "Create signal transmission tasks",
+                  (ctx, emit) => {
+                    const signalRegistry = ctx.signalRegistry;
+                    for (const signal of signalRegistry) {
+                      emit("meta.service_registry.foreign_signal_registered", {
+                        __emitterSignalName: signal.name,
+                        __listenerServiceName: signal.serviceName,
+                      });
+                    }
+
+                    return true;
+                  },
+                ).then(
+                  Cadenza.createMetaTask("Connect to services", (ctx, emit) => {
+                    const services: string[] = Array.from(
+                      new Set(
+                        ctx.signalRegistry.map((s: any) => s.serviceName),
+                      ),
+                    );
+                    for (const service of services) {
+                      const instances = this.instances
+                        .get(service)!
+                        .filter((i) => i.isActive);
+                      for (const instance of instances) {
+                        if (instance.clientCreated) continue;
+                        const address = instance.address;
+                        const port = instance.port;
+
+                        const clientCreated = instances?.some(
+                          (i) =>
+                            i.address === address &&
+                            i.port === port &&
+                            i.clientCreated &&
+                            i.isActive,
+                        );
+
+                        if (!clientCreated) {
+                          emit("meta.service_registry.dependee_registered", {
+                            serviceName: service,
+                            serviceInstanceId: instance.uuid,
+                            serviceAddress: address,
+                            servicePort: port,
+                            protocol: instance.exposed ? "https" : "http",
+                            communicationTypes: ["signal"],
+                          });
+                        }
+
+                        instance.clientCreated = true;
+                        instances.forEach((i) => {
+                          if (i.address === address && i.port === port) {
+                            i.clientCreated = true;
+                          }
+                        });
+                      }
+                    }
+                    return {};
+                  }),
+                ),
+              ),
+            );
+        }
 
         return ctx;
       },

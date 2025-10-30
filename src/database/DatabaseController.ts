@@ -1012,8 +1012,20 @@ export default class DatabaseController {
     const conditions = [];
     for (const [key, value] of Object.entries(filter)) {
       if (value !== undefined) {
-        conditions.push(`${snakeCase(key)} = $${params.length + 1}`);
-        params.push(value);
+        if (Array.isArray(value)) {
+          conditions.push(
+            `${snakeCase(key)} IN (${value
+              .map((v) => {
+                const val = `$${params.length + 1}`;
+                params.push(v);
+                return val;
+              })
+              .join(", ")})`,
+          );
+        } else {
+          conditions.push(`${snakeCase(key)} = $${params.length + 1}`);
+          params.push(value);
+        }
       }
     }
     return conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";

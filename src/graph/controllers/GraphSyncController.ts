@@ -1,5 +1,6 @@
 import Cadenza from "../../Cadenza";
 import { Task } from "@cadenza.io/core";
+import { decomposeSignalName } from "../../utils/tools";
 
 export default class GraphSyncController {
   private static _instance: GraphSyncController;
@@ -69,15 +70,16 @@ export default class GraphSyncController {
         .map((signal: { signal: string; data: any }) => signal.signal);
 
       for (const signal of filteredSignals) {
-        const parts = signal.split(".");
-        const domain = parts[0] === "meta" ? parts[1] : parts[0];
-        const action = parts[parts.length - 1];
+        const { isMeta, sourceServiceName, domain, action } =
+          decomposeSignalName(signal);
+
         emit("meta.sync_controller.signal_added", {
           data: {
             name: signal,
+            sourceServiceName,
             domain,
             action,
-            isMeta: parts[0] === "meta",
+            isMeta,
             serviceName: Cadenza.serviceRegistry.serviceName,
           },
         });
@@ -189,6 +191,19 @@ export default class GraphSyncController {
             },
           }),
         );
+
+        if (task.isDeputy && !task.signalName) {
+          emit("meta.sync_controller.deputy_relationship_created", {
+            data: {
+              triggered_task_name: task.remoteRoutineName,
+              triggered_task_version: 1,
+              triggered_service_name: task.serviceName,
+              deputy_task_name: task.name,
+              deputy_task_version: task.version,
+              deputy_service_name: Cadenza.serviceRegistry.serviceName,
+            },
+          });
+        }
       }
 
       return true;

@@ -37,11 +37,12 @@ export interface OnConflictAction {
 export type OpEffect = "increment" | "decrement" | "set";
 
 export type ValueOrSubOp = any | SubOperation | OpEffect; // Field value or nested op
+export type ValueOrList = any | any[];
 
 // Define query data payload
 export interface DbOperationPayload {
   data?: Record<string, ValueOrSubOp> | Record<string, ValueOrSubOp>[]; // Nested sub-ops in data
-  filter?: AnyObject; // For query/update/delete
+  filter?: Record<string, ValueOrList>; // For query/update/delete
   fields?: string[];
   joins?: Record<string, JoinDefinition>; // For query
   sort?: Record<string, SortDirection>;

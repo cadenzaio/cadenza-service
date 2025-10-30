@@ -166,6 +166,7 @@ export default class DeputyTask extends Task {
    * @param context - The GraphContext containing execution data.
    * @param emit
    * @param progressCallback - Callback to update progress (invoked by meta-layer).
+   * @param nodeData
    * @returns A Promise resolving with the task result or rejecting on error.
    * @emits {meta.deputy.executed} - Emitted with context to initiate delegation.
    * @edge Engine handles timeout and error, triggering `.doOnFail` if chained.
@@ -175,12 +176,16 @@ export default class DeputyTask extends Task {
     context: GraphContext,
     emit: (signal: string, ctx: AnyObject) => void,
     progressCallback: (progress: number) => void,
+    nodeData: { nodeId: string; routineExecId: string },
   ): TaskResult {
     const ctx = context.getContext();
     const metadata = context.getMetadata();
 
     const deputyContext = {
       __localTaskName: this.name,
+      __localTaskVersion: this.version,
+      __localServiceName: Cadenza.serviceRegistry.serviceName,
+      __previousTaskExecutionId: nodeData.nodeId,
       __remoteRoutineName: this.remoteRoutineName,
       __serviceName: this.serviceName,
       __localRoutineExecId:

@@ -4,6 +4,7 @@ import { IRateLimiterOptions, RateLimiterMemory } from "rate-limiter-flexible";
 import xss from "xss";
 import type { AnyObject } from "@cadenza.io/core";
 import { io } from "socket.io-client";
+import { isBrowser } from "../utils/environment";
 
 export default class SocketController {
   private static _instance: SocketController;
@@ -104,13 +105,38 @@ export default class SocketController {
 
           server.on("connection", (ws: any) => {
             console.log("SocketServer: New connection");
+
             try {
+              ws.emit("handshake", {
+                serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                serviceName: Cadenza.serviceRegistry.serviceName,
+                __status: "success",
+              });
+
               ws.on("handshake", (ctx: AnyObject) => {
                 console.log("Socket HANDSHAKE", ctx.serviceInstanceId);
-                ws.emit("handshake", {
-                  serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-                  __status: "success",
-                });
+                if (ctx.isFrontend) {
+                  const fetchId = `browser:${ctx.serviceInstanceId}`;
+                  Cadenza.createMetaTask(
+                    `Transmit signal to ${fetchId}`,
+                    (ctx, emit) => {
+                      if (ctx.__signalName === undefined) {
+                        return;
+                      }
+
+                      ws.emit("signal", ctx);
+
+                      if (ctx.__routineExecId) {
+                        emit(
+                          `meta.socket_client.transmitted:${ctx.__routineExecId}`,
+                          {},
+                        );
+                      }
+                    },
+                  ).doOn(
+                    `meta.service_registry.selected_instance_for_socket:${fetchId}`,
+                  );
+                }
                 Cadenza.broker.emit("meta.socket.handshake", ctx);
               });
 
@@ -261,6 +287,12 @@ export default class SocketController {
 
         socket.on("handshake", (ctx) => {
           console.log("Socket client HANDSHAKE", ctx);
+          socket.emit("handshake", {
+            serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+            serviceName: Cadenza.serviceRegistry.serviceName,
+            isFrontend: isBrowser,
+            __status: "success",
+          });
           Cadenza.broker.emit("meta.socket_client.handshake", ctx);
         });
 
@@ -269,6 +301,12 @@ export default class SocketController {
             `meta.socket_client.delegation_progress:${ctx.__metadata.__deputyExecId}`,
             ctx,
           );
+        });
+
+        socket.on("signal", (ctx) => {
+          if (Cadenza.broker.listObservedSignals().includes(ctx.__signalName)) {
+            Cadenza.broker.emit(ctx.__signalName, ctx);
+          }
         });
 
         socket.on("status_update", (status) => {

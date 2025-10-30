@@ -27,6 +27,7 @@ import { snakeCase } from "lodash-es";
 import DatabaseController from "./database/DatabaseController";
 import { v4 as uuid } from "uuid";
 import GraphSyncController from "./graph/controllers/GraphSyncController";
+import { isBrowser } from "./utils/environment";
 
 export type SecurityProfile = "low" | "medium" | "high";
 export type NetworkMode =
@@ -49,6 +50,8 @@ export type ServerOptions = {
   retryCount?: number;
   cadenzaDB?: { connect?: boolean; address?: string; port?: number };
   relatedServices?: string[][];
+  isDatabase?: boolean;
+  isFrontend?: boolean;
 };
 
 export interface DatabaseOptions {
@@ -462,6 +465,7 @@ export default class CadenzaService {
             s.trim().split(","),
           )
         : [],
+      isFrontend: isBrowser,
       ...options,
     };
 
@@ -518,6 +522,7 @@ export default class CadenzaService {
       __networkMode: options.networkMode,
       __retryCount: options.retryCount,
       __cadenzaDBConnect: options.cadenzaDB?.connect,
+      __isDatabase: options.isDatabase,
     };
 
     if (options.cadenzaDB?.connect) {
@@ -563,6 +568,12 @@ export default class CadenzaService {
     description: string = "",
     options: ServerOptions & DatabaseOptions = {},
   ) {
+    if (isBrowser) {
+      console.warn(
+        "Database service creation is not supported in the browser. Use the CadenzaDB service instead.",
+      );
+      return;
+    }
     if (this.serviceCreated) return;
     this.bootstrap();
     this.serviceRegistry.serviceName = name;
@@ -586,6 +597,7 @@ export default class CadenzaService {
       databaseType: "postgres",
       databaseName: snakeCase(name),
       poolSize: parseInt(process.env.DATABASE_POOL_SIZE ?? "10"),
+      isDatabase: true,
       ...options,
     };
 
@@ -599,6 +611,28 @@ export default class CadenzaService {
       console.log("Database service created");
       this.createCadenzaService(name, description, options);
     }).doOn("meta.database.setup_done");
+
+    if (options.cadenzaDB?.connect) {
+      Cadenza.createEphemeralMetaTask("Insert database service", (_, emit) => {
+        emit("meta.created_database_service", {
+          data: {
+            service_name: name,
+            description,
+            schema,
+            is_meta: options.isMeta,
+          },
+        });
+      }).doOn("meta.service_registry.service_inserted");
+    } else {
+      Cadenza.broker.emit("meta.created_database_service", {
+        data: {
+          service_name: name,
+          description,
+          schema,
+          is_meta: options.isMeta,
+        },
+      });
+    }
   }
 
   static createMetaDatabaseService(

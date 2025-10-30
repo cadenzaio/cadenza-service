@@ -7,6 +7,7 @@ import type {
   ThrottleTagGetter,
 } from "@cadenza.io/core";
 import { DbOperationPayload } from "../../types/queryData";
+import Cadenza from "../../Cadenza";
 
 export default class DatabaseTask extends DeputyTask {
   private readonly queryData: DbOperationPayload;
@@ -90,6 +91,7 @@ export default class DatabaseTask extends DeputyTask {
    * @param context - The GraphContext containing execution data.
    * @param emit
    * @param progressCallback - Callback to update progress (invoked by meta-layer).
+   * @param nodeData
    * @returns A Promise resolving with the task result or rejecting on error.
    * @emits {meta.deputy.executed} - Emitted with context including queryData to initiate delegation.
    * @edge Engine handles timeout and error, triggering `.doOnFail` if chained.
@@ -99,6 +101,7 @@ export default class DatabaseTask extends DeputyTask {
     context: GraphContext,
     emit: (signal: string, ctx: AnyObject) => void,
     progressCallback: (progress: number) => void,
+    nodeData: { nodeId: string; routineExecId: string },
   ): TaskResult {
     const ctx = context.getContext();
     const metadata = context.getMetadata();
@@ -107,6 +110,9 @@ export default class DatabaseTask extends DeputyTask {
 
     const deputyContext = {
       __localTaskName: this.name,
+      __localTaskVersion: this.version,
+      __localServiceName: Cadenza.serviceRegistry.serviceName,
+      __previousTaskExecutionId: nodeData.nodeId,
       __remoteRoutineName: this.remoteRoutineName,
       __serviceName: this.serviceName,
       __executionTraceId: metadata.__executionTraceId ?? null,

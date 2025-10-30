@@ -8,6 +8,7 @@ import http from "node:http";
 import fs from "node:fs";
 import https from "node:https";
 import fetch from "node-fetch";
+import { isBrowser } from "../utils/environment";
 
 export default class RestController {
   private static _instance: RestController;
@@ -54,7 +55,26 @@ export default class RestController {
       [
         Cadenza.createMetaTask(
           "Setup Express app security",
-          (ctx) => {
+          (ctx, emit) => {
+            if (isBrowser) {
+              emit("meta.rest.browser_detected", {
+                data: {
+                  uuid: ctx.__serviceInstanceId,
+                  address: `browser:${ctx.__serviceInstanceId}`,
+                  port: 0,
+                  exposed: false,
+                  process_pid: 1,
+                  service_name: ctx.__serviceName,
+                  is_frontend: true,
+                  is_active: true,
+                  is_non_responsive: false,
+                  is_blocked: false,
+                  health: {},
+                },
+                ...ctx,
+              });
+              return;
+            }
             const app = express();
             app.use(bodyParser.json());
 
@@ -396,6 +416,7 @@ export default class RestController {
                     process_pid: process.pid,
                     service_name: ctx.__serviceName,
                     is_active: true,
+                    is_database: ctx.__isDatabase,
                     is_non_responsive: false,
                     is_blocked: false,
                     health: {},

@@ -1,4 +1,5 @@
 import Cadenza from "../../Cadenza";
+import { formatTimestamp } from "../../utils/tools";
 
 export default class GraphMetadataController {
   private static _instance: GraphMetadataController;
@@ -47,6 +48,25 @@ export default class GraphMetadataController {
     })
       .doOn("meta.task.relationship_added")
       .emits("meta.graph_metadata.task_relationship_created");
+
+    Cadenza.createMetaTask(
+      "Handle task deputy relationship creation",
+      (ctx) => {
+        if (ctx.signalName) return;
+        return {
+          data: {
+            triggered_task_name: ctx.remoteRoutineName,
+            triggered_task_version: 1, // TODO
+            triggered_service_name: ctx.serviceName,
+            deputy_task_name: ctx.localTaskName,
+            deputy_task_version: 1, // TODO
+            deputy_service_name: Cadenza.serviceRegistry.serviceName,
+          },
+        };
+      },
+    )
+      .doOn("meta.service_registry.deputy_registered")
+      .emits("meta.graph_metadata.deputy_relationship_created");
 
     Cadenza.createMetaTask("Handle task signal observation", (ctx) => {
       const firstChar = ctx.data.signalName.charAt(0);
@@ -353,7 +373,8 @@ export default class GraphMetadataController {
       (ctx) => {
         return {
           data: {
-            executionCount: "increment",
+            execution_count: "increment",
+            last_executed: formatTimestamp(Date.now()),
           },
           filter: {
             ...ctx.filter,
@@ -366,5 +387,42 @@ export default class GraphMetadataController {
     )
       .doOn("meta.node.mapped")
       .emits("meta.graph_metadata.relationship_executed");
+
+    Cadenza.createMetaTask(
+      "Handle explicit task execution relationship creation",
+      (ctx) => {
+        return {
+          data: {
+            deputy_task_execution_id: ctx.data.previousTaskExecutionId,
+            task_execution_id: ctx.data.taskExecutionId,
+          },
+        };
+      },
+    )
+      .doOn("meta.node.detected_previous_task_execution")
+      .emits("meta.graph_metadata.explicit_relationship_created");
+
+    Cadenza.createMetaTask(
+      "Handle explicit task execution relationship execution",
+      (ctx) => {
+        if (!ctx.__localTaskName) return;
+        return {
+          data: {
+            execution_count: "increment",
+            last_executed: formatTimestamp(Date.now()),
+          },
+          filter: {
+            deputy_task_name: ctx.__localTaskName,
+            deputy_task_version: ctx.__localTaskVersion,
+            deputy_service_name: ctx.__localServiceName,
+            triggered_task_name: ctx.filter.taskName,
+            triggered_task_version: ctx.filter.taskVersion,
+            triggered_service_name: Cadenza.serviceRegistry.serviceName,
+          },
+        };
+      },
+    )
+      .doOn("meta.node.detected_previous_task_execution")
+      .emits("meta.graph_metadata.explicit_relationship_executed");
   }
 }
