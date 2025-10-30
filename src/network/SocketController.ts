@@ -363,6 +363,8 @@ export default class SocketController {
                       return;
                     }
 
+                    console.log("Resolved socket delegate", resultContext);
+
                     const metadata = resultContext.__metadata;
                     delete resultContext.__metadata;
                     emit(
