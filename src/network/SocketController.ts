@@ -52,9 +52,10 @@ export default class SocketController {
               high: { points: 1000, duration: 60, blockDuration: 300 },
             };
             const limiter = new RateLimiterMemory(limiterOptions[profile]);
-            socket.use((packet, next) => {
+            const clientKey = socket.handshake.address || "unknown";
+            socket.use((packet, packetNext) => {
               limiter
-                .consume(socket?.handshake?.address || "unknown")
+                .consume(clientKey)
                 .then(() => next())
                 .catch((rej) => {
                   if (rej.msBeforeNext > 0) {
@@ -66,9 +67,11 @@ export default class SocketController {
                       message: "Rate limit exceeded",
                       retryAfter: rej.msBeforeNext / 1000,
                     });
+                    packetNext(new Error("Rate limit exceeded"));
                   } else {
                     console.log("SocketServer: Rate limit exceeded, blocked");
                     socket.disconnect(true);
+                    packetNext(new Error("Blocked"));
                   }
                 });
             });
@@ -103,7 +106,7 @@ export default class SocketController {
           }
 
           server.on("connection", (ws: any) => {
-            console.log("SocketServer: New connection");
+            console.log("SocketServer: New connection", ws.name);
 
             try {
               ws.emit("handshake", {
@@ -281,7 +284,7 @@ export default class SocketController {
         });
 
         socket.on("connect", () => {
-          console.log("SocketClient: CONNECTED");
+          console.log("SocketClient: CONNECTED", socket.id, socket.io);
           Cadenza.broker.emit("meta.socket_client.connected", ctx);
         });
 
@@ -322,10 +325,6 @@ export default class SocketController {
           console.error(event, "timed out — server didn’t respond");
         });
 
-        socket.onAny((event) => {
-          console.log("Received event:", event);
-        });
-
         socket.on("error", (err) => {
           // TODO: Retry on too many requests
 
@@ -351,7 +350,7 @@ export default class SocketController {
 
             return new Promise((resolve, reject) => {
               delete ctx.__isSubMeta;
-              console.log("Socket Delegate:", ctx);
+              console.log("Socket Delegate:", socket.connected, ctx);
               socket
                 .timeout(10000)
                 .emit(
