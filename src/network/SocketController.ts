@@ -53,6 +53,13 @@ export default class SocketController {
             const limiter = new RateLimiterMemory(limiterOptions[profile]);
             const clientKey = socket?.handshake?.address || "unknown";
             socket.use((packet, packetNext) => {
+              console.log(
+                "Incoming packet:",
+                packet[0],
+                "from socket:",
+                socket.id,
+                clientKey,
+              );
               limiter
                 .consume(clientKey)
                 .then(() => packetNext())
@@ -105,7 +112,7 @@ export default class SocketController {
           }
 
           server.on("connection", (ws: any) => {
-            console.log("SocketServer: New connection", ws.name);
+            console.log("SocketServer: New connection", ws.id);
 
             try {
               ws.once("handshake", (ctx: AnyObject) => {
@@ -318,7 +325,7 @@ export default class SocketController {
         });
 
         socket.on("error", (err) => {
-          // TODO: Retry on too many requests
+          // TODO: Retry on rate limit error
 
           console.error("SocketClient: error", err);
           Cadenza.broker.emit("meta.socket_client.error", err);
