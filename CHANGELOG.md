@@ -1,3 +1,10 @@
+## [1.21.6](https://github.com/cadenzaio/cadenza-service/compare/v1.21.5...v1.21.6) (2025-10-31)
+
+
+### Bug Fixes
+
+* Another attempt to remove connection loop. ([5b935ce](https://github.com/cadenzaio/cadenza-service/commit/5b935cee12efcc844fb3b272909e560a236318c6))
+
 ## [1.21.5](https://github.com/cadenzaio/cadenza-service/compare/v1.21.4...v1.21.5) (2025-10-31)
 
 
