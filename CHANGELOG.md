@@ -1,3 +1,10 @@
+## [1.21.8](https://github.com/cadenzaio/cadenza-service/compare/v1.21.7...v1.21.8) (2025-10-31)
+
+
+### Bug Fixes
+
+* Debugging socket. ([b9cd173](https://github.com/cadenzaio/cadenza-service/commit/b9cd173ad919fb9d91f3fa4e92d72c8178bc169c))
+
 ## [1.21.7](https://github.com/cadenzaio/cadenza-service/compare/v1.21.6...v1.21.7) (2025-10-31)
 
 
