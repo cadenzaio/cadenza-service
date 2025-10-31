@@ -109,12 +109,6 @@ export default class SocketController {
             console.log("SocketServer: New connection", ws.name);
 
             try {
-              ws.emit("handshake", {
-                serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-                serviceName: Cadenza.serviceRegistry.serviceName,
-                __status: "success",
-              });
-
               ws.on("handshake", (ctx: AnyObject) => {
                 console.log("Socket HANDSHAKE", ctx);
                 if (ctx.isFrontend) {
@@ -284,19 +278,14 @@ export default class SocketController {
         });
 
         socket.on("connect", () => {
-          console.log("SocketClient: CONNECTED", socket.id, socket.io);
-          Cadenza.broker.emit("meta.socket_client.connected", ctx);
-        });
-
-        socket.on("handshake", (ctx) => {
-          console.log("Socket client HANDSHAKE", ctx);
+          console.log("SocketClient: CONNECTED", socket.id);
           socket.emit("handshake", {
             serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
             serviceName: Cadenza.serviceRegistry.serviceName,
             isFrontend: isBrowser,
             __status: "success",
           });
-          Cadenza.broker.emit("meta.socket_client.handshake", ctx);
+          Cadenza.broker.emit("meta.socket_client.connected", ctx);
         });
 
         socket.on("delegation_progress", (ctx) => {
