@@ -666,6 +666,7 @@ export default class RestController {
               protocol,
               handshakeData: {
                 instanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                serviceName: Cadenza.serviceRegistry.serviceName,
                 // JWT token...
               },
             });

@@ -23,8 +23,7 @@ export default class SocketController {
           }
 
           console.log("SocketServer: Setting up", ctx);
-          let server;
-          server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
+          const server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
 
           const profile = ctx.__securityProfile ?? "medium";
 
@@ -52,11 +51,11 @@ export default class SocketController {
               high: { points: 1000, duration: 60, blockDuration: 300 },
             };
             const limiter = new RateLimiterMemory(limiterOptions[profile]);
-            const clientKey = socket.handshake.address || "unknown";
+            const clientKey = socket?.handshake?.address || "unknown";
             socket.use((packet, packetNext) => {
               limiter
                 .consume(clientKey)
-                .then(() => next())
+                .then(() => packetNext())
                 .catch((rej) => {
                   if (rej.msBeforeNext > 0) {
                     console.log(
@@ -109,7 +108,7 @@ export default class SocketController {
             console.log("SocketServer: New connection", ws.name);
 
             try {
-              ws.on("handshake", (ctx: AnyObject) => {
+              ws.once("handshake", (ctx: AnyObject) => {
                 console.log("Socket HANDSHAKE", ctx);
                 if (ctx.isFrontend) {
                   const fetchId = `browser:${ctx.serviceInstanceId}`;
@@ -286,6 +285,10 @@ export default class SocketController {
             __status: "success",
           });
           Cadenza.broker.emit("meta.socket_client.connected", ctx);
+        });
+
+        socket.on("connect_error", (err) => {
+          console.error("Connect error:", err.message);
         });
 
         socket.on("delegation_progress", (ctx) => {
