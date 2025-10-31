@@ -23,7 +23,9 @@ export default class SocketController {
           }
 
           console.log("SocketServer: Setting up", ctx);
-          const server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
+          const server = new Server(ctx.__httpsServer ?? ctx.__httpServer, {
+            maxHttpBufferSize: 1e7, // 10MB large payloads
+          });
 
           const profile = ctx.__securityProfile ?? "medium";
 
@@ -324,6 +326,18 @@ export default class SocketController {
           console.error(event, "timed out — server didn’t respond");
         });
 
+        socket.on("reconnect_attempt", (attempt) => {
+          console.log("Reconnect attempt:", attempt);
+        });
+
+        socket.on("reconnect", (attempt) => {
+          console.log("Reconnected after", attempt, "tries");
+        });
+
+        socket.on("reconnect_error", (err) => {
+          console.error("Reconnect failed:", err.message);
+        });
+
         socket.on("error", (err) => {
           // TODO: Retry on rate limit error
 
@@ -350,39 +364,47 @@ export default class SocketController {
             return new Promise((resolve, reject) => {
               delete ctx.__isSubMeta;
               console.log("Socket Delegate:", socket.connected, ctx);
-              socket
-                .timeout(10000)
-                .emit(
-                  "delegation",
-                  ctx,
-                  (err: any, resultContext: AnyObject) => {
-                    if (err) {
-                      console.log("socket error:", err);
-                      resultContext = {
-                        __error: `Timeout error: ${err}`,
-                        errored: true,
-                        ...ctx,
-                        ...ctx.__metadata,
-                      };
-                      emit(`meta.socket_client.delegate_failed`, resultContext);
+              try {
+                socket
+                  .timeout(10000)
+                  .emit(
+                    "delegation",
+                    ctx,
+                    (err: any, resultContext: AnyObject) => {
+                      if (err) {
+                        console.log("socket error:", err);
+                        resultContext = {
+                          __error: `Timeout error: ${err}`,
+                          errored: true,
+                          ...ctx,
+                          ...ctx.__metadata,
+                        };
+                        emit(
+                          `meta.socket_client.delegate_failed`,
+                          resultContext,
+                        );
+                        resolve(resultContext);
+                        return;
+                      }
+
+                      console.log("Resolved socket delegate", resultContext);
+
+                      const metadata = resultContext.__metadata;
+                      delete resultContext.__metadata;
+                      emit(
+                        `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
+                        {
+                          ...resultContext,
+                          ...metadata,
+                        },
+                      );
                       resolve(resultContext);
-                      return;
-                    }
-
-                    console.log("Resolved socket delegate", resultContext);
-
-                    const metadata = resultContext.__metadata;
-                    delete resultContext.__metadata;
-                    emit(
-                      `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
-                      {
-                        ...resultContext,
-                        ...metadata,
-                      },
-                    );
-                    resolve(resultContext);
-                  },
-                );
+                    },
+                  );
+              } catch (e) {
+                console.log("Socket Delegate Error:", e);
+                reject(e);
+              }
             });
           },
           `Delegate flow to service ${serviceName} with address ${URL}`,
