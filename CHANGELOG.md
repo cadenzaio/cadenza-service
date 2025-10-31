@@ -1,3 +1,10 @@
+## [1.21.3](https://github.com/cadenzaio/cadenza-service/compare/v1.21.2...v1.21.3) (2025-10-31)
+
+
+### Bug Fixes
+
+* Fixed issue with inserting database service. ([a9c0bbf](https://github.com/cadenzaio/cadenza-service/commit/a9c0bbfbd519ae59cc545a958d7a03bb63daf843))
+
 ## [1.21.2](https://github.com/cadenzaio/cadenza-service/compare/v1.21.1...v1.21.2) (2025-10-30)
 
 
