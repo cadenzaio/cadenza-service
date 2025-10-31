@@ -26,11 +26,10 @@ export default class SocketController {
           let server;
           server = new Server(ctx.__httpsServer ?? ctx.__httpServer);
 
-          console.log("SocketServer:", server);
-
           const profile = ctx.__securityProfile ?? "medium";
 
           server.use((socket, next) => {
+            console.log("Middleware running for socket:", socket.id);
             // Origin check (CORS-like)
             const origin = socket?.handshake?.headers?.origin;
             const allowedOrigins = ["*"]; // TODO From firewall_rule
@@ -114,7 +113,7 @@ export default class SocketController {
               });
 
               ws.on("handshake", (ctx: AnyObject) => {
-                console.log("Socket HANDSHAKE", ctx.serviceInstanceId);
+                console.log("Socket HANDSHAKE", ctx);
                 if (ctx.isFrontend) {
                   const fetchId = `browser:${ctx.serviceInstanceId}`;
                   Cadenza.createMetaTask(
@@ -278,6 +277,7 @@ export default class SocketController {
           reconnectionDelayMax: 10000,
           randomizationFactor: 0.5,
           retries: 5,
+          transports: ["websocket"],
         });
 
         socket.on("connect", () => {
@@ -316,6 +316,14 @@ export default class SocketController {
         socket.on("connect_error", (err) => {
           console.error("SocketClient: connect_error", err);
           Cadenza.broker.emit("meta.socket_client.connect_error", err);
+        });
+
+        socket.on("timeout", (event) => {
+          console.error(event, "timed out — server didn’t respond");
+        });
+
+        socket.onAny((event) => {
+          console.log("Received event:", event);
         });
 
         socket.on("error", (err) => {

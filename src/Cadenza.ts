@@ -609,12 +609,22 @@ export default class CadenzaService {
 
     Cadenza.createEphemeralMetaTask("Set database connection", () => {
       console.log("Database service created");
-      this.createCadenzaService(name, description, options);
-    }).doOn("meta.database.setup_done");
-
-    if (options.cadenzaDB?.connect) {
-      Cadenza.createEphemeralMetaTask("Insert database service", (_, emit) => {
-        emit("meta.created_database_service", {
+      if (options.cadenzaDB?.connect) {
+        Cadenza.createEphemeralMetaTask(
+          "Insert database service",
+          (_, emit) => {
+            emit("meta.created_database_service", {
+              data: {
+                service_name: name,
+                description,
+                schema,
+                is_meta: options.isMeta,
+              },
+            });
+          },
+        ).doOn("meta.service_registry.service_inserted");
+      } else {
+        Cadenza.broker.emit("meta.created_database_service", {
           data: {
             service_name: name,
             description,
@@ -622,17 +632,10 @@ export default class CadenzaService {
             is_meta: options.isMeta,
           },
         });
-      }).doOn("meta.service_registry.service_inserted");
-    } else {
-      Cadenza.broker.emit("meta.created_database_service", {
-        data: {
-          service_name: name,
-          description,
-          schema,
-          is_meta: options.isMeta,
-        },
-      });
-    }
+      }
+
+      this.createCadenzaService(name, description, options);
+    }).doOn("meta.database.setup_done");
   }
 
   static createMetaDatabaseService(
