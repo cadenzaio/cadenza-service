@@ -1,3 +1,10 @@
+## [1.21.5](https://github.com/cadenzaio/cadenza-service/compare/v1.21.4...v1.21.5) (2025-10-31)
+
+
+### Bug Fixes
+
+* Socket connection infinite loop. ([f87d76f](https://github.com/cadenzaio/cadenza-service/commit/f87d76fd9a0b2a15e52336ceacf99b0ff63c4120))
+
 ## [1.21.4](https://github.com/cadenzaio/cadenza-service/compare/v1.21.3...v1.21.4) (2025-10-31)
 
 
