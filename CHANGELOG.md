@@ -1,3 +1,10 @@
+## [1.21.9](https://github.com/cadenzaio/cadenza-service/compare/v1.21.8...v1.21.9) (2025-11-01)
+
+
+### Bug Fixes
+
+* Removed socket limiter. ([fc68f0d](https://github.com/cadenzaio/cadenza-service/commit/fc68f0db00b296be6b4e3934b509e67c5e464ed2))
+
 ## [1.21.8](https://github.com/cadenzaio/cadenza-service/compare/v1.21.7...v1.21.8) (2025-10-31)
 
 
