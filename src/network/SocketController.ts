@@ -241,6 +241,10 @@ export default class SocketController {
                   __wsId: ws.id,
                 });
               });
+
+              ws.onAny((event: any) => {
+                console.log("SocketServer: Any", event);
+              });
             } catch (e) {
               console.error("SocketServer: Error in socket event", e);
             }
@@ -293,24 +297,30 @@ export default class SocketController {
           transports: ["websocket"],
         });
 
+        const originalEmit = socket.emit;
+        socket.emit = function (event: string, ...args: any[]) {
+          console.log(`[EMIT] ${event}`, args[0]);
+          return originalEmit.apply(this, [event, ...args]);
+        };
+
         socket.on("connect", () => {
           console.log("SocketClient: CONNECTED", socket.id);
-          if (!handshake) {
-            handshake = true;
-            socket.emit(
-              "handshake",
-              {
-                serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-                serviceName: Cadenza.serviceRegistry.serviceName,
-                isFrontend: isBrowser,
-                __status: "success",
-              },
-              (result: any) => {
-                console.log("handshake result", result);
-              },
-            );
-            Cadenza.broker.emit("meta.socket_client.connected", ctx);
-          }
+          if (handshake) return;
+          handshake = true;
+
+          socket.emit(
+            "handshake",
+            {
+              serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+              serviceName: Cadenza.serviceRegistry.serviceName,
+              isFrontend: isBrowser,
+              __status: "success",
+            },
+            (result: any) => {
+              console.log("handshake result", result);
+            },
+          );
+          Cadenza.broker.emit("meta.socket_client.connected", ctx);
         });
 
         socket.on("connect_error", (err) => {
@@ -360,6 +370,10 @@ export default class SocketController {
 
           console.error("SocketClient: error", err);
           Cadenza.broker.emit("meta.socket_client.error", err);
+        });
+
+        socket.onAny((event) => {
+          console.log("SocketClient: Any", event);
         });
 
         socket.onAnyOutgoing((event) => {
