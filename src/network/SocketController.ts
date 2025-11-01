@@ -47,42 +47,42 @@ export default class SocketController {
             }
 
             // Rate limiting per socket/IP
-            // const limiterOptions: { [key: string]: IRateLimiterOptions } = {
-            //   low: { points: Infinity, duration: 1 },
-            //   medium: { points: 10000, duration: 10 },
-            //   high: { points: 1000, duration: 60, blockDuration: 300 },
-            // };
-            // const limiter = new RateLimiterMemory(limiterOptions[profile]);
-            // const clientKey = socket?.handshake?.address || "unknown";
-            // socket.use((packet, packetNext) => {
-            //   console.log(
-            //     "Incoming packet:",
-            //     packet[0],
-            //     "from socket:",
-            //     socket.id,
-            //     clientKey,
-            //   );
-            //   limiter
-            //     .consume(clientKey)
-            //     .then(() => packetNext())
-            //     .catch((rej) => {
-            //       if (rej.msBeforeNext > 0) {
-            //         console.log(
-            //           "SocketServer: Rate limit exceeded",
-            //           rej.msBeforeNext / 1000,
-            //         );
-            //         socket.emit("error", {
-            //           message: "Rate limit exceeded",
-            //           retryAfter: rej.msBeforeNext / 1000,
-            //         });
-            //         packetNext(new Error("Rate limit exceeded"));
-            //       } else {
-            //         console.log("SocketServer: Rate limit exceeded, blocked");
-            //         socket.disconnect(true);
-            //         packetNext(new Error("Blocked"));
-            //       }
-            //     });
-            // });
+            const limiterOptions: { [key: string]: IRateLimiterOptions } = {
+              low: { points: Infinity, duration: 1 },
+              medium: { points: 10000, duration: 10 },
+              high: { points: 1000, duration: 60, blockDuration: 300 },
+            };
+            const limiter = new RateLimiterMemory(limiterOptions[profile]);
+            const clientKey = socket?.handshake?.address || "unknown";
+            socket.use((packet, packetNext) => {
+              console.log(
+                "Incoming packet:",
+                packet[0],
+                "from socket:",
+                socket.id,
+                clientKey,
+              );
+              limiter
+                .consume(clientKey)
+                .then(() => packetNext())
+                .catch((rej) => {
+                  if (rej.msBeforeNext > 0) {
+                    console.log(
+                      "SocketServer: Rate limit exceeded",
+                      rej.msBeforeNext / 1000,
+                    );
+                    socket.emit("error", {
+                      message: "Rate limit exceeded",
+                      retryAfter: rej.msBeforeNext / 1000,
+                    });
+                    packetNext(new Error("Rate limit exceeded"));
+                  } else {
+                    console.log("SocketServer: Rate limit exceeded, blocked");
+                    socket.disconnect(true);
+                    packetNext(new Error("Blocked"));
+                  }
+                });
+            });
 
             // Sanitization for payloads needed?
             // socket.use((packet, next) => {
@@ -117,32 +117,39 @@ export default class SocketController {
             console.log("SocketServer: New connection", ws.id);
 
             try {
-              ws.once("handshake", (ctx: AnyObject) => {
-                console.log("Socket HANDSHAKE", ctx);
-                if (ctx.isFrontend) {
-                  const fetchId = `browser:${ctx.serviceInstanceId}`;
-                  Cadenza.createMetaTask(
-                    `Transmit signal to ${fetchId}`,
-                    (ctx, emit) => {
-                      if (ctx.__signalName === undefined) {
-                        return;
-                      }
+              ws.once(
+                "handshake",
+                (ctx: AnyObject, callback: (result: any) => void) => {
+                  console.log("Socket HANDSHAKE", ctx);
+                  if (ctx.isFrontend) {
+                    const fetchId = `browser:${ctx.serviceInstanceId}`;
+                    Cadenza.createMetaTask(
+                      `Transmit signal to ${fetchId}`,
+                      (ctx, emit) => {
+                        if (ctx.__signalName === undefined) {
+                          return;
+                        }
 
-                      ws.emit("signal", ctx);
+                        ws.emit("signal", ctx);
 
-                      if (ctx.__routineExecId) {
-                        emit(
-                          `meta.socket_client.transmitted:${ctx.__routineExecId}`,
-                          {},
-                        );
-                      }
-                    },
-                  ).doOn(
-                    `meta.service_registry.selected_instance_for_socket:${fetchId}`,
-                  );
-                }
-                Cadenza.broker.emit("meta.socket.handshake", ctx);
-              });
+                        if (ctx.__routineExecId) {
+                          emit(
+                            `meta.socket_client.transmitted:${ctx.__routineExecId}`,
+                            {},
+                          );
+                        }
+                      },
+                    ).doOn(
+                      `meta.service_registry.selected_instance_for_socket:${fetchId}`,
+                    );
+                  }
+                  callback({
+                    status: "success",
+                    serviceName: Cadenza.serviceRegistry.serviceName,
+                  });
+                  Cadenza.broker.emit("meta.socket.handshake", ctx);
+                },
+              );
 
               ws.on(
                 "delegation",
@@ -272,7 +279,7 @@ export default class SocketController {
         const port = protocol === "https" ? 443 : servicePort;
         const URL = `${socketProtocol}://${serviceAddress}:${port}`;
         const fetchId = `${serviceAddress}_${port}`;
-        let handshaked = false;
+        let handshake = false;
 
         console.log("SocketClient: Connecting to", serviceName, URL);
 
@@ -288,13 +295,20 @@ export default class SocketController {
 
         socket.on("connect", () => {
           console.log("SocketClient: CONNECTED", socket.id);
-          if (!handshaked) {
-            socket.emit("handshake", {
-              serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-              serviceName: Cadenza.serviceRegistry.serviceName,
-              isFrontend: isBrowser,
-              __status: "success",
-            });
+          if (!handshake) {
+            handshake = true;
+            socket.emit(
+              "handshake",
+              {
+                serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                serviceName: Cadenza.serviceRegistry.serviceName,
+                isFrontend: isBrowser,
+                __status: "success",
+              },
+              (result: any) => {
+                console.log("handshake result", result);
+              },
+            );
             Cadenza.broker.emit("meta.socket_client.connected", ctx);
           }
         });
