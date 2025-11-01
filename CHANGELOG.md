@@ -1,3 +1,10 @@
+## [1.21.10](https://github.com/cadenzaio/cadenza-service/compare/v1.21.9...v1.21.10) (2025-11-01)
+
+
+### Bug Fixes
+
+* Re-added socket limiter and added callback ack to handshake. ([fc43cae](https://github.com/cadenzaio/cadenza-service/commit/fc43caedac15cbba830ad9b76f66fe5c84e46d14))
+
 ## [1.21.9](https://github.com/cadenzaio/cadenza-service/compare/v1.21.8...v1.21.9) (2025-11-01)
 
 
