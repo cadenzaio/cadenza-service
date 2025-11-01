@@ -121,6 +121,10 @@ export default class SocketController {
                 "handshake",
                 (ctx: AnyObject, callback: (result: any) => void) => {
                   console.log("Socket HANDSHAKE", ctx);
+                  callback({
+                    status: "success",
+                    serviceName: Cadenza.serviceRegistry.serviceName,
+                  });
                   if (ctx.isFrontend) {
                     const fetchId = `browser:${ctx.serviceInstanceId}`;
                     Cadenza.createMetaTask(
@@ -143,10 +147,6 @@ export default class SocketController {
                       `meta.service_registry.selected_instance_for_socket:${fetchId}`,
                     );
                   }
-                  callback({
-                    status: "success",
-                    serviceName: Cadenza.serviceRegistry.serviceName,
-                  });
                   Cadenza.broker.emit("meta.socket.handshake", ctx);
                 },
               );
