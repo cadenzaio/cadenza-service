@@ -1,3 +1,10 @@
+## [1.21.12](https://github.com/cadenzaio/cadenza-service/compare/v1.21.11...v1.21.12) (2025-11-01)
+
+
+### Bug Fixes
+
+* Debugging socket handshake. ([6648d55](https://github.com/cadenzaio/cadenza-service/commit/6648d55205a2b49bf8e5e5f41911c58a89e91490))
+
 ## [1.21.11](https://github.com/cadenzaio/cadenza-service/compare/v1.21.10...v1.21.11) (2025-11-01)
 
 
