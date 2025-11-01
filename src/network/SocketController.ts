@@ -298,8 +298,14 @@ export default class SocketController {
         });
 
         const originalEmit = socket.emit;
+        let emitId = 0;
+
         socket.emit = function (event: string, ...args: any[]) {
-          console.log(`[EMIT] ${event}`, args[0]);
+          emitId++;
+          console.log(`[SOCKET EMIT #${emitId}] "${event}"`, {
+            args: args[0],
+            stack: new Error().stack?.split("\n").slice(1, 4).join("\n"),
+          });
           return originalEmit.apply(this, [event, ...args]);
         };
 
