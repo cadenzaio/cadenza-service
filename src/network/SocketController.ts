@@ -24,7 +24,13 @@ export default class SocketController {
 
           console.log("SocketServer: Setting up");
           const server = new Server(ctx.__httpsServer ?? ctx.__httpServer, {
+            pingInterval: 30_000,
+            pingTimeout: 20_000,
             maxHttpBufferSize: 1e7, // 10MB large payloads
+            connectionStateRecovery: {
+              maxDisconnectionDuration: 2 * 60 * 1000, // 2min
+              skipMiddlewares: true, // Optional: bypass rate limiter on recover
+            },
           });
 
           const profile = ctx.__securityProfile ?? "medium";
@@ -300,12 +306,12 @@ export default class SocketController {
 
         const socket = io(URL, {
           reconnection: true,
-          reconnectionAttempts: 20,
-          reconnectionDelay: 1000,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 2000,
           reconnectionDelayMax: 10000,
           randomizationFactor: 0.5,
-          retries: 5,
           transports: ["websocket"],
+          autoConnect: false,
         });
 
         const originalEmit = socket.emit;
@@ -318,6 +324,56 @@ export default class SocketController {
             stack: new Error().stack?.split("\n").slice(1, 4).join("\n"),
           });
           return originalEmit.apply(this, [event, ...args]);
+        };
+
+        const emitWhenReady = <T>(
+          event: string,
+          data: any,
+          timeoutMs: number = 20_000,
+          ack?: (response: T) => void,
+        ): Promise<T> => {
+          return new Promise((resolve, reject) => {
+            const tryEmit = () => {
+              if (!socket.connected) {
+                // should never happen because we await connect below, but safety net
+                socket.once("connect", tryEmit);
+                return;
+              }
+
+              let timer: any;
+              if (timeoutMs !== 0) {
+                timer = setTimeout(() => {
+                  console.error(`${event} timed out`);
+                  reject(new Error(`${event} timed out`));
+                }, timeoutMs);
+              }
+
+              socket
+                .timeout(timeoutMs)
+                .emit(event, data, (err: any, response: T) => {
+                  if (err) {
+                    console.log("Timeout error:", err);
+                    response = {
+                      __error: `Timeout error: ${err}`,
+                      errored: true,
+                      ...ctx,
+                      ...ctx.__metadata,
+                    };
+                    resolve(response);
+                    return;
+                  }
+                  if (timer) clearTimeout(timer);
+                  if (ack) ack(response);
+                  resolve(response);
+                });
+            };
+
+            if (socket.connected) {
+              tryEmit();
+            } else {
+              socket.once("connect", tryEmit);
+            }
+          });
         };
 
         socket.on("connect", () => {
@@ -376,14 +432,6 @@ export default class SocketController {
           Cadenza.broker.emit("meta.socket_client.error", err);
         });
 
-        socket.onAny((event) => {
-          console.log("SocketClient: Any", event);
-        });
-
-        socket.onAnyOutgoing((event) => {
-          console.log("Outgoing packet", event);
-        });
-
         socket.on("disconnect", () => {
           console.log("SocketClient: Disconnected", URL);
           Cadenza.broker.emit(`meta.socket_client.disconnected:${fetchId}`, {
@@ -391,15 +439,18 @@ export default class SocketController {
             serviceAddress,
             servicePort,
           });
+          handshake = false;
         });
+
+        socket.connect();
 
         Cadenza.createEphemeralMetaTask(
           `Handshake with ${URL}`,
-          (ctx) => {
+          async () => {
             console.log("SocketClient: HANDSHAKING", URL);
             handshake = true;
 
-            socket.emit(
+            await emitWhenReady(
               "handshake",
               {
                 serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
@@ -407,6 +458,7 @@ export default class SocketController {
                 isFrontend: isBrowser,
                 __status: "success",
               },
+              10_000,
               (result: any) => {
                 console.log("handshake result", result);
               },
@@ -425,24 +477,11 @@ export default class SocketController {
             return new Promise((resolve, reject) => {
               delete ctx.__isSubMeta;
               console.log("Socket Delegate:", socket.connected, ctx);
-              try {
-                socket.emit("delegation", ctx, (resultContext: AnyObject) => {
-                  // if (err) {
-                  //   console.log("socket error:", err);
-                  //   resultContext = {
-                  //     __error: `Timeout error: ${err}`,
-                  //     errored: true,
-                  //     ...ctx,
-                  //     ...ctx.__metadata,
-                  //   };
-                  //   emit(
-                  //     `meta.socket_client.delegate_failed`,
-                  //     resultContext,
-                  //   );
-                  //   resolve(resultContext);
-                  //   return;
-                  // }
-
+              emitWhenReady(
+                "delegation",
+                ctx,
+                20_000,
+                (resultContext: AnyObject) => {
                   console.log("Resolved socket delegate", resultContext);
 
                   const metadata = resultContext.__metadata;
@@ -455,11 +494,8 @@ export default class SocketController {
                     },
                   );
                   resolve(resultContext);
-                });
-              } catch (e) {
-                console.log("Socket Delegate Error:", e);
-                reject(e);
-              }
+                },
+              );
             });
           },
           `Delegate flow to service ${serviceName} with address ${URL}`,
@@ -473,33 +509,15 @@ export default class SocketController {
             }
 
             return new Promise((resolve, reject) => {
-              socket
-                .timeout(ctx.__timeout ?? 10000)
-                .emit("signal", ctx, (err: any, response: AnyObject) => {
-                  if (err) {
-                    console.log("socket error:", err);
-                    response = {
-                      __error: `Timeout error: ${err}`,
-                      errored: true,
-                      ...ctx,
-                      ...ctx.__metadata,
-                    };
-                    emit(
-                      `meta.socket_client.signal_transmission_failed`,
-                      response,
-                    );
-                    resolve(response);
-                    return;
-                  }
-
-                  if (ctx.__routineExecId) {
-                    emit(
-                      `meta.socket_client.transmitted:${ctx.__routineExecId}`,
-                      response,
-                    );
-                  }
-                  resolve(response);
-                });
+              emitWhenReady("signal", ctx, 10_000, (response: AnyObject) => {
+                if (ctx.__routineExecId) {
+                  emit(
+                    `meta.socket_client.transmitted:${ctx.__routineExecId}`,
+                    response,
+                  );
+                }
+                resolve(response);
+              });
             });
           },
           `Transmits signal to service ${serviceName} with address ${URL}`,
