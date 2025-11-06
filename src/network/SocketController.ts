@@ -113,13 +113,24 @@ export default class SocketController {
             return { ...ctx, __error: "No server", errored: true };
           }
 
+          const handshakeMap: { [key: string]: boolean } = {};
+
           server.on("connection", (ws: any) => {
             console.log("SocketServer: New connection", ws.id);
 
             try {
-              ws.once(
+              ws.on(
                 "handshake",
                 (ctx: AnyObject, callback: (result: any) => void) => {
+                  if (handshakeMap[ctx.serviceInstanceId]) {
+                    callback({
+                      status: "error",
+                      error: "Duplicate handshake",
+                    });
+                    return;
+                  }
+
+                  handshakeMap[ctx.serviceInstanceId] = true;
                   console.log("Socket HANDSHAKE", ctx);
                   callback({
                     status: "success",

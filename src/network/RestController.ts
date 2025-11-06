@@ -169,7 +169,7 @@ export default class RestController {
 
               app.post("/handshake", (req: Request, res: Response) => {
                 try {
-                  console.log("handshake", req.body);
+                  console.log("REST HANDSHAKE", req.body);
                   Cadenza.broker.emit("meta.rest.handshake", req.body);
                   res.send({
                     __status: "success",
