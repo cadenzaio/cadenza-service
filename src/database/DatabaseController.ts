@@ -481,7 +481,6 @@ export default class DatabaseController {
                                         }
                                       }
                                     }
-                                    console.log("DDL applied");
                                     return true;
                                   },
                                   "Applies generated DDL to the database",

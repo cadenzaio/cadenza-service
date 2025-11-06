@@ -96,7 +96,6 @@ export default class GraphSyncController {
       for (const task of __tasks) {
         if (task.registered) continue;
         task.registered = true;
-        console.log("REGISTERING TASK", task.name);
         const { __functionString, __getTagCallback } = task.export();
         emit("meta.sync_controller.task_added", {
           data: {

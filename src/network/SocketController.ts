@@ -36,7 +36,6 @@ export default class SocketController {
           const profile = ctx.__securityProfile ?? "medium";
 
           server.use((socket, next) => {
-            console.log("Middleware running for socket:", socket.id);
             // Origin check (CORS-like)
             const origin = socket?.handshake?.headers?.origin;
             const allowedOrigins = ["*"]; // TODO From firewall_rule
@@ -61,13 +60,6 @@ export default class SocketController {
             const limiter = new RateLimiterMemory(limiterOptions[profile]);
             const clientKey = socket?.handshake?.address || "unknown";
             socket.use((packet, packetNext) => {
-              console.log(
-                "Incoming packet:",
-                packet[0],
-                "from socket:",
-                socket.id,
-                clientKey,
-              );
               limiter
                 .consume(clientKey)
                 .then(() => packetNext())
@@ -258,10 +250,6 @@ export default class SocketController {
                   __wsId: ws.id,
                 });
               });
-
-              ws.onAny((event: any) => {
-                console.log("SocketServer: Any", event);
-              });
             } catch (e) {
               console.error("SocketServer: Error in socket event", e);
             }
@@ -313,18 +301,6 @@ export default class SocketController {
           transports: ["websocket"],
           autoConnect: false,
         });
-
-        const originalEmit = socket.emit;
-        let emitId = 0;
-
-        socket.emit = function (event: string, ...args: any[]) {
-          emitId++;
-          console.log(`[SOCKET EMIT #${emitId}] "${event}"`, {
-            args: args[0],
-            stack: new Error().stack?.split("\n").slice(1, 4).join("\n"),
-          });
-          return originalEmit.apply(this, [event, ...args]);
-        };
 
         const emitWhenReady = <T>(
           event: string,
@@ -460,7 +436,7 @@ export default class SocketController {
               },
               10_000,
               (result: any) => {
-                console.log("handshake result", result);
+                console.log("Socket handshake result", result);
               },
             );
           },
@@ -508,7 +484,7 @@ export default class SocketController {
               return;
             }
 
-            return new Promise((resolve, reject) => {
+            return new Promise((resolve) => {
               emitWhenReady("signal", ctx, 10_000, (response: AnyObject) => {
                 if (ctx.__routineExecId) {
                   emit(

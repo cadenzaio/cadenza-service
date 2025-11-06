@@ -188,7 +188,7 @@ export default class RestController {
                 try {
                   ctx = req.body;
                   deputyExecId = ctx.__metadata.__deputyExecId;
-                  console.log("delegation", deputyExecId, ctx);
+                  console.log("Rest delegation", deputyExecId, ctx);
                 } catch (e) {
                   console.error("Error in delegation", e);
                   res.send({
@@ -203,7 +203,7 @@ export default class RestController {
                 Cadenza.createEphemeralMetaTask(
                   "Resolve delegation",
                   (endCtx) => {
-                    console.log("Resolve delegation", endCtx);
+                    console.log("Resolve Rest delegation", endCtx);
                     const metadata = endCtx.__metadata;
                     delete endCtx.__metadata;
                     res.json({
@@ -247,7 +247,7 @@ export default class RestController {
                 let ctx;
                 try {
                   ctx = req.body;
-                  console.log("SIGNAL RECEIVED", ctx);
+                  console.log("SIGNAL RECEIVED", ctx.__signalName);
                   if (
                     !Cadenza.broker
                       .listObservedSignals()
@@ -449,7 +449,7 @@ export default class RestController {
         const handshakeTask = Cadenza.createMetaTask(
           `Send Handshake to ${URL}`,
           async (ctx, emit) => {
-            console.log("Sending handshake", ctx);
+            console.log("Sending Rest handshake", ctx);
             try {
               const response = await this.fetchDataWithTimeout(
                 `${URL}/handshake`,
@@ -462,7 +462,7 @@ export default class RestController {
                 },
                 1000,
               );
-              console.log("Handshake result", response);
+              console.log("Rest Handshake result", response);
               if (response.__status !== "success") {
                 const error =
                   response.__error ??
@@ -510,7 +510,7 @@ export default class RestController {
               return;
             }
 
-            console.log("Delegating", ctx);
+            console.log("Delegating via REST", ctx);
 
             let resultContext;
             try {

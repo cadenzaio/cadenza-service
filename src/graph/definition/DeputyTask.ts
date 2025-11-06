@@ -198,8 +198,6 @@ export default class DeputyTask extends Task {
       ...ctx,
     };
 
-    console.log("DEPUTY CONTEXT", deputyContext);
-
     return this.taskFunction(deputyContext, emit, progressCallback);
   }
 }

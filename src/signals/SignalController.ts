@@ -56,8 +56,6 @@ export default class SignalController {
                 "meta.signal_controller.foreign_signal_registered";
               ctx.__remoteServiceName = serviceName;
 
-              console.log("REMOTE SIGNAL DETECTED", ctx);
-
               if (serviceName === "*") {
                 emit("meta.signal_controller.wildcard_signal_registered", ctx);
               } else {
@@ -95,12 +93,6 @@ export default class SignalController {
 
     Cadenza.createMetaTask("Handle foreign signal registration", (ctx) => {
       const { __emitterSignalName, __listenerServiceName } = ctx;
-
-      console.log(
-        "CREATING SIGNAL TRANSMISSION",
-        __emitterSignalName,
-        __listenerServiceName,
-      );
 
       Cadenza.createSignalTransmissionTask(
         __emitterSignalName,
