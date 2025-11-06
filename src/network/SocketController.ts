@@ -415,42 +415,36 @@ export default class SocketController {
               delete ctx.__isSubMeta;
               console.log("Socket Delegate:", socket.connected, ctx);
               try {
-                socket
-                  .timeout(10000)
-                  .emit(
-                    "delegation",
-                    ctx,
-                    (err: any, resultContext: AnyObject) => {
-                      if (err) {
-                        console.log("socket error:", err);
-                        resultContext = {
-                          __error: `Timeout error: ${err}`,
-                          errored: true,
-                          ...ctx,
-                          ...ctx.__metadata,
-                        };
-                        emit(
-                          `meta.socket_client.delegate_failed`,
-                          resultContext,
-                        );
-                        resolve(resultContext);
-                        return;
-                      }
+                socket.emit("delegation", ctx, (resultContext: AnyObject) => {
+                  // if (err) {
+                  //   console.log("socket error:", err);
+                  //   resultContext = {
+                  //     __error: `Timeout error: ${err}`,
+                  //     errored: true,
+                  //     ...ctx,
+                  //     ...ctx.__metadata,
+                  //   };
+                  //   emit(
+                  //     `meta.socket_client.delegate_failed`,
+                  //     resultContext,
+                  //   );
+                  //   resolve(resultContext);
+                  //   return;
+                  // }
 
-                      console.log("Resolved socket delegate", resultContext);
+                  console.log("Resolved socket delegate", resultContext);
 
-                      const metadata = resultContext.__metadata;
-                      delete resultContext.__metadata;
-                      emit(
-                        `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
-                        {
-                          ...resultContext,
-                          ...metadata,
-                        },
-                      );
-                      resolve(resultContext);
+                  const metadata = resultContext.__metadata;
+                  delete resultContext.__metadata;
+                  emit(
+                    `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
+                    {
+                      ...resultContext,
+                      ...metadata,
                     },
                   );
+                  resolve(resultContext);
+                });
               } catch (e) {
                 console.log("Socket Delegate Error:", e);
                 reject(e);
