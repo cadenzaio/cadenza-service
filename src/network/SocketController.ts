@@ -312,21 +312,8 @@ export default class SocketController {
         socket.on("connect", () => {
           console.log("SocketClient: CONNECTED", socket.id);
           if (handshake) return;
-          handshake = true;
 
-          socket.emit(
-            "handshake",
-            {
-              serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-              serviceName: Cadenza.serviceRegistry.serviceName,
-              isFrontend: isBrowser,
-              __status: "success",
-            },
-            (result: any) => {
-              console.log("handshake result", result);
-            },
-          );
-          Cadenza.broker.emit("meta.socket_client.connected", ctx);
+          Cadenza.broker.emit(`meta.socket_client.connected:${fetchId}`, ctx);
         });
 
         socket.on("connect_error", (err) => {
@@ -394,6 +381,28 @@ export default class SocketController {
             servicePort,
           });
         });
+
+        Cadenza.createEphemeralMetaTask(
+          `Handshake with ${URL}`,
+          (ctx) => {
+            console.log("SocketClient: HANDSHAKING", URL);
+            handshake = true;
+
+            socket.emit(
+              "handshake",
+              {
+                serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                serviceName: Cadenza.serviceRegistry.serviceName,
+                isFrontend: isBrowser,
+                __status: "success",
+              },
+              (result: any) => {
+                console.log("handshake result", result);
+              },
+            );
+          },
+          "Handshakes with socket server",
+        ).doOn(`meta.socket_client.connected:${fetchId}`);
 
         const delegateTask = Cadenza.createMetaTask(
           `Delegate flow to ${URL}`,
