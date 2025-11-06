@@ -1,3 +1,10 @@
+## [1.21.16](https://github.com/cadenzaio/cadenza-service/compare/v1.21.15...v1.21.16) (2025-11-06)
+
+
+### Bug Fixes
+
+* Fixing socket handshake and delegation. ([69b65dc](https://github.com/cadenzaio/cadenza-service/commit/69b65dcdb9dbdd6e441e973ac5918ed89836b73d))
+
 ## [1.21.15](https://github.com/cadenzaio/cadenza-service/compare/v1.21.14...v1.21.15) (2025-11-06)
 
 
