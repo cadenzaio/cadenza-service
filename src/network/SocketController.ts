@@ -196,7 +196,7 @@ export default class SocketController {
                     )
                     .emitsOnFail(`meta.socket.progress_failed:${deputyExecId}`);
 
-                  Cadenza.broker.emit("meta.socket.delegation_requested", {
+                  Cadenza.emit("meta.socket.delegation_requested", {
                     ...ctx,
                     __name: ctx.__remoteRoutineName,
                   });

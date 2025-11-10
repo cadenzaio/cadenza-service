@@ -1,4 +1,5 @@
 import Cadenza, {
+  AnyObject,
   CadenzaMode,
   DebounceOptions,
   DebounceTask,
@@ -120,6 +121,14 @@ export default class CadenzaService {
 
   public static setMode(mode: CadenzaMode) {
     Cadenza.setMode(mode);
+  }
+
+  static emit(signal: string, data: AnyObject = {}) {
+    this.broker?.emit(signal, data);
+  }
+
+  static run(task: Task | GraphRoutine, context: AnyObject) {
+    this.runner?.run(task, context);
   }
 
   static createDeputyTask(
