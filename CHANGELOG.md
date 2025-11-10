@@ -1,3 +1,10 @@
+# [1.23.0](https://github.com/cadenzaio/cadenza-service/compare/v1.22.0...v1.23.0) (2025-11-10)
+
+
+### Features
+
+* Finally fixed socket and cleanup. ([aedb175](https://github.com/cadenzaio/cadenza-service/commit/aedb17546ad4cbccc069645386c7450987c933d2))
+
 # [1.22.0](https://github.com/cadenzaio/cadenza-service/compare/v1.21.17...v1.22.0) (2025-11-06)
 
 
