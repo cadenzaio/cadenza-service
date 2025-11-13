@@ -30,10 +30,18 @@ export default class RestController {
       return await response.json();
     } catch (error: any) {
       if (error?.name === "AbortError") {
-        console.error("Fetch request timed out:", error);
+        Cadenza.log(
+          "Fetch request timed out.",
+          { error, URL: url, requestInit },
+          "warning",
+        );
         // Handle timeout specifically
       } else {
-        console.error("Fetch error:", error);
+        Cadenza.log(
+          "Fetch request error.",
+          { error, URL: url, requestInit },
+          "error",
+        );
         // Handle other errors
       }
       throw error; // Re-throw to propagate the error
@@ -169,15 +177,19 @@ export default class RestController {
 
               app.post("/handshake", (req: Request, res: Response) => {
                 try {
-                  console.log("REST HANDSHAKE", req.body);
-                  Cadenza.broker.emit("meta.rest.handshake", req.body);
+                  Cadenza.log("New fetch connection.", { body: req.body });
+                  Cadenza.emit("meta.rest.handshake", req.body);
                   res.send({
                     __status: "success",
                     __serviceInstanceId:
                       Cadenza.serviceRegistry.serviceInstanceId,
                   });
                 } catch (e) {
-                  console.error("Error in handshake", e);
+                  Cadenza.log(
+                    "Error in fetch handshake",
+                    { error: e, body: req.body },
+                    "error",
+                  );
                   res.send({ __status: "error" });
                 }
               });
@@ -185,20 +197,9 @@ export default class RestController {
               app.post("/delegation", (req: Request, res: Response) => {
                 let deputyExecId;
                 let ctx;
-                try {
-                  ctx = req.body;
-                  deputyExecId = ctx.__metadata.__deputyExecId;
-                  console.log("Rest delegation", deputyExecId, ctx);
-                } catch (e) {
-                  console.error("Error in delegation", e);
-                  res.send({
-                    __status: "error",
-                    __error: e,
-                    errored: true,
-                    ...ctx,
-                  });
-                  return;
-                }
+                ctx = req.body;
+                deputyExecId = ctx.__metadata.__deputyExecId;
+                console.log("Rest delegation", deputyExecId, ctx);
 
                 Cadenza.createEphemeralMetaTask(
                   "Resolve delegation",
@@ -237,7 +238,7 @@ export default class RestController {
                 //   `meta.node.ended_routine_execution:${routineExecId}`,
                 // );
 
-                Cadenza.broker.emit("meta.rest.delegation_requested", {
+                Cadenza.emit("meta.rest.delegation_requested", {
                   ...ctx,
                   __name: ctx.__remoteRoutineName,
                 });
@@ -266,7 +267,11 @@ export default class RestController {
                     __signalName: ctx.__signalName,
                   });
                 } catch (e) {
-                  console.error("Error in signal", e);
+                  Cadenza.log(
+                    "Error in REST signal consumption",
+                    { error: e, ...ctx },
+                    "error",
+                  );
                   res.send({
                     __status: "error",
                     __error: e,
@@ -274,7 +279,7 @@ export default class RestController {
                   return;
                 }
 
-                Cadenza.broker.emit(ctx.__signalName, ctx);
+                Cadenza.emit(ctx.__signalName, ctx);
               });
 
               app.get("/status", (req: Request, res: Response) => {
@@ -285,7 +290,7 @@ export default class RestController {
                   { register: false },
                 ).doAfter(Cadenza.serviceRegistry.getStatusTask);
 
-                Cadenza.broker.emit(
+                Cadenza.emit(
                   "meta.rest.status_check_requested",
                   req.body.query,
                 );
@@ -444,12 +449,9 @@ export default class RestController {
         const URL = `${protocol}://${serviceAddress}:${port}`;
         const fetchId = `${serviceAddress}_${port}`;
 
-        console.log("Fetch connecting to", URL);
-
         const handshakeTask = Cadenza.createMetaTask(
           `Send Handshake to ${URL}`,
           async (ctx, emit) => {
-            console.log("Sending Rest handshake", ctx);
             try {
               const response = await this.fetchDataWithTimeout(
                 `${URL}/handshake`,
@@ -462,22 +464,26 @@ export default class RestController {
                 },
                 1000,
               );
-              console.log("Rest Handshake result", response);
               if (response.__status !== "success") {
                 const error =
                   response.__error ??
                   `Failed to connect to service ${serviceName} ${ctx.serviceInstanceId}`;
-                console.error(error);
+                Cadenza.log(
+                  "Fetch handshake failed.",
+                  { error, serviceName, URL },
+                  "warning",
+                );
                 emit(`meta.fetch.handshake_failed:${fetchId}`, response);
                 return { ...ctx, __error: error, errored: true };
               }
 
               ctx.serviceInstanceId = response.__serviceInstanceId;
 
-              console.log(
-                `Connected to service ${serviceName} ${URL}`,
+              Cadenza.log("Fetch client connected.", {
                 response,
-              );
+                serviceName,
+                URL,
+              });
 
               for (const communicationType of ctx.communicationTypes) {
                 // TODO: Should be done in other situations as well
@@ -491,7 +497,11 @@ export default class RestController {
                 });
               }
             } catch (e) {
-              console.error("Error in handshake", e);
+              Cadenza.log(
+                "Error in fetch handshake",
+                { error: e, serviceName, URL, ctx },
+                "error",
+              );
               return { ...ctx, __error: e, errored: true };
             }
 
@@ -625,7 +635,7 @@ export default class RestController {
           .emitsOnFail("meta.fetch.status_check_failed");
 
         Cadenza.createEphemeralMetaTask("Destroy fetch client", (ctx, emit) => {
-          console.log("Destroying fetch client");
+          Cadenza.log("Destroying fetch client", { URL, serviceName });
           handshakeTask.destroy();
           delegateTask.destroy();
           transmitTask.destroy();

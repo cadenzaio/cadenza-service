@@ -29,6 +29,7 @@ import DatabaseController from "./database/DatabaseController";
 import { v4 as uuid } from "uuid";
 import GraphSyncController from "./graph/controllers/GraphSyncController";
 import { isBrowser } from "./utils/environment";
+import { formatTimestamp } from "./utils/tools";
 
 export type SecurityProfile = "low" | "medium" | "high";
 export type NetworkMode =
@@ -129,6 +130,37 @@ export default class CadenzaService {
 
   static run(task: Task | GraphRoutine, context: AnyObject) {
     this.runner?.run(task, context);
+  }
+
+  static log(
+    message: string,
+    data: any = {},
+    level: "info" | "warning" | "error" | "critical" = "info",
+    subjectServiceName: string | null = null,
+    subjectServiceInstanceId: string | null = null,
+  ) {
+    if (level === "critical") {
+      console.error("CRITICAL:", message);
+    } else if (level === "error") {
+      console.error(message);
+    } else if (level === "warning") {
+      console.warn(message);
+    } else {
+      console.log(message);
+    }
+
+    this.emit("meta.system_log.log", {
+      data: {
+        data,
+        level,
+        message,
+        serviceName: this.serviceRegistry?.serviceName,
+        serviceInstanceId: this.serviceRegistry?.serviceInstanceId,
+        subjectServiceName,
+        subjectServiceInstanceId,
+        created: formatTimestamp(Date.now()),
+      },
+    });
   }
 
   static createDeputyTask(
@@ -479,7 +511,7 @@ export default class CadenzaService {
     };
 
     if (options.cadenzaDB?.connect) {
-      Cadenza.broker.emit("meta.initializing_service", {
+      this.emit("meta.initializing_service", {
         // Seed the CadenzaDB
         serviceInstance: {
           uuid: "cadenza-db",
@@ -497,7 +529,7 @@ export default class CadenzaService {
     }
 
     options.relatedServices?.forEach((service) => {
-      Cadenza.broker.emit("meta.initializing_service", {
+      this.emit("meta.initializing_service", {
         serviceInstance: {
           uuid: service[0],
           serviceName: service[1],
@@ -539,22 +571,19 @@ export default class CadenzaService {
         emit("meta.create_service_requested", initContext);
       }).doOn("meta.fetch.handshake_complete");
     } else {
-      Cadenza.broker.emit("meta.create_service_requested", initContext);
+      this.emit("meta.create_service_requested", initContext);
     }
 
     this.createEphemeralMetaTask("Handle service setup completion", () => {
       GraphMetadataController.instance;
       GraphSyncController.instance;
-      setTimeout(() => {
-        // delayed sync
-        this.broker.emit("meta.sync_requested", {});
-      }, 2000);
+      this.broker.schedule("meta.sync_requested", {}, 2000);
 
       if (options.cadenzaDB?.connect) {
-        setInterval(() => {
-          this.broker.emit("meta.sync_requested", {});
-        }, 300000);
+        this.broker.throttle("meta.sync_requested", {}, 300000);
       }
+
+      this.log("Service created.");
 
       return true;
     }).doOn("meta.service_registry.instance_inserted");
@@ -610,14 +639,13 @@ export default class CadenzaService {
       ...options,
     };
 
-    Cadenza.broker.emit("meta.database_init_requested", {
+    this.emit("meta.database_init_requested", {
       schema,
       databaseName: options.databaseName,
       options,
     });
 
     Cadenza.createEphemeralMetaTask("Set database connection", () => {
-      console.log("Database service created");
       if (options.cadenzaDB?.connect) {
         Cadenza.createEphemeralMetaTask(
           "Insert database service",
@@ -630,16 +658,24 @@ export default class CadenzaService {
                 is_meta: options.isMeta,
               },
             });
+            this.log("Database service created", {
+              name,
+              isMeta: options.isMeta,
+            });
           },
         ).doOn("meta.service_registry.service_inserted");
       } else {
-        Cadenza.broker.emit("meta.created_database_service", {
+        this.emit("meta.created_database_service", {
           data: {
             service_name: name,
             description,
             schema,
             is_meta: options.isMeta,
           },
+        });
+        this.log("Database service created", {
+          name,
+          isMeta: options.isMeta,
         });
       }
 

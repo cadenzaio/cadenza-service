@@ -137,7 +137,11 @@ export default class ServiceRegistry {
                   });
                 }
               } catch (e) {
-                console.error("Error in dependee registration", e);
+                Cadenza.log(
+                  "Error in dependee registration",
+                  { error: e, context: ctx },
+                  "error",
+                );
               }
             }
           }
@@ -219,11 +223,16 @@ export default class ServiceRegistry {
         const instances = serviceInstances?.filter(
           (i) => i.address === serviceAddress && i.port === servicePort,
         );
-        console.log(
-          "Service not responding",
-          serviceAddress,
-          servicePort,
-          instances,
+        Cadenza.log(
+          "Service not responding.",
+          {
+            serviceName,
+            serviceAddress,
+            servicePort,
+            instances,
+          },
+          "warning",
+          serviceName,
         );
 
         for (const instance of instances ?? []) {
@@ -243,21 +252,13 @@ export default class ServiceRegistry {
         return true;
       },
       "Handles service not responding",
-    ).doOn("meta.fetch.handshake_failed", "meta.socket_client.disconnected.*");
+    ).doOn("meta.fetch.handshake_failed", "meta.socket_client.disconnected");
 
     this.handleServiceHandshakeTask = Cadenza.createMetaTask(
       "Handle service handshake",
       (ctx, emit) => {
         const { serviceName, serviceAddress, servicePort, serviceInstanceId } =
           ctx;
-        console.log(
-          "SERVICE HANDSHAKE",
-          serviceName,
-          serviceAddress,
-          servicePort,
-          serviceInstanceId,
-          this.instances.get(serviceName),
-        );
         const serviceInstances = this.instances.get(serviceName);
         const instances = serviceInstances?.filter(
           (i) => i.address === serviceAddress && i.port === servicePort,
@@ -686,8 +687,6 @@ export default class ServiceRegistry {
         if (!ctx.__cadenzaDBConnect) {
           ctx.__skipRemoteExecution = true;
         }
-
-        console.log("service creation", ctx);
 
         if (isBrowser) {
           Cadenza.createMetaTask("Prepare for signal sync", () => {

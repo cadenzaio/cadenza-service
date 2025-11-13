@@ -41,7 +41,7 @@ export type SchemaConstraints = {
   minLength?: number;
   maxLength?: number;
   pattern?: string;
-  enum?: any[];
+  enum?: any[]; // TODO
   multipleOf?: number;
   format?: "email" | "url" | "date-time" | "uuid" | "custom";
   oneOf?: any[];

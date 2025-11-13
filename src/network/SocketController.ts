@@ -22,7 +22,6 @@ export default class SocketController {
             return;
           }
 
-          console.log("SocketServer: Setting up");
           const server = new Server(ctx.__httpsServer ?? ctx.__httpServer, {
             pingInterval: 30_000,
             pingTimeout: 20_000,
@@ -65,9 +64,14 @@ export default class SocketController {
                 .then(() => packetNext())
                 .catch((rej) => {
                   if (rej.msBeforeNext > 0) {
-                    console.log(
+                    Cadenza.log(
                       "SocketServer: Rate limit exceeded",
-                      rej.msBeforeNext / 1000,
+                      {
+                        retryAfter: rej.msBeforeNext / 1000,
+                        clientKey,
+                        socketId: socket.id,
+                      },
+                      "warning",
                     );
                     socket.emit("error", {
                       message: "Rate limit exceeded",
@@ -75,7 +79,14 @@ export default class SocketController {
                     });
                     packetNext(new Error("Rate limit exceeded"));
                   } else {
-                    console.log("SocketServer: Rate limit exceeded, blocked");
+                    Cadenza.log(
+                      "SocketServer: Rate limit exceeded, blocked",
+                      {
+                        clientKey,
+                        socketId: socket.id,
+                      },
+                      "critical",
+                    );
                     socket.disconnect(true);
                     packetNext(new Error("Blocked"));
                   }
@@ -104,18 +115,15 @@ export default class SocketController {
             // });
             next();
           });
-          console.log("SocketServer: Setup complete");
 
           if (!server) {
-            console.error("Socket setup error: No server");
+            Cadenza.log("Socket setup error: No server", {}, "error");
             return { ...ctx, __error: "No server", errored: true };
           }
 
           const handshakeMap: { [key: string]: boolean } = {};
 
           server.on("connection", (ws: any) => {
-            console.log("SocketServer: New connection", ws.id);
-
             try {
               ws.on(
                 "handshake",
@@ -129,11 +137,16 @@ export default class SocketController {
                   }
 
                   handshakeMap[ctx.serviceInstanceId] = true;
-                  console.log("Socket HANDSHAKE", ctx);
+                  Cadenza.log("SocketServer: New connection", {
+                    ...ctx,
+                    socketId: ws.id,
+                  });
+
                   callback({
                     status: "success",
                     serviceName: Cadenza.serviceRegistry.serviceName,
                   });
+
                   if (ctx.isFrontend) {
                     const fetchId = `browser:${ctx.serviceInstanceId}`;
                     Cadenza.createMetaTask(
@@ -156,7 +169,7 @@ export default class SocketController {
                       `meta.service_registry.selected_instance_for_socket:${fetchId}`,
                     );
                   }
-                  Cadenza.broker.emit("meta.socket.handshake", ctx);
+                  Cadenza.emit("meta.socket.handshake", ctx);
                 },
               );
 
@@ -215,7 +228,7 @@ export default class SocketController {
                       __status: "success",
                       __signalName: ctx.__signalName,
                     });
-                    Cadenza.broker.emit(ctx.__signalName, ctx);
+                    Cadenza.emit(ctx.__signalName, ctx);
                   } else {
                     callback({
                       ...ctx,
@@ -237,24 +250,29 @@ export default class SocketController {
                     { register: false },
                   ).doAfter(Cadenza.serviceRegistry.getStatusTask);
 
-                  Cadenza.broker.emit(
-                    "meta.socket.status_check_requested",
-                    ctx,
-                  );
+                  Cadenza.emit("meta.socket.status_check_requested", ctx);
                 },
               );
 
               ws.on("disconnect", () => {
-                console.log("SocketServer: Disconnected");
-                Cadenza.broker.emit("meta.socket.disconnected", {
+                Cadenza.log(
+                  "Socket client disconnected",
+                  { socketId: ws.id },
+                  "warning",
+                );
+                Cadenza.emit("meta.socket.disconnected", {
                   __wsId: ws.id,
                 });
               });
             } catch (e) {
-              console.error("SocketServer: Error in socket event", e);
+              Cadenza.log(
+                "SocketServer: Error in socket event",
+                { error: e },
+                "error",
+              );
             }
 
-            Cadenza.broker.emit("meta.socket.connected", { __wsId: ws.id });
+            Cadenza.emit("meta.socket.connected", { __wsId: ws.id });
           });
 
           Cadenza.createMetaTask(
@@ -270,8 +288,6 @@ export default class SocketController {
           )
             .doOn("meta.socket_server_shutdown_requested")
             .emits("meta.socket.shutdown");
-
-          console.log("SocketServer: Startup complete");
 
           return ctx;
         }),
@@ -289,8 +305,6 @@ export default class SocketController {
         const URL = `${socketProtocol}://${serviceAddress}:${port}`;
         const fetchId = `${serviceAddress}_${port}`;
         let handshake = false;
-
-        console.log("SocketClient: Connecting to", serviceName, URL);
 
         const socket = io(URL, {
           reconnection: true,
@@ -319,7 +333,11 @@ export default class SocketController {
               let timer: any;
               if (timeoutMs !== 0) {
                 timer = setTimeout(() => {
-                  console.error(`${event} timed out`);
+                  Cadenza.log(
+                    `Socket event '${event}' timed out`,
+                    { ...data, socketId: socket.id, serviceName, URL },
+                    "error",
+                  );
                   reject(new Error(`${event} timed out`));
                 }, timeoutMs);
               }
@@ -328,7 +346,11 @@ export default class SocketController {
                 .timeout(timeoutMs)
                 .emit(event, data, (err: any, response: T) => {
                   if (err) {
-                    console.log("Timeout error:", err);
+                    Cadenza.log(
+                      "Socket timeout.",
+                      { error: err, socketId: socket.id, serviceName },
+                      "warning",
+                    );
                     response = {
                       __error: `Timeout error: ${err}`,
                       errored: true,
@@ -353,18 +375,12 @@ export default class SocketController {
         };
 
         socket.on("connect", () => {
-          console.log("SocketClient: CONNECTED", socket.id);
           if (handshake) return;
-
-          Cadenza.broker.emit(`meta.socket_client.connected:${fetchId}`, ctx);
-        });
-
-        socket.on("connect_error", (err) => {
-          console.error("Connect error:", err.message);
+          Cadenza.emit(`meta.socket_client.connected:${fetchId}`, ctx);
         });
 
         socket.on("delegation_progress", (ctx) => {
-          Cadenza.broker.emit(
+          Cadenza.emit(
             `meta.socket_client.delegation_progress:${ctx.__metadata.__deputyExecId}`,
             ctx,
           );
@@ -372,45 +388,61 @@ export default class SocketController {
 
         socket.on("signal", (ctx) => {
           if (Cadenza.broker.listObservedSignals().includes(ctx.__signalName)) {
-            Cadenza.broker.emit(ctx.__signalName, ctx);
+            Cadenza.emit(ctx.__signalName, ctx);
           }
         });
 
         socket.on("status_update", (status) => {
-          Cadenza.broker.emit("meta.socket_client.status_received", status);
+          Cadenza.emit("meta.socket_client.status_received", status);
         });
 
         socket.on("connect_error", (err) => {
-          console.error("SocketClient: connect_error", err);
-          Cadenza.broker.emit("meta.socket_client.connect_error", err);
-        });
-
-        socket.on("timeout", (event) => {
-          console.error(event, "timed out — server didn’t respond");
+          Cadenza.log(
+            "Socket connect error",
+            { error: err.message, serviceName, socketId: socket.id, URL },
+            "error",
+          );
+          Cadenza.emit("meta.socket_client.connect_error", err);
         });
 
         socket.on("reconnect_attempt", (attempt) => {
-          console.log("Reconnect attempt:", attempt);
+          Cadenza.log(`Reconnect attempt: ${attempt}`);
         });
 
         socket.on("reconnect", (attempt) => {
-          console.log("Reconnected after", attempt, "tries");
+          Cadenza.log(`Socket reconnected after ${attempt} tries`, {
+            socketId: socket.id,
+            URL,
+            serviceName,
+          });
         });
 
         socket.on("reconnect_error", (err) => {
-          console.error("Reconnect failed:", err.message);
+          Cadenza.log(
+            "Socket reconnect failed.",
+            { error: err.message, serviceName, URL, socketId: socket.id },
+            "warning",
+          );
         });
 
         socket.on("error", (err) => {
           // TODO: Retry on rate limit error
 
-          console.error("SocketClient: error", err);
-          Cadenza.broker.emit("meta.socket_client.error", err);
+          Cadenza.log(
+            "Socket error",
+            { error: err, socketId: socket.id, URL, serviceName },
+            "error",
+          );
+          Cadenza.emit("meta.socket_client.error", err);
         });
 
         socket.on("disconnect", () => {
-          console.log("SocketClient: Disconnected", URL);
-          Cadenza.broker.emit(`meta.socket_client.disconnected:${fetchId}`, {
+          Cadenza.log(
+            "Socket disconnected.",
+            { URL, serviceName, socketId: socket.id },
+            "warning",
+          );
+          Cadenza.emit(`meta.socket_client.disconnected:${fetchId}`, {
             serviceName,
             serviceAddress,
             servicePort,
@@ -423,7 +455,7 @@ export default class SocketController {
         Cadenza.createEphemeralMetaTask(
           `Handshake with ${URL}`,
           async () => {
-            console.log("SocketClient: HANDSHAKING", URL);
+            if (handshake) return;
             handshake = true;
 
             await emitWhenReady(
@@ -436,7 +468,20 @@ export default class SocketController {
               },
               10_000,
               (result: any) => {
-                console.log("Socket handshake result", result);
+                if (result.status === "success") {
+                  Cadenza.log("Socket connected", {
+                    result,
+                    serviceName,
+                    socketId: socket.id,
+                    URL,
+                  });
+                } else {
+                  Cadenza.log(
+                    "Socket handshake failed",
+                    { result, serviceName, socketId: socket.id, URL },
+                    "warning",
+                  );
+                }
               },
             );
           },
@@ -458,8 +503,6 @@ export default class SocketController {
                 ctx,
                 20_000,
                 (resultContext: AnyObject) => {
-                  console.log("Resolved socket delegate", resultContext);
-
                   const metadata = resultContext.__metadata;
                   delete resultContext.__metadata;
                   emit(

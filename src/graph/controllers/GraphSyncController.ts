@@ -1,6 +1,6 @@
 import Cadenza from "../../Cadenza";
 import { Task } from "@cadenza.io/core";
-import { decomposeSignalName } from "../../utils/tools";
+import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 
 export default class GraphSyncController {
   private static _instance: GraphSyncController;
@@ -57,6 +57,20 @@ export default class GraphSyncController {
           }
         }
       }
+
+      emit("meta.sync_controller.synced", {
+        data: {
+          is_active: true,
+          is_non_responsive: false,
+          is_blocked: false,
+          last_active: formatTimestamp(Date.now()),
+        },
+        filter: {
+          uuid: Cadenza.serviceRegistry.serviceInstanceId,
+        },
+      });
+
+      Cadenza.log("Service synced data.");
     }).doAfter(Cadenza.registry.getAllRoutines);
 
     Cadenza.createMetaTask("Split signals for registration", (ctx, emit) => {

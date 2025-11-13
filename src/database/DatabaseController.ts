@@ -23,6 +23,8 @@ export default class DatabaseController {
     return this._instance;
   }
 
+  databaseName: string = "";
+
   dbClient = new Pool({
     user: process.env.DATABASE_USER ?? "postgres",
     host: process.env.DATABASE_ADDRESS ?? "localhost",
@@ -64,6 +66,8 @@ export default class DatabaseController {
                 database: databaseName,
                 password: process.env.DATABASE_PASSWORD ?? "03gibnEF",
               });
+
+              this.databaseName = databaseName;
               return true;
             } catch (error: any) {
               if (error.code === "42P04") {
@@ -535,8 +539,6 @@ export default class DatabaseController {
                                       Cadenza.createUniqueMetaTask(
                                         "Join table tasks",
                                         (ctx, emit) => {
-                                          console.log("JOINING TABLE TASKS");
-
                                           emit("meta.database.setup_done", {});
                                           return true;
                                         },
@@ -567,9 +569,14 @@ export default class DatabaseController {
     const release = client.release;
     // set a timeout of 5 seconds, after which we will log this client's last query
     const timeout = setTimeout(() => {
-      console.error("A client has been checked out for more than 5 seconds!");
-      console.error(
-        `The last executed query on this client was: ${client.lastQuery}`,
+      Cadenza.log(
+        "CRITICAL: A database client has been checked out for more than 5 seconds!",
+        {
+          clientId: client.uuid,
+          query: client.lastQuery,
+          databaseName: this.databaseName,
+        },
+        "critical",
       );
     }, 5000);
     // monkey patch the query method to keep track of the last query executed
@@ -601,10 +608,14 @@ export default class DatabaseController {
         return await transaction(client, context);
       } catch (err: unknown) {
         if (err && (err as Error).message.includes("does not exist")) {
-          console.log(`Waiting for database to be ready...`);
+          Cadenza.log("Waiting for database to be ready...");
           await new Promise((res) => setTimeout(res, 1000));
         } else {
-          console.error("Database query errored: ", err, context);
+          Cadenza.log(
+            "Database query errored",
+            { error: err, context },
+            "warning",
+          );
           return { rows: [] };
         }
       }
@@ -679,9 +690,6 @@ export default class DatabaseController {
     }
 
     sorted.reverse();
-
-    console.log("sorted tables", sorted, "has cycles", hasCycles);
-
     return { ...ctx, sortedTables: sorted, hasCycles };
   }
 
@@ -1153,7 +1161,11 @@ export default class DatabaseController {
             context.queryData ?? context,
           );
         } catch (e) {
-          console.error("Database task:", taskName, "errored.", e);
+          Cadenza.log(
+            "Database task errored.",
+            { taskName, error: e },
+            "error",
+          );
           throw e;
         }
 
@@ -1181,10 +1193,8 @@ export default class DatabaseController {
                 limit: context.limit,
                 offset: context.offset,
               })
-            : context[camelCase(tableName)]
-              ? JSON.stringify(context[camelCase(tableName)]).slice(0, 140)
-              : JSON.stringify(context).slice(0, 140),
-          context.__error,
+            : "",
+          context.__error ?? "success",
         );
 
         delete context.queryData;
