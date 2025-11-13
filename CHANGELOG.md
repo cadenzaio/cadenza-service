@@ -1,3 +1,10 @@
+# [1.24.0](https://github.com/cadenzaio/cadenza-service/compare/v1.23.0...v1.24.0) (2025-11-13)
+
+
+### Features
+
+* Added system log. ([720c716](https://github.com/cadenzaio/cadenza-service/commit/720c71668eb56cd659b011323935dfb6edfc28b7))
+
 # [1.23.0](https://github.com/cadenzaio/cadenza-service/compare/v1.22.0...v1.23.0) (2025-11-10)
 
 
