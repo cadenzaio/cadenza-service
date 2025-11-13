@@ -594,14 +594,7 @@ export default class ServiceRegistry {
 
     this.insertServiceInstanceTask = Cadenza.createCadenzaDBInsertTask(
       "serviceInstance",
-      {
-        onConflict: {
-          target: ["address", "port", "process_pid"],
-          action: {
-            do: "nothing",
-          },
-        },
-      },
+      {},
       {
         inputSchema: {
           type: "object",
