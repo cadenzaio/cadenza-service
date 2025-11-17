@@ -1,3 +1,10 @@
+## [1.24.1](https://github.com/cadenzaio/cadenza-service/compare/v1.24.0...v1.24.1) (2025-11-13)
+
+
+### Bug Fixes
+
+* removed service instance unique constraint. ([6c2e729](https://github.com/cadenzaio/cadenza-service/commit/6c2e729f3e2751d0d3bd8a8529d2b95c461e8a88))
+
 # [1.24.0](https://github.com/cadenzaio/cadenza-service/compare/v1.23.0...v1.24.0) (2025-11-13)
 
 
