@@ -1,5 +1,5 @@
    {
-     "entryPoints": ["src/Cadenza.ts"],
+     "entryPoints": ["src/**/*.ts"],
      "out": "docs",
      "theme": "default",
      "tsconfig": "./tsconfig.json",
