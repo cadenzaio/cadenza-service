@@ -465,7 +465,7 @@ export default class CadenzaService {
   /**
    * Creates a MetaTask (for meta-layer graphs) and registers it.
    * MetaTasks suppress further meta-signal emissions to prevent loops.
-   * @param serviceName Unique identifier for the meta-task.
+   * @param serviceName
    * @param description Optional description.
    * @param options Optional service options. A service can either be connected to a database service and/or a list of related services.
    * Example RELATED_SERVICES=serviceId123,service1,http://address:port | serviceId124,service2,http://address:port
@@ -779,7 +779,6 @@ export default class CadenzaService {
    * @param description Optional.
    * @param options Optional task options.
    * @returns The created ThrottledTask.
-   * @edge If no getter, throttles per task ID; use for resource protection.
    */
   static createThrottledTask(
     name: string,
@@ -832,7 +831,6 @@ export default class CadenzaService {
    * @param debounceTime Delay in ms (default 1000).
    * @param options Optional task options plus optional debounce config (e.g., leading/trailing).
    * @returns The created DebounceTask.
-   * @edge Multiple triggers within time collapse to one exec.
    */
   static createDebounceTask(
     name: string,
@@ -885,7 +883,6 @@ export default class CadenzaService {
    * @param description Optional.
    * @param options Optional task options.
    * @returns The created EphemeralTask.
-   * @edge Destruction triggered post-exec via Node/Builder; emits meta-signal for cleanup.
    */
   static createEphemeralTask(
     name: string,
@@ -921,7 +918,6 @@ export default class CadenzaService {
    * @param tasks Starting tasks (can be empty, but warns as no-op).
    * @param description Optional.
    * @returns The created GraphRoutine.
-   * @edge If tasks empty, routine is valid but inert.
    */
   static createRoutine(
     name: string,

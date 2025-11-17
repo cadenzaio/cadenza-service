@@ -134,7 +134,6 @@ export default class SignalTransmissionTask extends Task {
    * @param progressCallback - Callback to update progress (invoked by meta-layer).
    * @returns A Promise resolving with the task result or rejecting on error.
    * @emits {meta.deputy.executed} - Emitted with context including queryData to initiate delegation.
-   * @edge Engine handles timeout and error, triggering `.doOnFail` if chained.
    * @note The resolution and progress are managed by ephemeral meta-tasks.
    */
   execute(
