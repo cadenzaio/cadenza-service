@@ -8,6 +8,13 @@ import type {
 import { v4 as uuid } from "uuid";
 import Cadenza from "../../Cadenza";
 
+/**
+ * Represents a task responsible for transmitting signals to a remote service
+ * through the meta-layer for operations delegation.
+ *
+ * @class
+ * @extends Task
+ */
 export default class SignalTransmissionTask extends Task {
   readonly isDeputy: boolean = true;
 
@@ -15,29 +22,29 @@ export default class SignalTransmissionTask extends Task {
   protected readonly serviceName: string;
 
   /**
-   * Constructs a DatabaseTask to execute a database operation on a remote service.
-   * @param name - The local name of the Task.
-   * @param signalName - The name of the signal to transmit to the service.
-   * @param serviceName - The target database service name (optional, defaults to 'DatabaseService').
-   * @param description - A description of the task's purpose (default: '').
-   * @param concurrency - The maximum number of concurrent executions (default: 0, unlimited).
-   * @param timeout - Timeout in milliseconds (default: 0, handled by engine).
-   * @param register - Whether to register the task in the registry (default: true).
-   * @param isUnique
-   * @param isMeta
-   * @param isSubMeta
-   * @param isHidden
-   * @param getTagCallback - Callback for dynamic tagging, e.g., 'return "default"'.
-   * @param inputSchema - Input schema definition.
-   * @param validateInputContext - Whether to validate the input context (default: false).
-   * @param outputSchema - Output schema definition.
-   * @param validateOutputContext - Whether to validate the output context (default: false).
-   * @param retryCount
-   * @param retryDelay
-   * @param retryDelayMax
-   * @param retryDelayFactor
-   * @emits {meta.deputy.created} - Emitted on construction with task and service details.
-   * @note Fallbacks via `.doOnFail` externally; timeouts managed by the engine.
+   * Constructs a new instance of the class and initializes it with the provided parameters.
+   *
+   * @param {string} name - The name of the task being created.
+   * @param {string} signalName - The name of the signal associated with this task.
+   * @param {string} serviceName - The name of the service associated with this task.
+   * @param {string} [description=""] - An optional description of the task.
+   * @param {number} [concurrency=0] - The maximum allowed concurrency for this task.
+   * @param {number} [timeout=0] - The maximum execution time for this task, in milliseconds.
+   * @param {boolean} [register=true] - Whether the task should be registered upon creation.
+   * @param {boolean} [isUnique=false] - Indicates if the task should enforce uniqueness.
+   * @param {boolean} [isMeta=false] - Specifies if the task is a meta-task.
+   * @param {boolean} [isSubMeta=false] - Specifies if the task is a sub-meta-task.
+   * @param {boolean} [isHidden=false] - Indicates if the task is hidden from visibility.
+   * @param {ThrottleTagGetter|undefined} [getTagCallback=undefined] - A callback for tag throttling logic.
+   * @param {SchemaDefinition|undefined} [inputSchema=undefined] - An optional schema for validating input data.
+   * @param {boolean} [validateInputContext=false] - Whether to validate the input context against the input schema.
+   * @param {SchemaDefinition|undefined} [outputSchema=undefined] - An optional schema for validating output data.
+   * @param {boolean} [validateOutputContext=false] - Whether to validate the output context against the output schema.
+   * @param {number} [retryCount=0] - The number of retry attempts allowed in case of task failure.
+   * @param {number} [retryDelay=0] - The initial delay before retrying a failed task, in milliseconds.
+   * @param {number} [retryDelayMax=0] - The maximum delay between retry attempts, in milliseconds.
+   * @param {number} [retryDelayFactor=1] - A multiplier applied to retry delay for exponential backoff.
+   * @return {void} Does not return a value.
    */
   constructor(
     name: string,
@@ -128,13 +135,12 @@ export default class SignalTransmissionTask extends Task {
   }
 
   /**
-   * Triggers the database operation delegation flow via a signal to the meta-layer.
-   * @param context - The GraphContext containing execution data.
-   * @param emit
-   * @param progressCallback - Callback to update progress (invoked by meta-layer).
-   * @returns A Promise resolving with the task result or rejecting on error.
-   * @emits {meta.deputy.executed} - Emitted with context including queryData to initiate delegation.
-   * @note The resolution and progress are managed by ephemeral meta-tasks.
+   * Executes the given task function within the provided execution context.
+   *
+   * @param {GraphContext} context - The context object providing the graph execution environment and metadata.
+   * @param {Function} emit - A function to emit signals with the provided name and context.
+   * @param {Function} progressCallback - A callback function to report the progress of the task execution as a number between 0 and 1.
+   * @return {TaskResult} The result of the executed task function.
    */
   execute(
     context: GraphContext,

@@ -16,6 +16,11 @@ import {
 } from "../types/queryData";
 import { sleep } from "../utils/promise";
 
+/**
+ * DatabaseController is a singleton class that manages database connections,
+ * schema validation, and database initialization tasks. It provides mechanisms
+ * to create new databases, validate schemas, and manage the database lifecycle.
+ */
 export default class DatabaseController {
   private static _instance: DatabaseController;
   public static get instance(): DatabaseController {
@@ -37,13 +42,29 @@ export default class DatabaseController {
     this.dbClient.end();
   }
 
+  /**
+   * Constructor for initializing the `DatabaseService` class.
+   *
+   * This constructor method initializes a sequence of meta tasks to perform the following database-related operations:
+   *
+   * 1. **Database Creation**: Creates a new database with the specified name if it doesn't already exist.
+   *    Validates the database name to ensure it conforms to the required format.
+   * 2. **Database Schema Validation**: Validates the structure and constraints of the schema definition provided.
+   * 3. **Table Dependency Management**: Sorts tables within the schema by their dependencies to ensure proper creation order.
+   * 4. **Schema Definition Processing**:
+   *    - Converts schema definitions into Data Definition Language (DDL) based on table and field specifications.
+   *    - Handles constraints, relationships, and field attributes such as uniqueness, primary keys, nullable fields, etc.
+   * 5. **Index and Primary Key Definition**: Generates SQL for indices and primary keys based on the schema configuration.
+   *
+   * These tasks are encapsulated within a meta routine to provide a structured and procedural approach to database initialization and schema management.
+   */
   constructor() {
     Cadenza.createMetaRoutine(
       "DatabaseServiceInit",
       [
-        // Database health check
-        // Create database role
-        // Create schema version table
+        // TODO: Database health check
+        // TODO: Create database role
+        // TODO: Create schema version table
         Cadenza.createMetaTask(
           "Create database",
           async (ctx) => {
@@ -563,6 +584,13 @@ export default class DatabaseController {
     ).doOn("meta.database_init_requested");
   }
 
+  /**
+   * Asynchronously retrieves a database client from the connection pool with additional logging and timeout capabilities.
+   * The method modifies the client instance by adding timeout tracking and logging functionality to ensure
+   * the client is not held for an extended period and track the last executed query for debugging purposes.
+   *
+   * @return {Promise<PoolClient>} A promise resolving to a database client from the pool with enhanced behavior for query tracking and timeout handling.
+   */
   private async getClient(): Promise<PoolClient> {
     const client = (await this.dbClient.connect()) as unknown as any;
     const query = client.query;
@@ -623,6 +651,23 @@ export default class DatabaseController {
     throw new Error(`Timeout waiting for database to be ready`);
   }
 
+  /**
+   * Sorts database tables based on their reference dependencies using a topological sort.
+   *
+   * Tables are reordered such that dependent tables appear later in the list
+   * to ensure a dependency hierarchy. If cycles are detected in the dependency graph,
+   * they will be noted but the process will not stop. Unreferenced tables are included at the end.
+   *
+   * @param {Object} ctx - The context object containing the database schema definition and table metadata.
+   *        ctx.schema {Object} - The schema definition object.
+   *        ctx.schema.tables {Object} - A mapping of table names to table definitions.
+   *        Each table definition may contain `fields` (with `references` info)
+   *        and `foreignKeys` indicating cross-table relationships.
+   *
+   * @return {Object} - The modified context object with an additional property:
+   *         sortedTables {string[]} - An array of table names sorted in dependency order.
+   *         hasCycles {boolean} - Indicates if the dependency graph contains cycles.
+   */
   sortTablesByReferences(ctx: AnyObject): AnyObject {
     // Build dependency graph: map of table -> set of dependent tables
     const schema: SchemaDefinition = ctx.schema;
@@ -693,6 +738,16 @@ export default class DatabaseController {
     return { ...ctx, sortedTables: sorted, hasCycles };
   }
 
+  /**
+   * Asynchronously creates an iterator that splits the provided tables from the schema.
+   *
+   * @param {Object} ctx - The context object containing the necessary data.
+   * @param {string[]} ctx.sortedTables - An array of table names sorted in a specific order.
+   * @param {Object} ctx.schema - The schema object that includes table definitions.
+   * @param {Object} [ctx.options={}] - Optional configuration options for processing tables.
+   *
+   * @return {AsyncGenerator} An asynchronous generator that yields objects containing the table definition, metadata, and other context details.
+   */
   async *splitTables(ctx: any) {
     const { sortedTables, schema, options = {} } = ctx;
     for (const tableName of sortedTables) {
@@ -701,6 +756,12 @@ export default class DatabaseController {
     }
   }
 
+  /**
+   * Converts the keys of objects in an array to camelCase format.
+   *
+   * @param {Array<any>} rows - An array of objects whose keys should be converted to camelCase.
+   * @return {Array<any>} A new array of objects with their keys converted to camelCase.
+   */
   toCamelCase(rows: any[]) {
     return rows.map((row: any) => {
       const camelCasedRow: any = {};
@@ -711,6 +772,13 @@ export default class DatabaseController {
     });
   }
 
+  /**
+   * Executes a query against a specified database table with given parameters.
+   *
+   * @param {string} tableName - The name of the database table to query.
+   * @param {DbOperationPayload} context - An object containing query parameters such as filters, fields, joins, sort, limit, and offset.
+   * @return {Promise<any>} A promise that resolves with the query result, including rows, row count, and metadata, or an error object if the query fails.
+   */
   async queryFunction(
     tableName: string,
     context: DbOperationPayload,
@@ -777,6 +845,21 @@ export default class DatabaseController {
     }
   }
 
+  /**
+   * Inserts data into the specified database table with optional conflict handling.
+   *
+   * @param {string} tableName - The name of the target database table.
+   * @param {DbOperationPayload} context - The context containing data to insert, transaction settings, field mappings, conflict resolution options, and other configurations.
+   *   - `data` (object | array): The data to be inserted into the database.
+   *   - `transaction` (boolean): Specifies whether the operation should use a transaction. Defaults to true.
+   *   - `fields` (array): The fields to return in the result after insertion.
+   *   - `onConflict` (object): Options for handling conflicts on insert.
+   *     - `target` (array): Columns to determine conflicts.
+   *     - `action` (object): Specifies the action to take on conflict, such as updating specified fields.
+   *   - `awaitExists` (object): Specifies foreign key references to wait for to ensure existence before insertion.
+   *
+   * @return {Promise<any>} A promise resolving to the result of the database insert operation, including the inserted rows, the row count, and metadata indicating success or error.
+   */
   async insertFunction(
     tableName: string,
     context: DbOperationPayload,
@@ -901,6 +984,21 @@ export default class DatabaseController {
     }
   }
 
+  /**
+   * Updates a database table with the provided data and filter conditions.
+   *
+   * @param {string} tableName - The name of the database table to update.
+   * @param {DbOperationPayload} context - The payload for the update operation, which includes:
+   *        - data: The data to update in the table.
+   *        - filter: The conditions to identify the rows to update (default is an empty object).
+   *        - transaction: Whether the operation should run within a database transaction (default is true).
+   * @return {Promise<any>} Returns a Promise resolving to an object that includes:
+   *         - The updated data if the update is successful.
+   *         - In case of error:
+   *           - Error details.
+   *           - The SQL query and parameters if applicable.
+   *         - A flag indicating if the update succeeded or failed.
+   */
   async updateFunction(
     tableName: string,
     context: DbOperationPayload,
@@ -976,6 +1074,16 @@ export default class DatabaseController {
     }
   }
 
+  /**
+   * Deletes a record from the specified database table based on the given filter criteria.
+   *
+   * @param {string} tableName - The name of the database table from which records should be deleted.
+   * @param {DbOperationPayload} context - The context for the operation, including filter conditions and transaction settings.
+   * @param {Object} context.filter - The filter criteria to identify the records to delete.
+   * @param {boolean} [context.transaction=true] - Indicates if the operation should be executed within a transaction.
+   * @return {Promise<any>} A promise that resolves to an object containing information about the deleted record
+   * or an error object if the delete operation fails.
+   */
   async deleteFunction(
     tableName: string,
     context: DbOperationPayload,
@@ -1015,6 +1123,19 @@ export default class DatabaseController {
     }
   }
 
+  /**
+   * Constructs a SQL WHERE clause based on the provided filter object.
+   * Builds parameterized queries to prevent SQL injection, appending parameters
+   * to the provided params array and utilizing placeholders.
+   *
+   * @param {Object} filter - An object representing the filtering conditions with
+   *                          keys as column names and values as their corresponding
+   *                          desired values. Values can also be arrays for `IN` queries.
+   * @param {any[]} params - An array for storing parameterized values, which will be
+   *                         populated with the filter values for the constructed SQL clause.
+   * @return {string} The constructed SQL WHERE clause as a string. If no conditions
+   *                  are provided, an empty string is returned.
+   */
   buildWhereClause(filter: AnyObject, params: any[]): string {
     const conditions = [];
     for (const [key, value] of Object.entries(filter)) {
@@ -1038,6 +1159,13 @@ export default class DatabaseController {
     return conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   }
 
+  /**
+   * Constructs a SQL join clause from a given set of join definitions.
+   *
+   * @param {Record<string, JoinDefinition>} joins - An object where keys are table names
+   *                                                  and values are definitions of join conditions.
+   * @return {string} The constructed SQL join clause as a string.
+   */
   buildJoinClause(joins: Record<string, JoinDefinition>): string {
     let joinSql = "";
     for (const [table, join] of Object.entries(joins)) {
@@ -1047,6 +1175,14 @@ export default class DatabaseController {
     return joinSql;
   }
 
+  /**
+   * Recursively resolves nested data structure by processing special operations and transforming the data accordingly.
+   * Handles specific object structures with sub-operations, strings with specific commands, and other nested objects.
+   *
+   * @param {any} data The initial data to be resolved, which can be an object, array, or primitive value.
+   * @param {string} tableName The name of the table associated with the data, used contextually for operation resolution.
+   * @return {Promise<any>} A promise that resolves to the fully processed data structure with all nested elements resolved.
+   */
   async resolveNestedData(data: any, tableName: string): Promise<any> {
     if (Array.isArray(data))
       return Promise.all(data.map((d) => this.resolveNestedData(d, tableName)));
@@ -1074,6 +1210,17 @@ export default class DatabaseController {
     return resolved;
   }
 
+  /**
+   * Executes a sub-operation against the database, such as an insert or query operation.
+   *
+   * @param {SubOperation} op - The operation to be executed. Contains details such as the type of sub-operation
+   * (e.g., "insert" or "query"), the target table, data to be inserted, filters for querying, fields to be retrieved, etc.
+   * @return {Promise<any>} A promise that resolves with the result of the operation.
+   * For "insert", the result will include the inserted row or a partial response for uuid conflicts.
+   * For "query", the result will include the first row that matches the query condition. If no result is found,
+   * resolves with an empty object.
+   * @throws Throws an error if the operation fails. Rolls back the transaction in case of an error.
+   */
   async executeSubOperation(op: SubOperation): Promise<any> {
     const client = await this.getClient();
     try {
@@ -1109,6 +1256,16 @@ export default class DatabaseController {
     }
   }
 
+  /**
+   * Creates a database task configured for specific operations such as query, insert, update, or delete on a given table.
+   *
+   * @param {DbOperationType} op - The type of database operation to perform (e.g., "query", "insert", "update", "delete").
+   * @param {string} tableName - The name of the table on which the operation will be performed.
+   * @param {TableDefinition} table - The table definition that includes configurations such as custom signal triggers and emissions.
+   * @param {function(string, AnyObject): Promise<any>} queryFunction - The function to execute the database operation. It takes the table name and a context object as arguments and returns a promise.
+   * @param {ServerOptions} options - The options for configuring the server context and metadata behavior.
+   * @return {void} This function does not return a value, but it registers a database task for the specified operation.
+   */
   createDatabaseTask(
     op: DbOperationType,
     tableName: string,

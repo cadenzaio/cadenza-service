@@ -1,6 +1,23 @@
 import Cadenza from "../Cadenza";
 import { decomposeSignalName } from "../utils/tools";
 
+/**
+ * SignalController is a singleton class that manages signal registration, transmission,
+ * and metadata handling within a service instance.
+ *
+ * This class utilizes the Cadenza framework to handle various tasks related to signals,
+ * such as registering signals, transmitting signals to remote services, adding metadata,
+ * and maintaining clean-forwarding and processing of signals.
+ *
+ * Features:
+ * - Ensures signals are properly registered and metadata is propagated.
+ * - Handles foreign signal registration for cross-service communication.
+ * - Forwards signal observations and manages their metadata.
+ * - Adds metadata during signal emission and consumption.
+ * - Implements a meta-task-based system for handling complex workflows.
+ *
+ * Constructor initializes the necessary meta-tasks and tasks required for signal management.
+ */
 export default class SignalController {
   private static _instance: SignalController;
   public static get instance(): SignalController {
@@ -8,6 +25,20 @@ export default class SignalController {
     return this._instance;
   }
 
+  /**
+   * Constructor method for initializing the signal registration and data transmission process.
+   * This method defines multiple meta tasks to manage signals, forwarding, and adding metadata
+   * for service instances in a distributed system.
+   *
+   * Some key functionalities include:
+   * - Registering signals from a service instance.
+   * - Handling foreign signal registration from remote services.
+   * - Forwarding signal observations between services.
+   * - Adding metadata to signal emissions for better traceability.
+   * - Adding metadata to signal consumption events.
+   *
+   * It serves as an initializer for signals and tasks.
+   */
   constructor() {
     Cadenza.createMetaTask(
       "Handle Signal Registration",

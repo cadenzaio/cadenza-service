@@ -8,6 +8,13 @@ import type {
 } from "@cadenza.io/core";
 import Cadenza from "../../Cadenza";
 
+/**
+ * Represents a task that delegates execution of a routine to a remote system or service.
+ * The `DeputyTask` serves as a proxy to perform and track the progress of a remote workflow.
+ * It extends the `Task` class with additional delegation capabilities.
+ *
+ * Emits various meta-signals for monitoring delegation progress and resolution.
+ */
 export default class DeputyTask extends Task {
   readonly isDeputy: boolean = true;
 
@@ -15,29 +22,29 @@ export default class DeputyTask extends Task {
   protected serviceName: string | undefined;
 
   /**
-   * Constructs a DeputyTask as a proxy for triggering a remote flow.
-   * @param name - The local name of the DeputyTask.
-   * @param remoteRoutineName - The name of the remote routine or task to trigger.
-   * @param serviceName - The target service name (optional, defaults to local service if undefined).
-   * @param description - A description of the task's purpose (default: '').
-   * @param concurrency - The maximum number of concurrent executions (default: 0, unlimited).
-   * @param timeout - Timeout in milliseconds (default: 0, handled by engine).
-   * @param register - Whether to register the task in the registry (default: true).
-   * @param isUnique - Whether to create a unique task (default: false). A unique task will only be executed once per execution ID, merging parents.
-   * @param isMeta - Whether to create a meta task (default: false). A meta task is separate from the user logic and is only used for monitoring, optimization, and feature extensions.
-   * @param isSubMeta
-   * @param isHidden
-   * @param getTagCallback - Callback for dynamic tagging, e.g., 'return "default"'.
-   * @param inputSchema - Input schema definition.
-   * @param validateInputContext - Whether to validate the input context (default: false).
-   * @param outputSchema - Output schema definition.
-   * @param validateOutputContext - Whether to validate the output context (default: false).
-   * @param retryCount
-   * @param retryDelay
-   * @param retryDelayMax
-   * @param retryDelayFactor
-   * @emits {meta.deputy.delegation_requested} - Emitted on construction with task and service details.
-   * @note Fallbacks should be handled externally via `.doOnFail`; timeouts are managed by the engine.
+   * Constructs a new instance of the class with the specified parameters.
+   *
+   * @param {string} name - The name of the task.
+   * @param {string} remoteRoutineName - The name of the remote routine to delegate tasks to.
+   * @param {string | undefined} [serviceName=undefined] - The name of the service associated with the task.
+   * @param {string} [description=""] - A brief description of the task.
+   * @param {number} [concurrency=0] - The concurrency level of the task.
+   * @param {number} [timeout=0] - The timeout duration for the task.
+   * @param {boolean} [register=true] - Whether the task should be registered in the system.
+   * @param {boolean} [isUnique=false] - Whether the task is unique.
+   * @param {boolean} [isMeta=false] - Whether the task is a meta task.
+   * @param {boolean} [isSubMeta=false] - Whether the task is a sub-meta task.
+   * @param {boolean} [isHidden=false] - Whether the task is hidden from the system.
+   * @param {ThrottleTagGetter | undefined} [getTagCallback=undefined] - A callback function to retrieve throttle tags.
+   * @param {SchemaDefinition | undefined} [inputSchema=undefined] - The input schema definition for the task.
+   * @param {boolean} [validateInputContext=false] - Whether to validate the input context against the input schema.
+   * @param {SchemaDefinition | undefined} [outputSchema=undefined] - The output schema definition for the task.
+   * @param {boolean} [validateOutputContext=false] - Whether to validate the output context against the output schema.
+   * @param {number} [retryCount=0] - The number of retries allowed for task execution.
+   * @param {number} [retryDelay=0] - The initial delay between retries in milliseconds.
+   * @param {number} [retryDelayMax=0] - The maximum retry delay in milliseconds.
+   * @param {number} [retryDelayFactor=1] - The factor by which to increase the retry delay for subsequent retries.
+   * @return {void} This constructor does not return a value.
    */
   constructor(
     name: string,
@@ -162,14 +169,13 @@ export default class DeputyTask extends Task {
   }
 
   /**
-   * Triggers the delegation flow via a signal to the meta-layer.
-   * @param context - The GraphContext containing execution data.
-   * @param emit
-   * @param progressCallback - Callback to update progress (invoked by meta-layer).
-   * @param nodeData
-   * @returns A Promise resolving with the task result or rejecting on error.
-   * @emits {meta.deputy.executed} - Emitted with context to initiate delegation.
-   * @note The resolution and progress are managed by ephemeral meta-tasks.
+   * Executes the specified task function within the provided execution context.
+   *
+   * @param {GraphContext} context - The execution context containing methods and metadata for task execution.
+   * @param {function(string, AnyObject): void} emit - A function for emitting signals with associated data during execution.
+   * @param {function(number): void} progressCallback - A callback function to report progress updates during task processing.
+   * @param {{ nodeId: string, routineExecId: string }} nodeData - Object containing identifiers for the node and routine execution.
+   * @return {TaskResult} Returns the result of the task function execution.
    */
   execute(
     context: GraphContext,
