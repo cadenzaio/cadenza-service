@@ -1,3 +1,10 @@
+## [1.24.4](https://github.com/cadenzaio/cadenza-service/compare/v1.24.3...v1.24.4) (2025-11-18)
+
+
+### Bug Fixes
+
+* generated docs. ([d7ee68f](https://github.com/cadenzaio/cadenza-service/commit/d7ee68fe5f057b99e46411a1e1b23887562fa489))
+
 ## [1.24.3](https://github.com/cadenzaio/cadenza-service/compare/v1.24.2...v1.24.3) (2025-11-18)
 
 
