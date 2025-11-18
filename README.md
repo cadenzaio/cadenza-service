@@ -58,8 +58,72 @@ For full examples, see this repository or the test suite.
 
 ## Features
 
+- **Service-based Distribution**: Allows services to expose local graphs and signals to interact with other services in
+  a system. Enables tasks and signals to be distributed and executed across multiple services.
+
+- **Socket and REST Integration**: Provides built-in communication layers via sockets and REST APIs to facilitate
+  seamless interaction among distributed services.
+
+- **Database Service Extension**: Automatically generates tasks and signals for interacting with a database schema,
+  making it easy to extend database functionality within the Cadenza model.
+
+- **CadenzaDB Compatibility**: Supports real-time synchronization with the CadenzaDB service for introspection,
+  visualization, and monitoring.
+
+- **Meta-Layer Extension**: A self-reflective layer for monitoring, optimization, and auto-generation, enabling advanced
+  AI-driven self-development capabilities.
+
+- **Modularity**: A lightweight core architecture allows for adding extensions (e.g., distribution and UI integration)
+  without affecting the core functionality.
+
+- **Introspectability**: Built-in tools to export graphs, trace executions, and separate metadata provide transparency
+  and debugging support.
+
+- **Developer-friendly Design**: Focuses on ease of use with intuitive APIs, clear structure, and support for rapid
+  development of distributed applications.
+
 ## Architecture Overview
 Cadenza's service package is divided into:
+
+## Architecture Overview
+
+Cadenza's service package is divided into:
+
+1. **Core Layer**:
+    - Provides the foundational primitives for defining tasks, managing contexts, handling signals, and executing
+      workflows.
+    - Implements the Decentralized Adaptive Orchestration (DAO) model to enable flexible yet structured workflows.
+    - Acts as the base for all other layers and extensions, ensuring modularity.
+
+2. **Service Layer**:
+    - Extends the core layer to facilitate distributed orchestration.
+    - Exposes local tasks and signals via REST APIs and socket-based communication.
+    - Enables services to interact with and delegate tasks between each other, creating a networked system of
+      distributed services.
+
+3. **Database Service Layer**:
+    - Provides tools for integrating and managing database interactions using the Cadenza model.
+    - Automatically generates tasks and signals based on a given schema, simplifying database operations.
+    - Supports CadenzaDB for real-time synchronization, introspection, and visualization of database interactions.
+
+4. **Meta-Layer**:
+    - Offers a self-reflective extension for monitoring, optimization, and AI-driven self-development.
+    - Enables introspection by exporting graphs, tracing executions, and separating metadata for improved debugging and
+      transparency.
+    - Facilitates the creation of new extensions by leveraging the core features in a modular architecture.
+
+5. **Networking Layer**:
+    - Handles the communication between distributed services using sockets and REST APIs.
+    - Abstracts complexities of networking, providing a seamless interaction layer.
+    - Ensures secure and performant data flow across distributed components.
+
+6. **Integration Layer**:
+    - Supports integration with external tools like CadenzaDB for real-time introspection and a UI for visualization.
+    - Provides features for extending the ecosystem with custom plugins and modules.
+
+7. **Developer Utilities**:
+    - Supplies developer-friendly utilities such as tools for debugging, tracing, and exporting execution graphs.
+    - Ensures fast and intuitive development with simple APIs and a lightweight modular design.
 
 
 ## Contributing
