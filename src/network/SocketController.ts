@@ -6,6 +6,13 @@ import type { AnyObject } from "@cadenza.io/core";
 import { io } from "socket.io-client";
 import { isBrowser } from "../utils/environment";
 
+/**
+ * The `SocketController` class handles the setup and management of a WebSocket server,
+ * ensuring secure connections, message handling, and rate-limiting.
+ * This class is designed to function as a singleton, providing a unified interface
+ * for WebSocket interactions in the application by standardizing the server setup
+ * and integrating task-based processing through the `Cadenza` framework.
+ */
 export default class SocketController {
   private static _instance: SocketController;
   public static get instance(): SocketController {
@@ -13,6 +20,23 @@ export default class SocketController {
     return this._instance;
   }
 
+  /**
+   * Constructs the `SocketServer`, setting up a WebSocket server with specific configurations,
+   * including connection state recovery, rate limiting, CORS handling, and custom event handling.
+   * This class sets up the communication infrastructure for scalable, resilient, and secure WebSocket-based interactions
+   * using metadata-driven task execution with `Cadenza`.
+   *
+   * It provides support for:
+   * - Origin-based access control for connections.
+   * - Optional payload sanitization.
+   * - Configurable rate limiting and behavior on limit breaches (soft/hard disconnects).
+   * - Event handlers for connection, handshake, delegation, signaling, status checks, and disconnection.
+   *
+   * The server can handle both internal and external interactions depending on the provided configurations,
+   * and integrates directly with Cadenza's task workflow engine.
+   *
+   * Initializes the `SocketServer` to be ready for WebSocket communication.
+   */
   constructor() {
     Cadenza.createMetaRoutine(
       "SocketServer",

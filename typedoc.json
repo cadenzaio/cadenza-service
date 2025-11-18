@@ -1,11 +1,7 @@
    {
-     "entryPoints": ["src/Cadenza.ts"],
+     "entryPoints": ["src/**/*.ts"],
      "out": "docs",
      "theme": "default",
      "tsconfig": "./tsconfig.json",
-     "name": "Cadenza Documentation",
-     "excludeExternals": true,
-     "excludePrivate": true,
-     "excludeProtected": true,
-     "includeVersion": true
+     "name": "Cadenza Documentation"
    }

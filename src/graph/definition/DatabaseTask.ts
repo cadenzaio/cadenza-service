@@ -9,34 +9,39 @@ import type {
 import { DbOperationPayload } from "../../types/queryData";
 import Cadenza from "../../Cadenza";
 
+/**
+ * Represents a specialized task for delegating database operations. Extends `DeputyTask`.
+ * This class is designed to abstract database operation requests, delegating execution to a meta-layer system.
+ */
 export default class DatabaseTask extends DeputyTask {
   private readonly queryData: DbOperationPayload;
 
   /**
-   * Constructs a DatabaseTask to execute a database operation on a remote service.
-   * @param name - The local name of the DatabaseTask.
-   * @param taskName - The name of the database operation task to trigger (e.g., 'dbQueryTaskExecution').
-   * @param serviceName - The target database service name (optional, defaults to 'DatabaseService').
-   * @param description - A description of the task's purpose (default: '').
-   * @param queryData - The query data object containing operation details (e.g., { __operation: 'query', __table: 'users' }).
-   * @param concurrency - The maximum number of concurrent executions (default: 0, unlimited).
-   * @param timeout - Timeout in milliseconds (default: 0, handled by engine).
-   * @param register - Whether to register the task in the registry (default: true).
-   * @param isUnique
-   * @param isMeta
-   * @param isSubMeta
-   * @param isHidden
-   * @param getTagCallback - Callback for dynamic tagging, e.g., 'return "default"'.
-   * @param inputSchema - Input schema definition.
-   * @param validateInputContext - Whether to validate the input context (default: false).
-   * @param outputSchema - Output schema definition.
-   * @param validateOutputContext - Whether to validate the output context (default: false).
-   * @param retryCount
-   * @param retryDelay
-   * @param retryDelayMax
-   * @param retryDelayFactor
-   * @emits {meta.deputy.created} - Emitted on construction with task and service details.
-   * @note Fallbacks via `.doOnFail` externally; timeouts managed by the engine.
+   * Constructs an instance of the class with the provided parameters, defining
+   * various configuration options and behaviors for the task.
+   *
+   * @param {string} name - The unique name of the task.
+   * @param {string} taskName - The specific name of the task.
+   * @param {string | undefined} serviceName - The associated service name. Defaults to undefined.
+   * @param {string} description - A brief description of the task. Defaults to an empty string.
+   * @param {DbOperationPayload} queryData - The data payload for database operations.
+   * @param {number} concurrency - The level of concurrency allowed. Defaults to 0.
+   * @param {number} timeout - The timeout duration in milliseconds. Defaults to 0.
+   * @param {boolean} register - A flag indicating whether to register the task. Defaults to true.
+   * @param {boolean} isUnique - Indicates if the task instance is unique. Defaults to false.
+   * @param {boolean} isMeta - Indicates if the task is meta. Defaults to false.
+   * @param {boolean} isSubMeta - Indicates if the task is a sub-meta task. Defaults to false.
+   * @param {boolean} isHidden - Indicates if the task is hidden. Defaults to false.
+   * @param {ThrottleTagGetter | undefined} getTagCallback - A callback used for throttling. Defaults to undefined.
+   * @param {SchemaDefinition | undefined} inputSchema - The schema definition for input validation. Defaults to undefined.
+   * @param {boolean} validateInputContext - Whether to validate the input context. Defaults to false.
+   * @param {SchemaDefinition | undefined} outputSchema - The schema definition for output validation. Defaults to undefined.
+   * @param {boolean} validateOutputContext - Whether to validate the output context. Defaults to false.
+   * @param {number} retryCount - The maximum number of retry attempts. Defaults to 0.
+   * @param {number} retryDelay - The delay between retries in milliseconds. Defaults to 0.
+   * @param {number} retryDelayMax - The maximum delay between retries in milliseconds. Defaults to 0.
+   * @param {number} retryDelayFactor - The factor for exponential backoff. Defaults to 1.
+   * @return {void}
    */
   constructor(
     name: string,
@@ -87,14 +92,13 @@ export default class DatabaseTask extends DeputyTask {
   }
 
   /**
-   * Triggers the database operation delegation flow via a signal to the meta-layer.
-   * @param context - The GraphContext containing execution data.
-   * @param emit
-   * @param progressCallback - Callback to update progress (invoked by meta-layer).
-   * @param nodeData
-   * @returns A Promise resolving with the task result or rejecting on error.
-   * @emits {meta.deputy.executed} - Emitted with context including queryData to initiate delegation.
-   * @note The resolution and progress are managed by ephemeral meta-tasks.
+   * Executes the specified task within the given context.
+   *
+   * @param {GraphContext} context - The execution context for the current task, which includes data and metadata required for processing.
+   * @param {(signal: string, ctx: AnyObject) => void} emit - A function used to send signals or events during task execution.
+   * @param {(progress: number) => void} progressCallback - A function to report execution progress as a percentage (0-100).
+   * @param {{ nodeId: string; routineExecId: string }} nodeData - An object containing identifiers for the current node and routine execution.
+   * @return {TaskResult} The result of the task execution.
    */
   execute(
     context: GraphContext,

@@ -10,6 +10,11 @@ import https from "node:https";
 import fetch from "node-fetch";
 import { isBrowser } from "../utils/environment";
 
+/**
+ * RestController class is responsible for managing RESTful interactions, including defining
+ * server configurations and handling client requests. It serves as a singleton, accessible via
+ * the `instance` property.
+ */
 export default class RestController {
   private static _instance: RestController;
   public static get instance(): RestController {
@@ -17,6 +22,16 @@ export default class RestController {
     return this._instance;
   }
 
+  /**
+   * Fetches data from the given URL with a specified timeout. This function performs
+   * a fetch request with the ability to cancel the request if it exceeds the provided timeout duration.
+   *
+   * @param {string} url - The URL to make the request to.
+   * @param {any} requestInit - The initialization object for the fetch request, which may include method, headers, and body.
+   * @param {number} timeoutMs - The maximum duration in milliseconds to wait for the fetch request to complete before aborting.
+   * @returns {Promise<any>} A promise that resolves to the parsed response data if the request is successful.
+   * @throws {Error} Throws an error if the request fails due to issues such as timeout or other unexpected errors.
+   */
   fetchDataWithTimeout = async function (
     url: string,
     requestInit: any,
@@ -48,6 +63,16 @@ export default class RestController {
     }
   };
 
+  /**
+   * Constructor for initializing the REST server and related configurations.
+   *
+   * This method configures and sets up the REST server tasks using Cadenza's meta-task system, defining certain endpoints
+   * like `/handshake`, `/delegation`, `/signal`, and `/status`. It also integrates security settings, CORS policies,
+   * and rate-limiting profiles (low, medium, high) based on the provided context. Furthermore, it starts the server and
+   * establishes necessary meta-handlings to enable delegated operations and signal processing.
+   *
+   * It initializes and configures the REST server tasks.
+   */
   constructor() {
     Cadenza.registry.getTaskByName.doOn(
       "meta.rest.delegation_requested",

@@ -33,6 +33,12 @@ export interface RemoteSignalDescriptor {
   __remoteServiceName: string;
 }
 
+/**
+ * The ServiceRegistry class is a singleton that manages the registration and lifecycle of
+ * service instances, deputies, and remote signals in a distributed service architecture.
+ * It handles various tasks such as instance updates, remote signal registration,
+ * service status synchronization, and error/event broadcasting.
+ */
 export default class ServiceRegistry {
   private static _instance: ServiceRegistry;
   public static get instance(): ServiceRegistry {
@@ -67,6 +73,15 @@ export default class ServiceRegistry {
   handleServiceNotRespondingTask: Task;
   handleServiceHandshakeTask: Task;
 
+  /**
+   * Initializes a private constructor for managing service instances, remote signals,
+   * service health, and handling updates or synchronization tasks. The constructor
+   * creates a variety of meta tasks that process different lifecycle events and
+   * service-related updates in a distributed service registry model.
+   *
+   * @return {Object} An instance of the constructed class with initialized tasks
+   *                  and state management necessary to process service-related events.
+   */
   private constructor() {
     this.handleInstanceUpdateTask = Cadenza.createMetaTask(
       "Handle Instance Update",
