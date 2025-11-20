@@ -1,3 +1,10 @@
+## [1.25.2](https://github.com/cadenzaio/cadenza-service/compare/v1.25.1...v1.25.2) (2025-11-20)
+
+
+### Bug Fixes
+
+* avoiding race error between signal emission and consumption. ([4d38f7f](https://github.com/cadenzaio/cadenza-service/commit/4d38f7fc43d8869127456a5ee5b3110009dd3e54))
+
 ## [1.25.1](https://github.com/cadenzaio/cadenza-service/compare/v1.25.0...v1.25.1) (2025-11-20)
 
 
