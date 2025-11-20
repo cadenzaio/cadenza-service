@@ -1,3 +1,15 @@
+# [1.25.0](https://github.com/cadenzaio/cadenza-service/compare/v1.24.7...v1.25.0) (2025-11-20)
+
+
+### Bug Fixes
+
+* regenerated docs ([8ecad1c](https://github.com/cadenzaio/cadenza-service/commit/8ecad1c35d749345b552ace0a239ee5d06bf4737))
+
+
+### Features
+
+* improved signal records. ([08c6431](https://github.com/cadenzaio/cadenza-service/commit/08c6431a75056cb388e114f41d11be43b3d6f3ad))
+
 ## [1.24.7](https://github.com/cadenzaio/cadenza-service/compare/v1.24.6...v1.24.7) (2025-11-18)
 
 
