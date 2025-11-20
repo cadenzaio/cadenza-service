@@ -1,3 +1,10 @@
+## [1.25.1](https://github.com/cadenzaio/cadenza-service/compare/v1.25.0...v1.25.1) (2025-11-20)
+
+
+### Bug Fixes
+
+* updated core package ([29488c8](https://github.com/cadenzaio/cadenza-service/commit/29488c89dec9dc482f472e4544629dc57ec9212a))
+
 # [1.25.0](https://github.com/cadenzaio/cadenza-service/compare/v1.24.7...v1.25.0) (2025-11-20)
 
 
