@@ -168,7 +168,7 @@ export default class SignalController {
       "",
       { isSubMeta: true, concurrency: 100 },
     )
-      .doOn(".*")
+      .doOn("sub_meta.signal_broker.emitting_signal")
       .emits("sub_meta.signal_controller.signal_emitted");
 
     Cadenza.createMetaTask(
