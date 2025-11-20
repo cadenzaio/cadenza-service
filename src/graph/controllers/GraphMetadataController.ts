@@ -196,7 +196,7 @@ export default class GraphMetadataController {
         },
       };
     })
-      .doOn("meta.runner.new_trace")
+      .doOn("meta.runner.new_trace", "sub_meta.signal_broker.new_trace")
       .emits("meta.graph_metadata.execution_trace_created");
 
     Cadenza.createMetaTask(

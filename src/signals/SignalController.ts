@@ -149,12 +149,16 @@ export default class SignalController {
 
         return {
           data: {
+            uuid: signalEmission.uuid,
             signal_name: signalEmission.signalName,
+            signal_tag: signalEmission.signalTag,
             task_name: signalEmission.taskName,
             task_version: signalEmission.taskVersion,
             task_execution_id: signalEmission.taskExecutionId,
             is_meta: signalEmission.isMeta,
             is_metric: signalEmission.isMetric ?? false,
+            routine_execution_id: signalEmission.routineExecutionId,
+            execution_trace_id: signalEmission.executionTraceId,
             data: ctx,
             service_name: Cadenza.serviceRegistry.serviceName,
             service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
