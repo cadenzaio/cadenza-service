@@ -1,3 +1,10 @@
+## [1.25.6](https://github.com/cadenzaio/cadenza-service/compare/v1.25.5...v1.25.6) (2025-11-21)
+
+
+### Bug Fixes
+
+* fixed signal broker instability. ([6ebce02](https://github.com/cadenzaio/cadenza-service/commit/6ebce022b2bbacc8d6e6777092db2c331fc5c887))
+
 ## [1.25.5](https://github.com/cadenzaio/cadenza-service/compare/v1.25.4...v1.25.5) (2025-11-21)
 
 
