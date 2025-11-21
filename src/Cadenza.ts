@@ -424,6 +424,7 @@ export default class CadenzaService {
    * Creates and configures a signal transmission task that handles the transmission
    * of a specified signal to a target service with a set of customizable options.
    * This is only used for internal purposes and is not exposed to the business logic layer.
+   * Signal transmission is throttled by execution trace id to ensure the transmission and reception order is preserved.
    *
    * @param {string} signalName - The name of the signal to be transmitted.
    * @param {string} serviceName - The name of the target service to transmit the signal to.
@@ -440,7 +441,7 @@ export default class CadenzaService {
     Cadenza.validateName(serviceName);
 
     options = {
-      concurrency: 0,
+      concurrency: 1,
       timeout: 0,
       register: true,
       isUnique: false,
@@ -460,6 +461,11 @@ export default class CadenzaService {
     };
 
     options.isMeta = true;
+    options.concurrency = 1;
+    options.getTagCallback = (context?: AnyObject) =>
+      context?.__metadata?.__executionTraceId ??
+      context?.__executionTraceId ??
+      "default";
 
     const name = `Transmission of signal: ${signalName}`;
     return new SignalTransmissionTask(
