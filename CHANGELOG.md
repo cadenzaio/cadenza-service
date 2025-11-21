@@ -1,3 +1,10 @@
+## [1.25.5](https://github.com/cadenzaio/cadenza-service/compare/v1.25.4...v1.25.5) (2025-11-21)
+
+
+### Bug Fixes
+
+* fixed uncached error in socket. ([f2626b7](https://github.com/cadenzaio/cadenza-service/commit/f2626b776c104c9196bc23ae0d8bce7300ca7a40))
+
 ## [1.25.4](https://github.com/cadenzaio/cadenza-service/compare/v1.25.3...v1.25.4) (2025-11-21)
 
 
