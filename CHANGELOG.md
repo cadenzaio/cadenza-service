@@ -1,3 +1,10 @@
+## [1.25.3](https://github.com/cadenzaio/cadenza-service/compare/v1.25.2...v1.25.3) (2025-11-20)
+
+
+### Bug Fixes
+
+* fixed signal bug. ([8cf9215](https://github.com/cadenzaio/cadenza-service/commit/8cf9215ef8a8dad6809e67d6c24300b78d9acceb))
+
 ## [1.25.2](https://github.com/cadenzaio/cadenza-service/compare/v1.25.1...v1.25.2) (2025-11-20)
 
 
