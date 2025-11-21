@@ -1,3 +1,10 @@
+## [1.25.7](https://github.com/cadenzaio/cadenza-service/compare/v1.25.6...v1.25.7) (2025-11-21)
+
+
+### Bug Fixes
+
+* reverted throttling of signal transmission. ([a9ccbaa](https://github.com/cadenzaio/cadenza-service/commit/a9ccbaa13191d145d0850c27dd152cb1857c13d3))
+
 ## [1.25.6](https://github.com/cadenzaio/cadenza-service/compare/v1.25.5...v1.25.6) (2025-11-21)
 
 
