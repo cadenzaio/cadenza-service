@@ -346,7 +346,7 @@ export default class SocketController {
           timeoutMs: number = 20_000,
           ack?: (response: T) => void,
         ): Promise<T> => {
-          return new Promise((resolve, reject) => {
+          return new Promise((resolve) => {
             const tryEmit = () => {
               if (!socket.connected) {
                 // should never happen because we await connect below, but safety net
@@ -362,7 +362,15 @@ export default class SocketController {
                     { ...data, socketId: socket.id, serviceName, URL },
                     "error",
                   );
-                  reject(new Error(`${event} timed out`));
+                  resolve({
+                    ...data,
+                    errored: true,
+                    __error: `Socket event '${event}' timed out`,
+                    error: `Socket event '${event}' timed out`,
+                    socketId: socket.id,
+                    serviceName,
+                    URL,
+                  });
                 }, timeoutMs);
               }
 
