@@ -1,3 +1,10 @@
+## [1.25.4](https://github.com/cadenzaio/cadenza-service/compare/v1.25.3...v1.25.4) (2025-11-21)
+
+
+### Bug Fixes
+
+* made signal transmission throttle by execution trace. ([8f2f2c7](https://github.com/cadenzaio/cadenza-service/commit/8f2f2c71308501d131371472a9f2eb20872b61a1))
+
 ## [1.25.3](https://github.com/cadenzaio/cadenza-service/compare/v1.25.2...v1.25.3) (2025-11-20)
 
 
