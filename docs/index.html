@@ -1,0 +1,144 @@
+<!DOCTYPE html><html class="default" lang="en" data-base="./"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>Cadenza Documentation</title><meta name="description" content="Documentation for Cadenza Documentation"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="assets/style.css"/><link rel="stylesheet" href="assets/highlight.css"/><script defer src="assets/main.js"></script><script async src="assets/icons.js" id="tsd-icons-script"></script><script async src="assets/search.js" id="tsd-search-script"></script><script async src="assets/navigation.js" id="tsd-nav-script"></script><script async src="assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar"><div class="tsd-toolbar-contents container"><a href="index.html" class="title">Cadenza Documentation</a><div id="tsd-toolbar-links"></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/><ul role="listbox" id="tsd-search-results"></ul><div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div></dialog><a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-menu"></use></svg></a></div></header><div class="container container-main"><div class="col-content"><div class="tsd-page-title"><h1>Cadenza Documentation</h1></div><div class="tsd-panel tsd-typography"><h1 id="cadenza-service" class="tsd-anchor-link">Cadenza Service<a href="#cadenza-service" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h1><h2 id="overview" class="tsd-anchor-link">Overview<a href="#overview" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>Cadenza is an innovative framework that extends traditional orchestration with event-driven choreography, providing &quot;structured freedom&quot; for building distributed, self-evolving systems.</p>
+<p>The core package (@Cadenza.io/core) includes the foundational primitives for defining and executing graphs of tasks, managing contexts, handling signals, and bootstrapping executions. It's designed to be language-agnostic in model, with this TypeScript implementation serving as the reference.</p>
+<p>Cadenza's design philosophy emphasizes:</p>
+<ul>
+<li><strong>Decentralized Adaptive Orchestration (DAO)</strong>: Explicit graphs for dependencies (orchestration) combined with signals for loose coupling (choreography). This combination allows for flexible and dynamic workflows, while still maintaining the benefits of traditional orchestration.</li>
+<li><strong>Meta-Layer Extension</strong>: A self-reflective layer for monitoring, optimization, and auto-generation, enabling AI-driven self-development. Essentially used for extending the core features by using the core features.</li>
+<li><strong>Introspectability</strong>: Exportable graphs, traceable executions, and metadata separation for transparency and debugging.</li>
+<li><strong>Modularity</strong>: Lightweight core with extensions (e.g., distribution, UI integration) as separate packages using the meta layer.</li>
+</ul>
+<p>This repository (@Cadenza.io/service) is an extension of the core package, providing the infrastructure for making the Cadenza model truly distributed. It makes use of the core meta-layer extension, and provides a set of tools for building distributed applications, abstracting complexities like networking and security.</p>
+<p>The service package provides everything in the core package plus the following:</p>
+<ul>
+<li><strong>Service Extension</strong>: A Service exposes the local graphs and signals to other Services in the system and enables them to interact with tasks and signals across other Services in the system via socket and/or REST.</li>
+<li><strong>Database Service Extension</strong>: A Database Service takes a schema and auto generates the necessary tasks and signals to interact with that database using the cadenza model. It exposes those tasks using by creating a Service.</li>
+<li><strong>CadenzaDB compatibility</strong>: A service can connect to the official CadenzaDB service and will automatically sync realtime data for introspection and visualization.</li>
+</ul>
+<p>There is no need to install the core package separately. Instead, install the service package, which includes everything in the core package plus the distributed extensions.</p>
+<h2 id="installation" class="tsd-anchor-link">Installation<a href="#installation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>Install the service package via npm:</p>
+<pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span><span class="hl-1"> </span><span class="hl-2">@cadenza.io/service</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="usage" class="tsd-anchor-link">Usage<a href="#usage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="creating-a-service" class="tsd-anchor-link">Creating a service<a href="#creating-a-service" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>Creating a Service will create a REST server and a socket server. It will sync with the CadenzaDB service if available.</p>
+<pre><code class="typescript"><span class="hl-3">import</span><span class="hl-1"> </span><span class="hl-4">Cadenza</span><span class="hl-1"> </span><span class="hl-3">from</span><span class="hl-1"> </span><span class="hl-2">&#39;@cadenza.io/service&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-4">Cadenza</span><span class="hl-1">.</span><span class="hl-0">createCadenzaService</span><span class="hl-1">(</span><span class="hl-2">&#39;MyService&#39;</span><span class="hl-1">); </span><span class="hl-5">// Name should start with an uppercase letter and contain no spaces.</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="working-with-distribution" class="tsd-anchor-link">Working with distribution<a href="#working-with-distribution" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>Distribution is easy with Cadenza. You can delegate the flow by using a DeputyTask, or subscribe to foreign signals by prefixing them with the service name.</p>
+<pre><code class="typescript"><span class="hl-5">// Creates a proxy Task for the specified task or routine on the specified service. </span><br/><span class="hl-5">// The local flow will await the result of the remote flow.</span><br/><span class="hl-4">Cadenza</span><span class="hl-1">.</span><span class="hl-0">createDeputyTask</span><span class="hl-1">(</span><span class="hl-2">&#39;Process context&#39;</span><span class="hl-1">, </span><span class="hl-2">&#39;ContextService&#39;</span><span class="hl-1">);</span><br/><br/><span class="hl-5">// This will subscribe to the signal on the remote service.</span><br/><span class="hl-4">localTask</span><span class="hl-1">.</span><span class="hl-0">doOn</span><span class="hl-1">(</span><span class="hl-2">&#39;ContextService.process.failed&#39;</span><span class="hl-1">);</span>
+</code><button type="button">Copy</button></pre>
+
+<p>For full examples, see this repository or the test suite.</p>
+<h2 id="features" class="tsd-anchor-link">Features<a href="#features" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ul>
+<li>
+<p><strong>Service-based Distribution</strong>: Allows services to expose local graphs and signals to interact with other services in
+a system. Enables tasks and signals to be distributed and executed across multiple services.</p>
+</li>
+<li>
+<p><strong>Socket and REST Integration</strong>: Provides built-in communication layers via sockets and REST APIs to facilitate
+seamless interaction among distributed services.</p>
+</li>
+<li>
+<p><strong>Database Service Extension</strong>: Automatically generates tasks and signals for interacting with a database schema,
+making it easy to extend database functionality within the Cadenza model.</p>
+</li>
+<li>
+<p><strong>CadenzaDB Compatibility</strong>: Supports real-time synchronization with the CadenzaDB service for introspection,
+visualization, and monitoring.</p>
+</li>
+<li>
+<p><strong>Meta-Layer Extension</strong>: A self-reflective layer for monitoring, optimization, and auto-generation, enabling advanced
+AI-driven self-development capabilities.</p>
+</li>
+<li>
+<p><strong>Modularity</strong>: A lightweight core architecture allows for adding extensions (e.g., distribution and UI integration)
+without affecting the core functionality.</p>
+</li>
+<li>
+<p><strong>Introspectability</strong>: Built-in tools to export graphs, trace executions, and separate metadata provide transparency
+and debugging support.</p>
+</li>
+<li>
+<p><strong>Developer-friendly Design</strong>: Focuses on ease of use with intuitive APIs, clear structure, and support for rapid
+development of distributed applications.</p>
+</li>
+</ul>
+<h2 id="architecture-overview" class="tsd-anchor-link">Architecture Overview<a href="#architecture-overview" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>Cadenza's service package is divided into:</p>
+<h2 id="architecture-overview-1" class="tsd-anchor-link">Architecture Overview<a href="#architecture-overview-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>Cadenza's service package is divided into:</p>
+<ol>
+<li>
+<p><strong>Core Layer</strong>:</p>
+<ul>
+<li>Provides the foundational primitives for defining tasks, managing contexts, handling signals, and executing
+workflows.</li>
+<li>Implements the Decentralized Adaptive Orchestration (DAO) model to enable flexible yet structured workflows.</li>
+<li>Acts as the base for all other layers and extensions, ensuring modularity.</li>
+</ul>
+</li>
+<li>
+<p><strong>Service Layer</strong>:</p>
+<ul>
+<li>Extends the core layer to facilitate distributed orchestration.</li>
+<li>Exposes local tasks and signals via REST APIs and socket-based communication.</li>
+<li>Enables services to interact with and delegate tasks between each other, creating a networked system of
+distributed services.</li>
+</ul>
+</li>
+<li>
+<p><strong>Database Service Layer</strong>:</p>
+<ul>
+<li>Provides tools for integrating and managing database interactions using the Cadenza model.</li>
+<li>Automatically generates tasks and signals based on a given schema, simplifying database operations.</li>
+<li>Supports CadenzaDB for real-time synchronization, introspection, and visualization of database interactions.</li>
+</ul>
+</li>
+<li>
+<p><strong>Meta-Layer</strong>:</p>
+<ul>
+<li>Offers a self-reflective extension for monitoring, optimization, and AI-driven self-development.</li>
+<li>Enables introspection by exporting graphs, tracing executions, and separating metadata for improved debugging and
+transparency.</li>
+<li>Facilitates the creation of new extensions by leveraging the core features in a modular architecture.</li>
+</ul>
+</li>
+<li>
+<p><strong>Networking Layer</strong>:</p>
+<ul>
+<li>Handles the communication between distributed services using sockets and REST APIs.</li>
+<li>Abstracts complexities of networking, providing a seamless interaction layer.</li>
+<li>Ensures secure and performant data flow across distributed components.</li>
+</ul>
+</li>
+<li>
+<p><strong>Integration Layer</strong>:</p>
+<ul>
+<li>Supports integration with external tools like CadenzaDB for real-time introspection and a UI for visualization.</li>
+<li>Provides features for extending the ecosystem with custom plugins and modules.</li>
+</ul>
+</li>
+<li>
+<p><strong>Developer Utilities</strong>:</p>
+<ul>
+<li>Supplies developer-friendly utilities such as tools for debugging, tracing, and exporting execution graphs.</li>
+<li>Ensures fast and intuitive development with simple APIs and a lightweight modular design.</li>
+</ul>
+</li>
+</ol>
+<h2 id="contributing" class="tsd-anchor-link">Contributing<a href="#contributing" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>Contributions are welcome! Please fork the repo, create a branch, and submit a PR. Follow the code style and add tests for new features.</p>
+<h2 id="license" class="tsd-anchor-link">License<a href="#license" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>MIT License</p>
+<p>Copyright (c) 2025 <a href="http://Cadenza.io">Cadenza.io</a></p>
+<p>Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:</p>
+<p>The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.</p>
+<p>THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</p>
+</div></div><div class="col-sidebar"><div class="page-menu"><div class="tsd-navigation settings"><details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>Settings</h3></summary><div class="tsd-accordion-details"><div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span><ul id="tsd-filter-options"><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-protected" name="protected"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Protected</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div><div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div><details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>On This Page</h3></summary><div class="tsd-accordion-details"><a href="#cadenza-service"><span>Cadenza <wbr/>Service</span></a><ul><li><a href="#overview"><span>Overview</span></a></li><li><a href="#installation"><span>Installation</span></a></li><li><a href="#usage"><span>Usage</span></a></li><li><ul><li><a href="#creating-a-service"><span>Creating a service</span></a></li><li><a href="#working-with-distribution"><span>Working with distribution</span></a></li></ul></li><li><a href="#features"><span>Features</span></a></li><li><a href="#architecture-overview"><span>Architecture <wbr/>Overview</span></a></li><li><a href="#architecture-overview-1"><span>Architecture <wbr/>Overview</span></a></li><li><a href="#contributing"><span>Contributing</span></a></li><li><a href="#license"><span>License</span></a></li></ul></div></details></div><div class="site-menu"><nav class="tsd-navigation"><a href="modules.html">Cadenza Documentation</a><ul class="tsd-small-nested-navigation" id="tsd-nav-container"><li>Loading...</li></ul></nav></div></div></div><footer><p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer><div class="overlay"></div></body></html>
