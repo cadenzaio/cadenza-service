@@ -1,3 +1,10 @@
+## [1.26.1](https://github.com/cadenzaio/cadenza-service/compare/v1.26.0...v1.26.1) (2025-11-27)
+
+
+### Bug Fixes
+
+* fixed infinite loop. ([4a0cdac](https://github.com/cadenzaio/cadenza-service/commit/4a0cdac8311605bd8da9b3ba22e6356b9afab4ea))
+
 # [1.26.0](https://github.com/cadenzaio/cadenza-service/compare/v1.25.8...v1.26.0) (2025-11-27)
 
 
