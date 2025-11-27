@@ -1,3 +1,10 @@
+# [1.26.0](https://github.com/cadenzaio/cadenza-service/compare/v1.25.8...v1.26.0) (2025-11-27)
+
+
+### Features
+
+* Added queryData to custom database trigger signals. ([55dacde](https://github.com/cadenzaio/cadenza-service/commit/55dacde8ad655fdc9e7b127002616ae8717e6dcb))
+
 ## [1.25.8](https://github.com/cadenzaio/cadenza-service/compare/v1.25.7...v1.25.8) (2025-11-21)
 
 
