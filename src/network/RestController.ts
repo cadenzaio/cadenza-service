@@ -229,7 +229,10 @@ export default class RestController {
                 Cadenza.createEphemeralMetaTask(
                   "Resolve delegation",
                   (endCtx) => {
-                    console.log("Resolve Rest delegation", endCtx);
+                    console.log(
+                      "Resolve Rest delegation",
+                      endCtx.errored ? endCtx : "",
+                    );
                     const metadata = endCtx.__metadata;
                     delete endCtx.__metadata;
                     res.json({
