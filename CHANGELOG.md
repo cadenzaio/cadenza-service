@@ -1,3 +1,10 @@
+## [1.26.3](https://github.com/cadenzaio/cadenza-service/compare/v1.26.2...v1.26.3) (2025-11-27)
+
+
+### Bug Fixes
+
+* Fixed sync when there is no CadenzaDB connection. ([1e5269e](https://github.com/cadenzaio/cadenza-service/commit/1e5269ef2c10bf1ea04c30869af907147fe67d9e))
+
 ## [1.26.2](https://github.com/cadenzaio/cadenza-service/compare/v1.26.1...v1.26.2) (2025-11-27)
 
 
