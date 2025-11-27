@@ -22,9 +22,9 @@ export default class GraphSyncController {
     this.splitRoutinesTask = Cadenza.createMetaTask(
       "Split routines for registration",
       (ctx, emit) => {
-        const { __routines } = ctx;
-        if (!__routines) return;
-        for (const routine of __routines) {
+        const { routines } = ctx;
+        if (!routines) return;
+        for (const routine of routines) {
           if (routine.registered) continue;
           routine.registered = true;
           emit("meta.sync_controller.routine_added", {
@@ -119,7 +119,7 @@ export default class GraphSyncController {
     this.splitTasksForRegistration = Cadenza.createMetaTask(
       "Split tasks for registration",
       function* (ctx) {
-        const tasks = ctx.__tasks;
+        const tasks = ctx.tasks;
         for (const task of tasks) {
           if (task.registered) continue;
           const { __functionString, __getTagCallback } = task.export();
@@ -181,7 +181,7 @@ export default class GraphSyncController {
     this.registerSignalToTaskMapTask = Cadenza.createMetaTask(
       "Split observed signals of task",
       function* (ctx) {
-        const task = ctx.__task;
+        const task = ctx.task;
         if (task.hidden || !task.register) return;
 
         for (const signal of task.observedSignals) {
@@ -232,7 +232,7 @@ export default class GraphSyncController {
     this.registerTaskToSignalMapTask = Cadenza.createMetaTask(
       "Split emitted signals of task",
       function* (ctx) {
-        const task = ctx.__task;
+        const task = ctx.task;
         if (task.hidden || !task.register) return;
 
         for (const signal of task.signalsToEmitAfter) {
@@ -280,7 +280,7 @@ export default class GraphSyncController {
     this.registerTaskMapTask = Cadenza.createMetaTask(
       "Register task map to DB",
       function* (ctx) {
-        const task = ctx.__task;
+        const task = ctx.task;
         if (task.hidden || !task.register) return;
 
         for (const t of task.nextTasks) {
@@ -324,7 +324,7 @@ export default class GraphSyncController {
     this.registerDeputyRelationshipTask = Cadenza.createMetaTask(
       "Register deputy relationship",
       (ctx) => {
-        const task = ctx.__task;
+        const task = ctx.task;
         if (task.hidden || !task.register) return;
 
         if (task.isDeputy && !task.signalName) {

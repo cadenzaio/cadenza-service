@@ -46,7 +46,7 @@ export default class SocketController {
             return;
           }
 
-          const server = new Server(ctx.__httpsServer ?? ctx.__httpServer, {
+          const server = new Server(ctx.httpsServer ?? ctx.httpServer, {
             pingInterval: 30_000,
             pingTimeout: 20_000,
             maxHttpBufferSize: 1e7, // 10MB large payloads

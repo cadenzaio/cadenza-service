@@ -336,7 +336,7 @@ export default class RestController {
                   const createHttpServer = async (ctx: any) => {
                     await new Promise((resolve, reject) => {
                       const server = http.createServer(ctx.__app);
-                      ctx.__httpServer = server;
+                      ctx.httpServer = server;
                       server.listen(ctx.__port, () => {
                         if (typeof server?.address() === "string") {
                           address = server.address() as string;
@@ -387,7 +387,7 @@ export default class RestController {
                         options,
                         ctx.__app,
                       );
-                      ctx.__httpsServer = httpsServer;
+                      ctx.httpsServer = httpsServer;
                       ctx.__port = 443;
                       port = 443;
                       httpsServer.listen(443, () => {
