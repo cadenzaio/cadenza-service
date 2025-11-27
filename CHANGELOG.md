@@ -1,3 +1,10 @@
+## [1.26.2](https://github.com/cadenzaio/cadenza-service/compare/v1.26.1...v1.26.2) (2025-11-27)
+
+
+### Bug Fixes
+
+* removed unnecessary underscores to avoid transmission of critical data. ([ee31fa0](https://github.com/cadenzaio/cadenza-service/commit/ee31fa0ec9c48aa30db40e257fa7681370c1f56b))
+
 ## [1.26.1](https://github.com/cadenzaio/cadenza-service/compare/v1.26.0...v1.26.1) (2025-11-27)
 
 
