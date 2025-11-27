@@ -1,4 +1,5 @@
 import type { AnyObject } from "@cadenza.io/core";
+import { DbOperationPayload } from "./queryData";
 
 export type SchemaType =
   | "varchar"
@@ -103,7 +104,11 @@ export interface TableDefinition {
     triggers?: {
       [key in DbOperationType]?: (
         | string
-        | { signal: string; condition?: (ctx: AnyObject) => boolean }
+        | {
+            signal: string;
+            condition?: (ctx: AnyObject) => boolean;
+            queryData?: DbOperationPayload;
+          }
       )[];
     }; // Signals to observe before action
     emissions?: {

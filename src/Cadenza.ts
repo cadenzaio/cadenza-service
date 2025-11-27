@@ -205,6 +205,31 @@ export default class CadenzaService {
     this.runner?.run(task, context);
   }
 
+  public static schedule(
+    taskName: string,
+    context: AnyObject,
+    timeoutMs: number,
+    exactDateTime?: Date,
+  ) {
+    this.broker?.schedule(taskName, context, timeoutMs, exactDateTime);
+  }
+
+  public static throttle(
+    taskName: string,
+    context: AnyObject,
+    intervalMs: number,
+    leading = false,
+    startDateTime?: Date,
+  ) {
+    this.broker?.throttle(
+      taskName,
+      context,
+      intervalMs,
+      leading,
+      startDateTime,
+    );
+  }
+
   /**
    * Logs a message with a specified log level and additional contextual data.
    * Records in the CadenzaDB when available.
@@ -245,6 +270,10 @@ export default class CadenzaService {
         created: formatTimestamp(Date.now()),
       },
     });
+  }
+
+  public static get(taskName: string): Task | undefined {
+    return Cadenza.get(taskName);
   }
 
   /**
@@ -790,10 +819,6 @@ export default class CadenzaService {
       GraphMetadataController.instance;
       GraphSyncController.instance;
       this.broker.schedule("meta.sync_requested", {}, 2000);
-
-      if (options.cadenzaDB?.connect) {
-        this.broker.throttle("meta.sync_requested", {}, 300000);
-      }
 
       this.log("Service created.");
 

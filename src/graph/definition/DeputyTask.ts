@@ -21,6 +21,8 @@ export default class DeputyTask extends Task {
   protected readonly remoteRoutineName: string;
   protected serviceName: string | undefined;
 
+  registeredDeputyMap: boolean = false;
+
   /**
    * Constructs a new instance of the class with the specified parameters.
    *

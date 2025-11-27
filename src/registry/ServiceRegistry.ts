@@ -340,12 +340,23 @@ export default class ServiceRegistry {
           "Split service instances",
           function* (ctx: AnyObject) {
             const { serviceInstances } = ctx;
-            if (!serviceInstances) return;
+            if (!serviceInstances) {
+              Cadenza.log(
+                "SyncFailed: No service instances found",
+                ctx,
+                "error",
+              );
+            }
             for (const serviceInstance of serviceInstances) {
               yield { serviceInstance };
             }
           },
-        ).then(this.handleInstanceUpdateTask),
+        )
+          .then(this.handleInstanceUpdateTask)
+          .doOn(
+            "meta.cadenza_db.gathered_sync_data",
+            "CadenzaDB.meta.cadenza_db.gathered_sync_data",
+          ),
       );
 
     this.getInstanceById = Cadenza.createMetaTask(

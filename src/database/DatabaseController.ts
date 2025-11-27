@@ -1296,19 +1296,39 @@ export default class DatabaseController {
     Cadenza.createThrottledTask(
       taskName,
       async (context: AnyObject, emit: any) => {
-        const triggerConditions: any | undefined =
-          table.customSignals?.triggers?.query?.filter(
-            (trigger: any) => trigger.condition,
-          );
-        for (const triggerCondition of triggerConditions ?? []) {
-          if (
-            triggerCondition.condition &&
-            !triggerCondition.condition(context)
-          ) {
-            return {
-              failed: true,
-              error: `Condition for signal trigger failed: ${triggerCondition.signal}`,
-            };
+        for (const action of Object.keys(table.customSignals?.triggers ?? {})) {
+          const triggerConditions: any | undefined = // @ts-ignore
+            table.customSignals?.triggers?.[action].filter(
+              (trigger: any) => trigger.condition,
+            );
+          for (const triggerCondition of triggerConditions ?? []) {
+            if (
+              triggerCondition.condition &&
+              !triggerCondition.condition(context)
+            ) {
+              return {
+                failed: true,
+                error: `Condition for signal trigger failed: ${triggerCondition.signal}`,
+              };
+            }
+          }
+
+          const triggerQueryData: any | undefined = // @ts-ignore
+            table.customSignals?.triggers?.[action].filter(
+              (trigger: any) => trigger.queryData,
+            );
+          for (const queryData of triggerQueryData ?? []) {
+            if (context.queryData) {
+              context.queryData = {
+                ...context.queryData,
+                ...queryData,
+              };
+            } else {
+              context = {
+                ...context,
+                ...queryData,
+              };
+            }
           }
         }
 
