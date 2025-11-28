@@ -1174,7 +1174,7 @@ export default class DatabaseController {
       ) {
         const subOp = value as SubOperation;
         const subResult = await this.executeSubOperation(subOp);
-        resolved[key] = subResult[subOp.return || "full"] ?? subResult;
+        resolved[key] = subResult[subOp.return || "uuid"] ?? subResult;
       } else if (
         typeof value === "string" &&
         ["increment", "decrement", "set"].includes(value)
@@ -1209,12 +1209,10 @@ export default class DatabaseController {
           resolvedData,
         )
           .map((_, i) => `$${i + 1}`)
-          .join(
-            ", ",
-          )}) ON CONFLICT DO NOTHING RETURNING ${op.return === "uuid" ? "uuid" : "*"}`;
+          .join(", ")}) ON CONFLICT DO NOTHING RETURNING ${op.return ?? "*"}`;
         result = await client.query(sql, Object.values(resolvedData));
         result = result.rows[0];
-        if (!result && op.return === "uuid") {
+        if (!result) {
           result = resolvedData.uuid ? { uuid: resolvedData.uuid } : undefined;
         }
       } else if (op.subOperation === "query") {

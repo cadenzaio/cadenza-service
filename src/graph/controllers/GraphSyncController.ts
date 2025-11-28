@@ -215,9 +215,24 @@ export default class GraphSyncController {
 
           if (task.registeredSignals.has(_signal)) continue;
 
+          const { isMeta, sourceServiceName, domain, action } =
+            decomposeSignalName(_signal);
+
           yield {
             data: {
-              signalName: _signal,
+              signalName: {
+                subOperation: "insert",
+                table: "signal_registry",
+                data: {
+                  name: _signal,
+                  service_name: Cadenza.serviceRegistry.serviceName,
+                  is_meta: isMeta,
+                  source_service_name: sourceServiceName,
+                  domain,
+                  action,
+                },
+                return: "name",
+              },
               taskName: task.name,
               taskVersion: task.version,
               taskServiceName: Cadenza.serviceRegistry.serviceName,
