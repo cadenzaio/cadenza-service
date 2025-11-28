@@ -1211,6 +1211,13 @@ export default class DatabaseController {
           .map((_, i) => `$${i + 1}`)
           .join(", ")}) ON CONFLICT DO NOTHING RETURNING ${op.return ?? "*"}`;
         result = await client.query(sql, Object.values(resolvedData));
+        console.log(
+          "sub operation",
+          sql,
+          Object.values(resolvedData),
+          result.rows,
+          op.return,
+        );
         result = result.rows[0];
         if (!result) {
           result = resolvedData.uuid ? { uuid: resolvedData.uuid } : undefined;
