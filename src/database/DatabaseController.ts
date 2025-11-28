@@ -1,8 +1,8 @@
 import {
   DbOperationType,
-  SchemaDefinition,
-  SCHEMA_TYPES,
   FieldDefinition,
+  SCHEMA_TYPES,
+  SchemaDefinition,
   TableDefinition,
 } from "../types/database";
 import Cadenza, { DatabaseOptions, ServerOptions } from "../Cadenza";
@@ -14,7 +14,6 @@ import {
   JoinDefinition,
   SubOperation,
 } from "../types/queryData";
-import { sleep } from "../utils/promise";
 
 /**
  * DatabaseController is a singleton class that manages database connections,
@@ -1173,8 +1172,7 @@ export default class DatabaseController {
         "subOperation" in value
       ) {
         const subOp = value as SubOperation;
-        const subResult = await this.executeSubOperation(subOp);
-        resolved[key] = subResult[subOp.return || "uuid"] ?? subResult;
+        resolved[key] = await this.executeSubOperation(subOp);
       } else if (
         typeof value === "string" &&
         ["increment", "decrement", "set"].includes(value)
@@ -1211,6 +1209,13 @@ export default class DatabaseController {
           .map((_, i) => `$${i + 1}`)
           .join(", ")}) ON CONFLICT DO NOTHING RETURNING ${op.return ?? "*"}`;
         result = await client.query(sql, Object.values(resolvedData));
+        result = result.rows[0]?.[op.return ?? "uuid"];
+        if (!result) {
+          result =
+            op.return && op.return in resolvedData
+              ? resolvedData[op.return]
+              : resolvedData["uuid"];
+        }
         console.log(
           "sub operation",
           sql,
@@ -1218,15 +1223,13 @@ export default class DatabaseController {
           result,
           op.return,
         );
-        result = result.rows[0];
-        if (!result) {
-          result = resolvedData.uuid ? { uuid: resolvedData.uuid } : undefined;
-        }
       } else if (op.subOperation === "query") {
         const params: any[] = [];
         const whereClause = this.buildWhereClause(op.filter || {}, params);
         const sql = `SELECT ${op.fields?.join(", ") || "*"} FROM ${op.table} ${whereClause} LIMIT 1`;
-        result = (await client.query(sql, params)).rows[0];
+        result = (await client.query(sql, params)).rows[0]?.[
+          op.return ?? "uuid"
+        ];
       }
       await client.query("COMMIT");
       return result || {};

@@ -270,13 +270,15 @@ export default class GraphSyncController {
         const task = ctx.task;
         if (task.hidden || !task.register) return;
 
-        for (const signal of task.signalsToEmitAfter) {
-          if (task.registeredSignals.has(signal)) continue;
-
+        for (const signal of task.emitsSignals) {
           const _signal = signal.split(":")[0];
+
+          if (task.registeredSignals.has(_signal)) continue;
 
           const { isMeta, sourceServiceName, domain, action } =
             decomposeSignalName(_signal);
+
+          const isOnFail = task.signalsToEmitOnFail.has(signal);
 
           yield {
             data: {
@@ -296,37 +298,7 @@ export default class GraphSyncController {
               taskName: task.name,
               taskVersion: task.version,
               serviceName: Cadenza.serviceRegistry.serviceName,
-            },
-            signalName: signal,
-            __name: task.name,
-          };
-        }
-
-        for (const signal of task.signalsToEmitOnFail) {
-          if (task.registeredSignals.has(signal)) continue;
-
-          const { isMeta, sourceServiceName, domain, action } =
-            decomposeSignalName(signal);
-
-          yield {
-            data: {
-              signalName: {
-                subOperation: "insert",
-                table: "signal_registry",
-                data: {
-                  name: signal,
-                  service_name: Cadenza.serviceRegistry.serviceName,
-                  is_meta: isMeta,
-                  source_service_name: sourceServiceName,
-                  domain,
-                  action,
-                },
-                return: "name",
-              },
-              taskName: task.name,
-              taskVersion: task.version,
-              serviceName: Cadenza.serviceRegistry.serviceName,
-              isOnFail: true,
+              isOnFail,
             },
             signalName: signal,
             __name: task.name,
