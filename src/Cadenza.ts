@@ -818,7 +818,7 @@ export default class CadenzaService {
     this.createEphemeralMetaTask("Handle service setup completion", () => {
       GraphMetadataController.instance;
       GraphSyncController.instance.isCadenzaDBReady =
-        options.cadenzaDB?.connect ?? false;
+        !!options.cadenzaDB?.connect;
       this.broker.schedule("meta.sync_requested", {}, 2000);
 
       this.log("Service created.");
