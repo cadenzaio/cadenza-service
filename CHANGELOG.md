@@ -1,3 +1,10 @@
+## [1.27.4](https://github.com/cadenzaio/cadenza-service/compare/v1.27.3...v1.27.4) (2025-11-28)
+
+
+### Bug Fixes
+
+* debugging signal registration and transmission. ([2f85c96](https://github.com/cadenzaio/cadenza-service/commit/2f85c96f6aa5ecbad1ce6c2809ae3c5da7f41c3c))
+
 ## [1.27.3](https://github.com/cadenzaio/cadenza-service/compare/v1.27.2...v1.27.3) (2025-11-28)
 
 
