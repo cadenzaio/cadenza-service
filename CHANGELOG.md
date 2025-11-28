@@ -1,3 +1,10 @@
+## [1.26.8](https://github.com/cadenzaio/cadenza-service/compare/v1.26.7...v1.26.8) (2025-11-28)
+
+
+### Bug Fixes
+
+* Fixed sync logic. ([5b6e18d](https://github.com/cadenzaio/cadenza-service/commit/5b6e18d8da5fda5b09458424f2beb914b243b355))
+
 ## [1.26.7](https://github.com/cadenzaio/cadenza-service/compare/v1.26.6...v1.26.7) (2025-11-28)
 
 
