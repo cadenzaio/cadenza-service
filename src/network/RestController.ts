@@ -276,7 +276,6 @@ export default class RestController {
                 let ctx;
                 try {
                   ctx = req.body;
-                  console.log("SIGNAL RECEIVED", ctx.__signalName);
                   if (
                     !Cadenza.broker
                       .listObservedSignals()

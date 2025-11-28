@@ -162,7 +162,7 @@ export default class ServiceRegistry {
           }
 
           serviceInstance.clientCreated = true;
-          instances.push(serviceInstance); // Insert
+          instances.push(serviceInstance);
         }
 
         return true;

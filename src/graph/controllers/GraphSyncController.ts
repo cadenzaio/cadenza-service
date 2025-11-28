@@ -10,17 +10,17 @@ export default class GraphSyncController {
     return this._instance;
   }
 
-  splitSignalsTask: Task;
-  splitTasksForRegistration: Task;
-  registerSignalToTaskMapTask: Task;
-  registerTaskToSignalMapTask: Task;
-  registerTaskMapTask: Task;
-  registerDeputyRelationshipTask: Task;
-  splitRoutinesTask: Task;
+  splitSignalsTask: Task | undefined;
+  splitTasksForRegistration: Task | undefined;
+  registerSignalToTaskMapTask: Task | undefined;
+  registerTaskToSignalMapTask: Task | undefined;
+  registerTaskMapTask: Task | undefined;
+  registerDeputyRelationshipTask: Task | undefined;
+  splitRoutinesTask: Task | undefined;
 
   isCadenzaDBReady: boolean = false;
 
-  constructor() {
+  init() {
     this.splitRoutinesTask = Cadenza.createMetaTask(
       "Split routines for registration",
       (ctx, emit) => {
@@ -416,40 +416,32 @@ export default class GraphSyncController {
       ),
     );
 
-    Cadenza.createDebounceMetaTask(
-      "Debounce syncing of resources",
-      () => {
-        Cadenza.log("Syncing resources...");
-        return { __syncing: true };
-      },
-      "",
-      500,
-    )
-      .doAfter(Cadenza.serviceRegistry.handleInstanceUpdateTask)
+    Cadenza.broker
+      .getSignalsTask!.clone()
+      .doOn("sync_controller.sync_tick", "meta.sync_requested")
       .then(
-        Cadenza.broker
-          .getSignalsTask!.clone()
+        this.splitSignalsTask,
+        Cadenza.registry
+          .getAllTasks!.clone()
           .then(
-            this.splitSignalsTask,
+            this.splitTasksForRegistration,
             Cadenza.registry
-              .getAllTasks!.clone()
+              .getAllRoutines!.clone()
               .then(
-                this.splitTasksForRegistration,
+                this.splitRoutinesTask,
                 Cadenza.registry
-                  .getAllRoutines!.clone()
+                  .doForEachTask!.clone()
                   .then(
-                    this.splitRoutinesTask,
-                    Cadenza.registry
-                      .doForEachTask!.clone()
-                      .then(
-                        this.registerTaskMapTask,
-                        this.registerSignalToTaskMapTask,
-                        this.registerTaskToSignalMapTask,
-                        this.registerDeputyRelationshipTask,
-                      ),
+                    this.registerTaskMapTask,
+                    this.registerSignalToTaskMapTask,
+                    this.registerTaskToSignalMapTask,
+                    this.registerDeputyRelationshipTask,
                   ),
               ),
           ),
       );
+
+    Cadenza.throttle("sync_controller.sync_tick", { __syncing: true }, 120000);
+    Cadenza.schedule("meta.sync_requested", {}, 2000);
   }
 }

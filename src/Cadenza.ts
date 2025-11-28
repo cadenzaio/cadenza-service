@@ -181,6 +181,10 @@ export default class CadenzaService {
     this.broker?.emit(signal, data);
   }
 
+  static debounce(signal: string, context: any, delayMs: number = 500) {
+    this.broker?.debounce(signal, context, delayMs);
+  }
+
   /**
    * Executes the given task or graph routine within the provided context using the configured runner.
    *
@@ -206,28 +210,22 @@ export default class CadenzaService {
   }
 
   public static schedule(
-    taskName: string,
+    signal: string,
     context: AnyObject,
     timeoutMs: number,
     exactDateTime?: Date,
   ) {
-    this.broker?.schedule(taskName, context, timeoutMs, exactDateTime);
+    this.broker?.schedule(signal, context, timeoutMs, exactDateTime);
   }
 
   public static throttle(
-    taskName: string,
+    signal: string,
     context: AnyObject,
     intervalMs: number,
     leading = false,
     startDateTime?: Date,
   ) {
-    this.broker?.throttle(
-      taskName,
-      context,
-      intervalMs,
-      leading,
-      startDateTime,
-    );
+    this.broker?.throttle(signal, context, intervalMs, leading, startDateTime);
   }
 
   /**
@@ -819,7 +817,7 @@ export default class CadenzaService {
       GraphMetadataController.instance;
       GraphSyncController.instance.isCadenzaDBReady =
         !!options.cadenzaDB?.connect;
-      this.broker.schedule("meta.sync_requested", {}, 2000);
+      GraphSyncController.instance.init();
 
       this.log("Service created.");
 
