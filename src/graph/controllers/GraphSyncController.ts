@@ -69,8 +69,6 @@ export default class GraphSyncController {
             uuid: Cadenza.serviceRegistry.serviceInstanceId,
           },
         });
-
-        Cadenza.log("Synced data...");
       },
     );
 
@@ -427,12 +425,7 @@ export default class GraphSyncController {
       "",
       500,
     )
-      .doAfter(
-        this.isCadenzaDBReady
-          ? Cadenza.serviceRegistry.handleInstanceUpdateTask
-          : undefined,
-      )
-      .doOn("meta.created_database_service")
+      .doAfter(Cadenza.serviceRegistry.handleInstanceUpdateTask)
       .then(
         Cadenza.broker
           .getSignalsTask!.clone()
