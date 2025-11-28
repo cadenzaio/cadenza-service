@@ -527,9 +527,16 @@ export default class SocketController {
               return;
             }
 
-            return new Promise((resolve, reject) => {
+            return new Promise((resolve) => {
+              console.log("Socket Delegate:", {
+                localTaskName: ctx.__localTaskName,
+                remoteRoutineName: ctx.__remoteRoutineName,
+                serviceName: ctx.__serviceName,
+                fetchId: fetchId,
+                socketConnected: socket.connected,
+              });
+
               delete ctx.__isSubMeta;
-              console.log("Socket Delegate:", socket.connected, ctx);
               emitWhenReady(
                 "delegation",
                 ctx,

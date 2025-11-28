@@ -346,6 +346,7 @@ export default class ServiceRegistry {
                 ctx,
                 "error",
               );
+              return;
             }
             for (const serviceInstance of serviceInstances) {
               yield { serviceInstance };

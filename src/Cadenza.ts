@@ -249,13 +249,13 @@ export default class CadenzaService {
     subjectServiceInstanceId: string | null = null,
   ) {
     if (level === "critical") {
-      console.error("CRITICAL:", message);
+      console.error("CRITICAL:", message, data);
     } else if (level === "error") {
-      console.error(message);
+      console.error(message, data);
     } else if (level === "warning") {
-      console.warn(message);
+      console.warn(message, data);
     } else {
-      console.log(message);
+      console.log(message, data);
     }
 
     this.emit("meta.system_log.log", {

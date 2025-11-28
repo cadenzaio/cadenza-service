@@ -841,6 +841,7 @@ export default class DatabaseController {
         ...context,
         errored: true,
         __error: `Query failed: ${error.message}`,
+        __success: false,
       };
     }
   }
@@ -967,7 +968,7 @@ export default class DatabaseController {
           ? resultRows
           : resultRows[0],
         rowCount: result.rowCount,
-        __inserted: true,
+        __success: true,
       };
     } catch (error: any) {
       if (transaction) await client.query("ROLLBACK");
@@ -975,6 +976,7 @@ export default class DatabaseController {
         ...context,
         errored: true,
         __error: `Insert failed: ${error.message}`,
+        __success: false,
       };
     } finally {
       if (transaction && client) {
@@ -1051,13 +1053,13 @@ export default class DatabaseController {
         return {
           sql,
           params,
-          __updated: false,
+          __success: false,
         };
       }
 
       return {
         [`${camelCase(tableName)}`]: rows[0],
-        __updated: true,
+        __success: true,
       };
     } catch (error: any) {
       if (transaction) await client.query("ROLLBACK");
@@ -1065,6 +1067,7 @@ export default class DatabaseController {
         ...context,
         errored: true,
         __error: `Update failed: ${error.message}`,
+        __success: false,
       };
     } finally {
       if (transaction && client) {
@@ -1106,7 +1109,7 @@ export default class DatabaseController {
       const rows = this.toCamelCase(result.rows);
       return {
         [`${camelCase(tableName)}`]: rows[0],
-        __deleted: true,
+        __success: true,
       };
     } catch (error: any) {
       if (transaction) await client.query("ROLLBACK");
@@ -1114,6 +1117,7 @@ export default class DatabaseController {
         errored: true,
         __error: `Delete failed: ${error.message}`,
         __errors: { delete: error.message },
+        __success: false,
       };
     } finally {
       if (transaction && client) {
@@ -1356,9 +1360,8 @@ export default class DatabaseController {
           }
         }
 
-        console.log(
-          "EXECUTED",
-          taskName,
+        Cadenza.log(
+          `EXECUTED ${taskName}`,
           context.errored
             ? JSON.stringify({
                 data: context.data,
@@ -1369,9 +1372,15 @@ export default class DatabaseController {
                 sort: context.sort,
                 limit: context.limit,
                 offset: context.offset,
+                error: context.__error,
               })
-            : "",
-          context.__error ?? "success",
+            : JSON.stringify({
+                result:
+                  context[camelCase(tableName)] ??
+                  context[camelCase(tableName) + "s"] ??
+                  context,
+              }),
+          context.errored ? "error" : context.__success ? "info" : "warning",
         );
 
         delete context.queryData;

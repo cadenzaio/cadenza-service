@@ -24,6 +24,7 @@ export default class GraphSyncController {
     this.splitRoutinesTask = Cadenza.createMetaTask(
       "Split routines for registration",
       (ctx, emit) => {
+        console.log("Splitting routines for registration...");
         const { routines } = ctx;
         if (!routines) return;
         for (const routine of routines) {
@@ -76,6 +77,7 @@ export default class GraphSyncController {
     this.splitSignalsTask = Cadenza.createMetaTask(
       "Split signals for registration",
       function* (ctx) {
+        console.log("Splitting signals for registration...");
         const { signals } = ctx;
         if (!signals) return;
 
@@ -126,6 +128,7 @@ export default class GraphSyncController {
     this.splitTasksForRegistration = Cadenza.createMetaTask(
       "Split tasks for registration",
       function* (ctx) {
+        console.log("Splitting tasks for registration...");
         const tasks = ctx.tasks;
         for (const task of tasks) {
           if (task.registered) continue;
@@ -201,6 +204,7 @@ export default class GraphSyncController {
       function* (ctx) {
         const task = ctx.task;
         if (task.hidden || !task.register) return;
+        console.log("Splitting observed signals of task", task.name);
 
         for (const signal of task.observedSignals) {
           let firstChar = signal.charAt(0);
@@ -255,6 +259,7 @@ export default class GraphSyncController {
       function* (ctx) {
         const task = ctx.task;
         if (task.hidden || !task.register) return;
+        console.log("Splitting emitted signals of task:", task.name);
 
         for (const signal of task.signalsToEmitAfter) {
           if (task.registeredSignals.has(signal)) continue;
@@ -311,6 +316,7 @@ export default class GraphSyncController {
       function* (ctx) {
         const task = ctx.task;
         if (task.hidden || !task.register) return;
+        console.log("Registering task map to DB", task.name);
 
         for (const t of task.nextTasks) {
           if (task.taskMapRegistration.has(t.name)) {
@@ -364,6 +370,7 @@ export default class GraphSyncController {
         if (task.hidden || !task.register) return;
 
         if (task.isDeputy && !task.signalName) {
+          console.log("Registering deputy relationship:", task.name);
           if (task.registeredDeputyMap) return;
           return {
             data: {
@@ -412,7 +419,10 @@ export default class GraphSyncController {
 
     Cadenza.createDebounceMetaTask(
       "Debounce syncing of resources",
-      () => ({ __syncing: true }),
+      () => {
+        Cadenza.log("Syncing resources...");
+        return { __syncing: true };
+      },
       "",
       500,
     )
