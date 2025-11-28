@@ -1216,13 +1216,6 @@ export default class DatabaseController {
               ? resolvedData[op.return]
               : resolvedData["uuid"];
         }
-        console.log(
-          "sub operation",
-          sql,
-          Object.values(resolvedData),
-          result,
-          op.return,
-        );
       } else if (op.subOperation === "query") {
         const params: any[] = [];
         const whereClause = this.buildWhereClause(op.filter || {}, params);

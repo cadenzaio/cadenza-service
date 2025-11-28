@@ -218,6 +218,7 @@ export default class ServiceRegistry {
         const { serviceName } = ctx;
         let remoteSignals = this.remoteSignals.get(serviceName) ?? [];
         remoteSignals = remoteSignals.concat(this.remoteSignals.get("*") ?? []);
+        console.log("remote signals", remoteSignals);
 
         return {
           remoteSignals: remoteSignals,
