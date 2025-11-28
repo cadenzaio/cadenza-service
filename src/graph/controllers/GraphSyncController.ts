@@ -316,12 +316,13 @@ export default class GraphSyncController {
       function* (ctx) {
         const task = ctx.task;
         if (task.hidden || !task.register) return;
-        console.log("Registering task map to DB", task.name);
 
         for (const t of task.nextTasks) {
           if (task.taskMapRegistration.has(t.name)) {
             continue;
           }
+          console.log("Registering task map to DB", t.name, task.name);
+
           yield {
             data: {
               taskName: t.name,
@@ -370,8 +371,8 @@ export default class GraphSyncController {
         if (task.hidden || !task.register) return;
 
         if (task.isDeputy && !task.signalName) {
-          console.log("Registering deputy relationship:", task.name);
           if (task.registeredDeputyMap) return;
+          console.log("Registering deputy relationship:", task.name);
           return {
             data: {
               triggered_task_name: task.remoteRoutineName,

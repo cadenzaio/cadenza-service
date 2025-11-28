@@ -1360,28 +1360,25 @@ export default class DatabaseController {
           }
         }
 
-        Cadenza.log(
-          `EXECUTED ${taskName}`,
-          context.errored
-            ? JSON.stringify({
-                data: context.data,
-                queryData: context.queryData,
-                filter: context.filter,
-                fields: context.fields,
-                joins: context.joins,
-                sort: context.sort,
-                limit: context.limit,
-                offset: context.offset,
-                error: context.__error,
-              })
-            : JSON.stringify({
-                result:
-                  context[camelCase(tableName)] ??
-                  context[camelCase(tableName) + "s"] ??
-                  context,
-              }),
-          context.errored ? "error" : context.__success ? "info" : "warning",
-        );
+        if (tableName !== "system_log") {
+          Cadenza.log(
+            `EXECUTED ${taskName}`,
+            context.errored
+              ? JSON.stringify({
+                  data: context.data,
+                  queryData: context.queryData,
+                  filter: context.filter,
+                  fields: context.fields,
+                  joins: context.joins,
+                  sort: context.sort,
+                  limit: context.limit,
+                  offset: context.offset,
+                  error: context.__error,
+                })
+              : {},
+            context.errored ? "error" : context.__success ? "info" : "warning",
+          );
+        }
 
         delete context.queryData;
         delete context.data;

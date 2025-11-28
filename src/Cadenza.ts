@@ -338,7 +338,7 @@ export default class CadenzaService {
   ): DeputyTask {
     this.bootstrap();
     this.validateName(routineName);
-    const name = `Deputy task for: ${routineName}`;
+    const name = `${routineName} (Proxy)`;
 
     options = {
       concurrency: 0,
@@ -539,7 +539,7 @@ export default class CadenzaService {
       .split("_")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join("");
-    const name = `${operation} ${tableName} in ${databaseServiceName ?? "default database service"}`;
+    const name = `${operation.charAt(0).toUpperCase() + operation.slice(1)} ${tableName} in ${databaseServiceName ?? "default database service"}`;
     const description = `Executes a ${operation} on table ${tableName} in ${databaseServiceName ?? "default database service"}`;
     const taskName = `db${operation.charAt(0).toUpperCase() + operation.slice(1)}${tableNameFormatted}`;
 
