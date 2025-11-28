@@ -1,3 +1,10 @@
+# [1.27.0](https://github.com/cadenzaio/cadenza-service/compare/v1.26.9...v1.27.0) (2025-11-28)
+
+
+### Features
+
+* removed awaitExisting form db insert queries. ([c90994a](https://github.com/cadenzaio/cadenza-service/commit/c90994ab67e55fa3ba1d07c8051ac805e87c84fd))
+
 ## [1.26.9](https://github.com/cadenzaio/cadenza-service/compare/v1.26.8...v1.26.9) (2025-11-28)
 
 
