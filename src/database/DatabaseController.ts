@@ -1215,7 +1215,7 @@ export default class DatabaseController {
           "sub operation",
           sql,
           Object.values(resolvedData),
-          result.rows,
+          result,
           op.return,
         );
         result = result.rows[0];

@@ -204,7 +204,7 @@ export default class GraphSyncController {
         for (const signal of task.observedSignals) {
           let firstChar = signal.charAt(0);
           let signalServiceName;
-          let _signal = signal;
+          let _signal = signal.split(":")[0];
           if (
             firstChar === firstChar.toUpperCase() &&
             firstChar !== firstChar.toLowerCase()
@@ -273,8 +273,10 @@ export default class GraphSyncController {
         for (const signal of task.signalsToEmitAfter) {
           if (task.registeredSignals.has(signal)) continue;
 
+          const _signal = signal.split(":")[0];
+
           const { isMeta, sourceServiceName, domain, action } =
-            decomposeSignalName(signal);
+            decomposeSignalName(_signal);
 
           yield {
             data: {
@@ -282,7 +284,7 @@ export default class GraphSyncController {
                 subOperation: "insert",
                 table: "signal_registry",
                 data: {
-                  name: signal,
+                  name: _signal,
                   service_name: Cadenza.serviceRegistry.serviceName,
                   is_meta: isMeta,
                   source_service_name: sourceServiceName,

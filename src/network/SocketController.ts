@@ -256,6 +256,7 @@ export default class SocketController {
                       __status: "success",
                       __signalName: ctx.__signalName,
                     });
+                    console.log("Received signal", ctx.__signalName);
                     Cadenza.emit(ctx.__signalName, ctx);
                   } else {
                     callback({
@@ -570,6 +571,12 @@ export default class SocketController {
 
             return new Promise((resolve) => {
               emitWhenReady("signal", ctx, 10_000, (response: AnyObject) => {
+                console.log(
+                  "Transmitted signal",
+                  ctx.__signalName,
+                  serviceName,
+                );
+
                 if (ctx.__routineExecId) {
                   emit(
                     `meta.socket_client.transmitted:${ctx.__routineExecId}`,
