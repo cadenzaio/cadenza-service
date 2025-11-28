@@ -200,7 +200,11 @@ export default class SocketController {
               ws.on(
                 "delegation",
                 (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
-                  console.log("Received socket delegation request", ctx);
+                  console.log("Received socket delegation request", {
+                    localTaskName: ctx.__localTaskName,
+                    localServiceName: ctx.__localServiceName,
+                    remoteRoutineName: ctx.__remoteRoutineName,
+                  });
                   const deputyExecId = ctx.__metadata.__deputyExecId;
 
                   Cadenza.createEphemeralMetaTask(
@@ -532,8 +536,6 @@ export default class SocketController {
                 localTaskName: ctx.__localTaskName,
                 remoteRoutineName: ctx.__remoteRoutineName,
                 serviceName: ctx.__serviceName,
-                fetchId: fetchId,
-                socketConnected: socket.connected,
               });
 
               delete ctx.__isSubMeta;

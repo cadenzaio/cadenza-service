@@ -120,7 +120,7 @@ export default class DeputyTask extends Task {
             console.log(
               "Resolving deputy",
               remoteRoutineName,
-              responseCtx.errored ? responseCtx : "",
+              responseCtx.errored ? responseCtx.__error : "",
             );
             if (responseCtx?.errored) {
               reject(new Error(responseCtx.__error));
