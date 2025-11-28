@@ -1,3 +1,10 @@
+## [1.26.5](https://github.com/cadenzaio/cadenza-service/compare/v1.26.4...v1.26.5) (2025-11-28)
+
+
+### Bug Fixes
+
+* Fixed infinite log loop. ([a4ca516](https://github.com/cadenzaio/cadenza-service/commit/a4ca516c69c00a286163935d15d8a1aa0080e2a0))
+
 ## [1.26.4](https://github.com/cadenzaio/cadenza-service/compare/v1.26.3...v1.26.4) (2025-11-28)
 
 
