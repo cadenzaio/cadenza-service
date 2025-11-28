@@ -24,7 +24,7 @@ export interface SubOperation {
   data?: AnyObject | AnyObject[]; // For insert
   filter?: AnyObject; // For query
   fields?: string[]; // For query
-  return?: "uuid" | "single" | "array" | "full"; // What to return (e.g., 'id' for insert ID)
+  return?: string; // "uuid" | "single" | "array" | "full"; What to return (e.g., 'uuid' for insert ID or 'name' for name column)
   // No joins in sub-ops to limit depth/complexity
 }
 
@@ -54,12 +54,5 @@ export interface DbOperationPayload {
     target: string[]; // Target columns
     action: OnConflictAction;
   };
-  awaitExists?: Record<
-    string,
-    {
-      table: string;
-      column: string;
-    }
-  >; // For foreign key insert, waits until column exists, {columnName: {}
   // Future expansions: groupBy, having, batchSize, etc.
 }

@@ -865,13 +865,7 @@ export default class DatabaseController {
     tableName: string,
     context: DbOperationPayload,
   ): Promise<any> {
-    const {
-      data,
-      transaction = true,
-      fields = [],
-      onConflict,
-      awaitExists,
-    } = context;
+    const { data, transaction = true, fields = [], onConflict } = context;
 
     if (!data || (Array.isArray(data) && data.length === 0)) {
       return { errored: true, __error: "No data provided for insert" };
@@ -879,27 +873,6 @@ export default class DatabaseController {
 
     const client = transaction ? await this.getClient() : this.dbClient;
     try {
-      if (awaitExists) {
-        for (const fk of Object.keys(awaitExists)) {
-          const value = (data as any)[fk];
-
-          if (value === undefined || value === null) continue;
-
-          const { table, column } = awaitExists[fk];
-          let exists = false;
-          let retries = 0;
-          const maxRetries = 20;
-          while (!exists && retries < maxRetries) {
-            const result = await client.query(
-              `SELECT EXISTS(SELECT 1 from ${table} WHERE ${column} = ${typeof value === "string" ? `'${value}'` : value}) AS "exists"`,
-            );
-            exists = result.rows[0].exists;
-            if (exists) break;
-            retries++;
-            await sleep(100);
-          }
-        }
-      }
       if (transaction) await client.query("BEGIN");
 
       const resolvedData = await this.resolveNestedData(data, tableName);
