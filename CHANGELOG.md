@@ -1,3 +1,15 @@
+# [2.0.0](https://github.com/cadenzaio/cadenza-service/compare/v1.27.6...v2.0.0) (2025-12-04)
+
+
+### Bug Fixes
+
+* removed unnecessary try. ([d720083](https://github.com/cadenzaio/cadenza-service/commit/d7200836f8d295927bdf293fb8ae4192349d1e66))
+
+
+### BREAKING CHANGES
+
+* changed global signal protocol. Global signals should be prefixed with "global."
+
 ## [1.27.6](https://github.com/cadenzaio/cadenza-service/compare/v1.27.5...v1.27.6) (2025-11-28)
 
 
