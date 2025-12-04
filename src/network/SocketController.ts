@@ -273,6 +273,7 @@ export default class SocketController {
                       ctx.__signalName,
                       ctx.__serviceName,
                     );
+
                     Cadenza.emit(ctx.__signalName, ctx);
                   } else {
                     Cadenza.log(
