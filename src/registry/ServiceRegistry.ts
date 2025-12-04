@@ -109,49 +109,41 @@ export default class ServiceRegistry {
           );
 
           if (!clientCreated) {
-            try {
-              const communicationTypes = Array.from(
-                new Set(
-                  this.deputies
-                    .get(serviceName)
-                    ?.map((d) => d.communicationType) ?? [],
-                ),
-              );
+            const communicationTypes = Array.from(
+              new Set(
+                this.deputies
+                  .get(serviceName)
+                  ?.map((d) => d.communicationType) ?? [],
+              ),
+            );
 
-              if (
-                !communicationTypes.includes("signal") &&
-                this.remoteSignals.has(serviceName)
-              ) {
-                communicationTypes.push("signal");
-              }
-
-              emit("meta.service_registry.dependee_registered", {
-                serviceName: serviceName,
-                serviceInstanceId: uuid,
-                serviceAddress: address,
-                servicePort: port,
-                protocol: exposed ? "https" : "http",
-                communicationTypes,
-              });
-
-              instances
-                ?.filter(
-                  (i: any) =>
-                    i.address === address &&
-                    i.port === port &&
-                    i.clientCreated &&
-                    i.isActive,
-                )
-                .forEach((i: any) => {
-                  i.clientCreated = true;
-                });
-            } catch (e) {
-              Cadenza.log(
-                "Error in dependee registration",
-                { error: e, context: ctx },
-                "error",
-              );
+            if (
+              !communicationTypes.includes("signal") &&
+              this.remoteSignals.has(serviceName)
+            ) {
+              communicationTypes.push("signal");
             }
+
+            emit("meta.service_registry.dependee_registered", {
+              serviceName: serviceName,
+              serviceInstanceId: uuid,
+              serviceAddress: address,
+              servicePort: port,
+              protocol: exposed ? "https" : "http",
+              communicationTypes,
+            });
+
+            instances
+              ?.filter(
+                (i: any) =>
+                  i.address === address &&
+                  i.port === port &&
+                  i.clientCreated &&
+                  i.isActive,
+              )
+              .forEach((i: any) => {
+                i.clientCreated = true;
+              });
           }
         }
 
