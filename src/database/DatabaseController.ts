@@ -558,11 +558,10 @@ export default class DatabaseController {
                                     ).then(
                                       Cadenza.createUniqueMetaTask(
                                         "Join table tasks",
-                                        (ctx, emit) => {
-                                          emit("meta.database.setup_done", {});
+                                        () => {
                                           return true;
                                         },
-                                      ),
+                                      ).emits("meta.database.setup_done"),
                                     ),
                                   ),
                                 ),
@@ -1262,7 +1261,7 @@ export default class DatabaseController {
               ? "deleted"
               : "";
 
-    const defaultSignal = `${options.isMeta ? "meta." : ""}${tableName}.${opAction}`;
+    const defaultSignal = `global.${options.isMeta ? "meta." : ""}${tableName}.${opAction}`;
 
     const tableNameFormatted = tableName
       .split("_")
@@ -1334,23 +1333,21 @@ export default class DatabaseController {
           }
         }
 
-        if (tableName !== "system_log") {
+        if (tableName !== "system_log" && context.errored) {
           Cadenza.log(
-            `EXECUTED ${taskName}`,
-            context.errored
-              ? JSON.stringify({
-                  data: context.data,
-                  queryData: context.queryData,
-                  filter: context.filter,
-                  fields: context.fields,
-                  joins: context.joins,
-                  sort: context.sort,
-                  limit: context.limit,
-                  offset: context.offset,
-                  error: context.__error,
-                })
-              : {},
-            context.errored ? "error" : context.__success ? "info" : "warning",
+            `ERROR in ${taskName}`,
+            JSON.stringify({
+              data: context.data,
+              queryData: context.queryData,
+              filter: context.filter,
+              fields: context.fields,
+              joins: context.joins,
+              sort: context.sort,
+              limit: context.limit,
+              offset: context.offset,
+              error: context.__error,
+            }),
+            "error",
           );
         }
 
@@ -1390,6 +1387,11 @@ export default class DatabaseController {
           return typeof signal === "string" ? signal : signal.signal;
         }) ?? []),
       )
-      .emits(defaultSignal);
+      .emits(defaultSignal)
+      .attachSignal(
+        ...(table.customSignals?.emissions?.[op]?.map((signal: any) => {
+          return typeof signal === "string" ? signal : signal.signal;
+        }) ?? []),
+      );
   }
 }

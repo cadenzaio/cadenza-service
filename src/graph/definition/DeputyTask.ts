@@ -165,6 +165,8 @@ export default class DeputyTask extends Task {
     this.remoteRoutineName = remoteRoutineName;
     this.serviceName = serviceName;
 
+    this.attachSignal("meta.deputy.delegation_requested");
+
     this.emit("meta.deputy.created", {
       localTaskName: this.name,
       localTaskVersion: this.version,

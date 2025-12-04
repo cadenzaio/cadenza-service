@@ -256,7 +256,7 @@ export default class CadenzaService {
       console.log(message, data);
     }
 
-    this.emit("meta.system_log.log", {
+    this.emit("global.meta.system_log.log", {
       data: {
         data,
         level,
@@ -463,8 +463,8 @@ export default class CadenzaService {
     options: TaskOptions = {},
   ): SignalTransmissionTask {
     this.bootstrap();
-    Cadenza.validateName(signalName);
-    Cadenza.validateName(serviceName);
+    this.validateName(signalName);
+    this.validateName(serviceName);
 
     options = {
       concurrency: 0,
@@ -488,7 +488,11 @@ export default class CadenzaService {
 
     options.isMeta = true;
 
-    const name = `Transmission of signal: ${signalName}`;
+    const name = `Transmit signal: ${signalName} to ${serviceName}`;
+    if (this.get(name)) {
+      throw new Error(`Task '${name}' already exists`);
+    }
+
     return new SignalTransmissionTask(
       name,
       signalName,
@@ -531,8 +535,8 @@ export default class CadenzaService {
     options: TaskOptions = {},
   ) {
     this.bootstrap();
-    Cadenza.validateName(tableName);
-    Cadenza.validateName(operation);
+    this.validateName(tableName);
+    this.validateName(operation);
     const tableNameFormatted = tableName
       .split("_")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
@@ -718,7 +722,7 @@ export default class CadenzaService {
   ) {
     if (this.serviceCreated) return;
     this.bootstrap();
-    Cadenza.validateName(serviceName);
+    this.validateName(serviceName);
     this.validateServiceName(serviceName);
 
     const serviceId = options.customServiceId ?? uuid();
@@ -806,7 +810,7 @@ export default class CadenzaService {
     };
 
     if (options.cadenzaDB?.connect) {
-      Cadenza.createEphemeralMetaTask("Create service", async (_, emit) => {
+      this.createEphemeralMetaTask("Create service", async (_, emit) => {
         emit("meta.create_service_requested", initContext);
       }).doOn("meta.fetch.handshake_complete");
     } else {
@@ -899,27 +903,24 @@ export default class CadenzaService {
       options,
     });
 
-    Cadenza.createEphemeralMetaTask("Set database connection", () => {
+    this.createEphemeralMetaTask("Set database connection", () => {
       if (options.cadenzaDB?.connect) {
-        Cadenza.createEphemeralMetaTask(
-          "Insert database service",
-          (_, emit) => {
-            emit("meta.created_database_service", {
-              data: {
-                service_name: name,
-                description,
-                schema,
-                is_meta: options.isMeta,
-              },
-            });
-            this.log("Database service created", {
-              name,
-              isMeta: options.isMeta,
-            });
-          },
-        ).doOn("meta.service_registry.service_inserted");
+        this.createEphemeralMetaTask("Insert database service", (_, emit) => {
+          emit("global.meta.created_database_service", {
+            data: {
+              service_name: name,
+              description,
+              schema,
+              is_meta: options.isMeta,
+            },
+          });
+          this.log("Database service created", {
+            name,
+            isMeta: options.isMeta,
+          });
+        }).doOn("meta.service_registry.service_inserted");
       } else {
-        this.emit("meta.created_database_service", {
+        this.emit("global.meta.created_database_service", {
           data: {
             service_name: name,
             description,

@@ -125,6 +125,8 @@ export default class SignalTransmissionTask extends Task {
     this.serviceName = serviceName;
     this.signalName = signalName;
 
+    this.attachSignal("meta.signal_transmission.requested");
+
     this.emit("meta.deputy.created", {
       localTaskName: this.name,
       localTaskVersion: this.version,

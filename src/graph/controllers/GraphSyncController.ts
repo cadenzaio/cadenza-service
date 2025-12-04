@@ -29,7 +29,7 @@ export default class GraphSyncController {
         for (const routine of routines) {
           if (routine.registered) continue;
           routine.registered = true;
-          emit("meta.sync_controller.routine_added", {
+          emit("global.meta.sync_controller.routine_added", {
             data: {
               name: routine.name,
               version: routine.version,
@@ -44,7 +44,7 @@ export default class GraphSyncController {
 
             while (tasks.hasNext()) {
               const nextTask = tasks.next();
-              emit("meta.sync_controller.task_to_routine_map", {
+              emit("global.meta.sync_controller.task_to_routine_map", {
                 data: {
                   taskName: nextTask.name,
                   taskVersion: nextTask.version,
@@ -57,7 +57,7 @@ export default class GraphSyncController {
           }
         }
 
-        emit("meta.sync_controller.synced", {
+        emit("global.meta.sync_controller.synced", {
           data: {
             is_active: true,
             is_non_responsive: false,
@@ -69,6 +69,10 @@ export default class GraphSyncController {
           },
         });
       },
+    ).attachSignal(
+      "global.meta.sync_controller.routine_added",
+      "global.meta.sync_controller.task_to_routine_map",
+      "global.meta.sync_controller.synced",
     );
 
     this.splitSignalsTask = Cadenza.createMetaTask(
@@ -85,13 +89,13 @@ export default class GraphSyncController {
           .map((signal: { signal: string; data: any }) => signal.signal);
 
         for (const signal of filteredSignals) {
-          const { isMeta, sourceServiceName, domain, action } =
+          const { isMeta, isGlobal, domain, action } =
             decomposeSignalName(signal);
 
           yield {
             data: {
               name: signal,
-              sourceServiceName,
+              isGlobal,
               domain,
               action,
               isMeta,
@@ -202,20 +206,10 @@ export default class GraphSyncController {
         if (task.hidden || !task.register) return;
 
         for (const signal of task.observedSignals) {
-          let firstChar = signal.charAt(0);
-          let signalServiceName;
-          let _signal = signal.split(":")[0];
-          if (
-            firstChar === firstChar.toUpperCase() &&
-            firstChar !== firstChar.toLowerCase()
-          ) {
-            signalServiceName = signal.split(".")[0];
-            _signal = signal.split(".").slice(1).join(".");
-          }
+          const _signal = signal.split(":")[0];
+          if (task.registeredSignals.has(signal)) continue;
 
-          if (task.registeredSignals.has(_signal)) continue;
-
-          const { isMeta, sourceServiceName, domain, action } =
+          const { isMeta, isGlobal, domain, action } =
             decomposeSignalName(_signal);
 
           yield {
@@ -225,9 +219,8 @@ export default class GraphSyncController {
                 table: "signal_registry",
                 data: {
                   name: _signal,
-                  service_name: Cadenza.serviceRegistry.serviceName,
-                  is_meta: isMeta,
-                  source_service_name: sourceServiceName,
+                  isMeta,
+                  isGlobal,
                   domain,
                   action,
                 },
@@ -235,12 +228,10 @@ export default class GraphSyncController {
               },
               taskName: task.name,
               taskVersion: task.version,
-              taskServiceName: Cadenza.serviceRegistry.serviceName,
-              signalServiceName:
-                signalServiceName ?? Cadenza.serviceRegistry.serviceName,
+              serviceName: Cadenza.serviceRegistry.serviceName,
             },
             __name: task.name,
-            signalName: _signal,
+            signalName: signal,
           };
         }
       },
@@ -251,9 +242,8 @@ export default class GraphSyncController {
               target: [
                 "task_name",
                 "task_version",
-                "task_service_name",
+                "service_name",
                 "signal_name",
-                "signal_service_name",
               ],
               action: {
                 do: "nothing",
@@ -275,7 +265,7 @@ export default class GraphSyncController {
 
           if (task.registeredSignals.has(_signal)) continue;
 
-          const { isMeta, sourceServiceName, domain, action } =
+          const { isMeta, isGlobal, domain, action } =
             decomposeSignalName(_signal);
 
           const isOnFail = task.signalsToEmitOnFail.has(signal);
@@ -287,9 +277,8 @@ export default class GraphSyncController {
                 table: "signal_registry",
                 data: {
                   name: _signal,
-                  service_name: Cadenza.serviceRegistry.serviceName,
-                  is_meta: isMeta,
-                  source_service_name: sourceServiceName,
+                  isMeta,
+                  isGlobal,
                   domain,
                   action,
                 },

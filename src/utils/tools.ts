@@ -20,36 +20,32 @@ export function formatTimestamp(timestamp: number) {
  */
 export function decomposeSignalName(signalName: string) {
   const parts = signalName.split(".");
-  const firstChar = signalName.charAt(0);
-  let isMeta = false;
-  let sourceServiceName = null;
-  let domain = parts.length === 2 ? parts[0] : "";
-  if (parts[0] === "meta") {
-    isMeta = true;
-    if (parts.length === 3) {
-      domain = parts[1];
-    } else {
-      domain = "";
-    }
-  } else if (firstChar === "*" || firstChar === firstChar.toUpperCase()) {
-    sourceServiceName = parts[0];
-
-    if (parts[1] === "meta") {
-      isMeta = true;
-      if (parts.length === 4) {
-        domain = parts[2];
-      } else {
-        domain = "";
-      }
-    } else {
-      domain = parts[1];
-    }
-  }
+  let isMeta =
+    parts[0] === "meta" ||
+    parts[0] === "sub_meta" ||
+    parts[1] === "meta" ||
+    parts[1] === "sub_meta";
+  let isGlobal = parts[0] === "global";
+  let domain = isGlobal
+    ? isMeta
+      ? parts.length === 4
+        ? parts[2]
+        : ""
+      : parts.length === 3
+        ? parts[1]
+        : ""
+    : isMeta
+      ? parts.length === 3
+        ? parts[1]
+        : ""
+      : parts.length === 2
+        ? parts[0]
+        : "";
   const action = parts[parts.length - 1];
 
   return {
     isMeta,
-    sourceServiceName,
+    isGlobal,
     domain,
     action,
   };

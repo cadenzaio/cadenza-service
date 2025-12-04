@@ -43,18 +43,17 @@ export default class SignalController {
     Cadenza.createMetaTask(
       "Handle Signal Registration",
       (ctx, emit) => {
-        const { __signalName } = ctx;
-        const { isMeta, sourceServiceName, domain, action } =
-          decomposeSignalName(__signalName);
+        const { signalName } = ctx;
+        const { isMeta, isGlobal, domain, action } =
+          decomposeSignalName(signalName);
 
-        emit("meta.signal_controller.signal_added", {
+        emit("global.meta.signal_controller.signal_added", {
           data: {
-            name: __signalName,
-            sourceServiceName,
+            name: signalName,
+            isGlobal,
             domain,
             action,
             isMeta,
-            service_name: Cadenza.serviceRegistry.serviceName,
           },
         });
 
@@ -63,86 +62,7 @@ export default class SignalController {
       "Handles signal registration from a service instance",
     )
       .doOn("meta.signal_broker.added")
-      .then(
-        Cadenza.createMetaTask(
-          "Handle foreign signal registration",
-          (ctx, emit) => {
-            const { __signalName } = ctx;
-            const firstChar = __signalName.charAt(0);
-
-            if (
-              (firstChar === firstChar.toUpperCase() &&
-                firstChar !== firstChar.toLowerCase()) ||
-              firstChar === "*"
-            ) {
-              const serviceName = __signalName.split(".")[0];
-
-              if (Cadenza.serviceRegistry.serviceName === serviceName) {
-                return false;
-              }
-
-              ctx.__listenerServiceName = Cadenza.serviceRegistry.serviceName;
-              ctx.__emitterSignalName = __signalName;
-              ctx.__signalName =
-                "meta.signal_controller.foreign_signal_registered";
-              ctx.__remoteServiceName = serviceName;
-
-              if (serviceName === "*") {
-                emit("meta.signal_controller.wildcard_signal_registered", ctx);
-              } else {
-                emit(
-                  `meta.signal_controller.remote_signal_registered:${serviceName}`,
-                  ctx,
-                );
-              }
-
-              return ctx;
-            }
-          },
-        ).then(Cadenza.serviceRegistry.handleRemoteSignalRegistrationTask),
-      );
-
-    Cadenza.createMetaTask(
-      "Forward signal observations to remote service",
-      (ctx, emit) => {
-        const { remoteSignals, serviceName } = ctx;
-
-        for (const remoteSignal of remoteSignals) {
-          remoteSignal.__signalName =
-            "meta.signal_controller.foreign_signal_registered";
-
-          emit(
-            `meta.signal_controller.remote_signal_registered:${serviceName}`,
-            remoteSignal,
-          );
-        }
-
-        return true;
-      },
-      "Forwards signal observations to remote service",
-    ).doAfter(Cadenza.serviceRegistry.getRemoteSignalsTask);
-
-    Cadenza.createMetaTask("Handle foreign signal registration", (ctx) => {
-      const { __emitterSignalName, __listenerServiceName } = ctx;
-
-      console.log(
-        "Creating signal transmission task for",
-        __emitterSignalName,
-        __listenerServiceName,
-      );
-
-      Cadenza.createSignalTransmissionTask(
-        __emitterSignalName,
-        __listenerServiceName,
-      ).doOn(__emitterSignalName.split(".").slice(1).join("."));
-
-      return true;
-    }).doOn(
-      "meta.signal_controller.foreign_signal_registered",
-      "meta.service_registry.foreign_signal_registered",
-    );
-
-    // TODO: Cleanup transmission tasks?
+      .attachSignal("global.meta.signal_controller.signal_added");
 
     Cadenza.createMetaTask(
       "Add data to signal emission",
@@ -175,7 +95,7 @@ export default class SignalController {
       { isSubMeta: true, concurrency: 100 },
     )
       .doOn("sub_meta.signal_broker.emitting_signal")
-      .emits("sub_meta.signal_controller.signal_emitted");
+      .emits("global.sub_meta.signal_controller.signal_emitted");
 
     Cadenza.createMetaTask(
       "Add metadata to signal consumption",
@@ -192,6 +112,6 @@ export default class SignalController {
       { isSubMeta: true, concurrency: 100 },
     )
       .doOn("meta.node.consumed_signal")
-      .emits("sub_meta.signal_controller.signal_consumed");
+      .emits("global.sub_meta.signal_controller.signal_consumed");
   }
 }

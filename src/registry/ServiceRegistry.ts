@@ -27,12 +27,6 @@ export interface DeputyDescriptor {
   communicationType: string;
 }
 
-export interface RemoteSignalDescriptor {
-  __listenerServiceName: string;
-  __emitterSignalName: string;
-  __remoteServiceName: string;
-}
-
 /**
  * The ServiceRegistry class is a singleton that manages the registration and lifecycle of
  * service instances, deputies, and remote signals in a distributed service architecture.
@@ -48,7 +42,7 @@ export default class ServiceRegistry {
 
   private instances: Map<string, ServiceInstanceDescriptor[]> = new Map();
   private deputies: Map<string, DeputyDescriptor[]> = new Map();
-  private remoteSignals: Map<string, RemoteSignalDescriptor[]> = new Map();
+  private remoteSignals: Map<string, Set<string>> = new Map();
   serviceName: string | null = null;
   serviceInstanceId: string | null = null;
   numberOfRunningGraphs: number = 0;
@@ -56,7 +50,7 @@ export default class ServiceRegistry {
   retryCount: number = 3;
 
   handleInstanceUpdateTask: Task;
-  handleRemoteSignalRegistrationTask: Task;
+  handleGlobalSignalRegistrationTask: Task;
   getRemoteSignalsTask: Task;
   handleSocketStatusUpdateTask: Task;
   fullSyncTask: Task;
@@ -99,70 +93,66 @@ export default class ServiceRegistry {
         if (existing) {
           Object.assign(existing, serviceInstance); // Update
         } else {
-          if (
-            (!isFrontend && this.deputies.has(serviceName)) ||
-            this.remoteSignals.has(serviceName) ||
-            (this.remoteSignals.has("*") && this.serviceName !== serviceName)
-          ) {
-            const clientCreated = instances?.some(
-              (i) =>
-                i.address === address &&
-                i.port === port &&
-                i.clientCreated &&
-                i.isActive,
-            );
+          instances.push(serviceInstance);
+        }
 
-            if (!clientCreated) {
-              try {
-                const communicationTypes = Array.from(
-                  new Set(
-                    this.deputies
-                      .get(serviceName)
-                      ?.map((d) => d.communicationType) ?? [],
-                  ),
-                );
+        if (
+          (!isFrontend && this.deputies.has(serviceName)) ||
+          this.remoteSignals.has(serviceName)
+        ) {
+          const clientCreated = instances?.some(
+            (i) =>
+              i.address === address &&
+              i.port === port &&
+              i.clientCreated &&
+              i.isActive,
+          );
 
-                if (
-                  !communicationTypes.includes("signal") &&
-                  (this.remoteSignals.has(serviceName) ||
-                    this.remoteSignals.has("*"))
-                ) {
-                  communicationTypes.push("signal");
-                }
+          if (!clientCreated) {
+            try {
+              const communicationTypes = Array.from(
+                new Set(
+                  this.deputies
+                    .get(serviceName)
+                    ?.map((d) => d.communicationType) ?? [],
+                ),
+              );
 
-                emit("meta.service_registry.dependee_registered", {
-                  serviceName: serviceName,
-                  serviceInstanceId: uuid,
-                  serviceAddress: address,
-                  servicePort: port,
-                  protocol: exposed ? "https" : "http",
-                  communicationTypes,
-                });
-
-                for (const instance of this.instances.get(serviceName)!) {
-                  if (instance.clientCreated) continue;
-                  instance.clientCreated = true;
-                  emit("meta.service_registry.dependee_registered", {
-                    serviceName: serviceName,
-                    serviceInstanceId: uuid,
-                    serviceAddress: address,
-                    servicePort: port,
-                    protocol: exposed ? "https" : "http",
-                    communicationTypes,
-                  });
-                }
-              } catch (e) {
-                Cadenza.log(
-                  "Error in dependee registration",
-                  { error: e, context: ctx },
-                  "error",
-                );
+              if (
+                !communicationTypes.includes("signal") &&
+                this.remoteSignals.has(serviceName)
+              ) {
+                communicationTypes.push("signal");
               }
+
+              emit("meta.service_registry.dependee_registered", {
+                serviceName: serviceName,
+                serviceInstanceId: uuid,
+                serviceAddress: address,
+                servicePort: port,
+                protocol: exposed ? "https" : "http",
+                communicationTypes,
+              });
+
+              instances
+                ?.filter(
+                  (i: any) =>
+                    i.address === address &&
+                    i.port === port &&
+                    i.clientCreated &&
+                    i.isActive,
+                )
+                .forEach((i: any) => {
+                  i.clientCreated = true;
+                });
+            } catch (e) {
+              Cadenza.log(
+                "Error in dependee registration",
+                { error: e, context: ctx },
+                "error",
+              );
             }
           }
-
-          serviceInstance.clientCreated = true;
-          instances.push(serviceInstance);
         }
 
         return true;
@@ -172,56 +162,83 @@ export default class ServiceRegistry {
       .emits("meta.service_registry.service_discovered")
       .doOn(
         "meta.initializing_service",
-        "CadenzaDB.meta.service_instance.inserted",
-        "CadenzaDB.meta.service_instance.updated",
+        "global.meta.service_instance.inserted",
+        "global.meta.service_instance.updated",
         "meta.service_instance.inserted",
         "meta.service_instance.updated",
         "meta.socket_client.status_received",
-      );
+      )
+      .attachSignal("meta.service_registry.dependee_registered");
 
-    this.handleRemoteSignalRegistrationTask = Cadenza.createMetaTask(
-      "Handle Remote Signal Registration",
+    Cadenza.createMetaTask("Split service instances", function* (ctx: any) {
+      if (!ctx.serviceInstances) {
+        return;
+      }
+
+      for (const serviceInstance of ctx.serviceInstances) {
+        yield { serviceInstance };
+      }
+    })
+      .doOn("meta.service_registry.registered_global_signals")
+      .then(this.handleInstanceUpdateTask);
+
+    this.handleGlobalSignalRegistrationTask = Cadenza.createMetaTask(
+      "Handle global Signal Registration",
       (ctx) => {
-        const {
-          __remoteServiceName,
-          __emitterSignalName,
-          __listenerServiceName,
-        } = ctx;
-        let remoteSignals = this.remoteSignals.get(__remoteServiceName);
-        if (!remoteSignals) {
-          this.remoteSignals.set(__remoteServiceName, []);
-          remoteSignals = this.remoteSignals.get(__remoteServiceName);
+        const { signalToTaskMap } = ctx;
+        const sortedSignalToTaskMap = signalToTaskMap.sort((a: any, b: any) => {
+          if (a.deleted && !b.deleted) return -1;
+          if (!a.deleted && b.deleted) return 1;
+          return 0;
+        });
+
+        const locallyEmittedSignals = Cadenza.broker
+          .listEmittedSignals()
+          .filter((s: any) => s.startsWith("global."));
+
+        for (const map of sortedSignalToTaskMap) {
+          if (map.deleted) {
+            this.remoteSignals.get(map.taskServiceName)?.delete(map.signal);
+
+            if (!this.remoteSignals.get(map.taskServiceName)?.size) {
+              this.remoteSignals.delete(map.taskServiceName);
+            }
+
+            Cadenza.get(
+              `Transmit signal: ${map.signal} to ${map.taskServiceName}`,
+            )?.destroy();
+            continue;
+          }
+
+          if (locallyEmittedSignals.includes(map.signal)) {
+            if (!this.remoteSignals.get(map.taskServiceName)) {
+              this.remoteSignals.set(map.taskServiceName, new Set());
+            }
+
+            if (!this.remoteSignals.get(map.taskServiceName)?.has(map.signal)) {
+              Cadenza.createSignalTransmissionTask(
+                map.signal,
+                map.taskServiceName,
+              );
+            }
+
+            this.remoteSignals.get(map.taskServiceName)?.add(map.signal);
+          }
         }
 
-        if (
-          remoteSignals &&
-          remoteSignals.findIndex(
-            (s) => s.__emitterSignalName === __emitterSignalName,
-          ) === -1
-        ) {
-          remoteSignals.push({
-            __listenerServiceName,
-            __emitterSignalName,
-            __remoteServiceName,
-          });
-          return true;
-        }
-
-        return false;
+        return true;
       },
       "Handles registration of remote signals",
-    );
+    )
+      .emits("meta.service_registry.registered_global_signals")
+      .doOn("global.meta.cadenza_db.gathered_sync_data");
 
     this.getRemoteSignalsTask = Cadenza.createMetaTask(
       "Get remote signals",
       (ctx) => {
         const { serviceName } = ctx;
-        let remoteSignals = this.remoteSignals.get(serviceName) ?? [];
-        remoteSignals = remoteSignals.concat(this.remoteSignals.get("*") ?? []);
-        console.log("remote signals", remoteSignals);
-
         return {
-          remoteSignals: remoteSignals,
+          remoteSignals: this.remoteSignals.get(serviceName) ?? [],
           ...ctx,
         };
       },
@@ -239,6 +256,7 @@ export default class ServiceRegistry {
         const instances = serviceInstances?.filter(
           (i) => i.address === serviceAddress && i.port === servicePort,
         );
+
         Cadenza.log(
           "Service not responding.",
           {
@@ -254,8 +272,7 @@ export default class ServiceRegistry {
         for (const instance of instances ?? []) {
           instance.isActive = false;
           instance.isNonResponsive = true;
-          instance.clientCreated = false;
-          emit("meta.service_registry.service_not_responding", {
+          emit("global.meta.service_registry.service_not_responding", {
             data: {
               isActive: false,
               isNonResponsive: true,
@@ -265,24 +282,26 @@ export default class ServiceRegistry {
             },
           });
         }
+
         return true;
       },
       "Handles service not responding",
-    ).doOn("meta.fetch.handshake_failed", "meta.socket_client.disconnected");
+    )
+      .doOn("meta.fetch.handshake_failed", "meta.socket_client.disconnected")
+      .attachSignal("global.meta.service_registry.service_not_responding");
 
     this.handleServiceHandshakeTask = Cadenza.createMetaTask(
       "Handle service handshake",
       (ctx, emit) => {
-        const { serviceName, serviceAddress, servicePort, serviceInstanceId } =
-          ctx;
+        const { serviceName, serviceAddress, servicePort } = ctx;
         const serviceInstances = this.instances.get(serviceName);
         const instances = serviceInstances?.filter(
           (i) => i.address === serviceAddress && i.port === servicePort,
         );
         for (const instance of instances ?? []) {
-          // instance.isActive = serviceInstanceId === instance.uuid; // TODO cadenza-db will be deactivated by this.
-          // instance.isNonResponsive = serviceInstanceId !== instance.uuid;
-          emit("meta.service_registry.service_handshake", {
+          instance.isActive = true;
+          instance.isNonResponsive = true;
+          emit("global.meta.service_registry.service_handshake", {
             data: {
               isActive: instance.isActive,
               isNonResponsive: instance.isNonResponsive,
@@ -295,7 +314,9 @@ export default class ServiceRegistry {
         return true;
       },
       "Handles service handshake",
-    ).doOn("meta.fetch.handshake_complete");
+    )
+      .doOn("meta.fetch.handshake_complete")
+      .attachSignal("global.meta.service_registry.service_handshake");
 
     this.handleSocketStatusUpdateTask = Cadenza.createMetaTask(
       "Handle Socket Status Update",
@@ -355,10 +376,7 @@ export default class ServiceRegistry {
           },
         )
           .then(this.handleInstanceUpdateTask)
-          .doOn(
-            "meta.cadenza_db.gathered_sync_data",
-            "CadenzaDB.meta.cadenza_db.gathered_sync_data",
-          ),
+          .doOn("meta.signal_controller.signal_map_added"),
       );
 
     this.getInstanceById = Cadenza.createMetaTask(
@@ -391,7 +409,7 @@ export default class ServiceRegistry {
 
     this.handleDeputyRegistrationTask = Cadenza.createMetaTask(
       "Handle Deputy Registration",
-      (ctx, emit) => {
+      (ctx) => {
         const { serviceName } = ctx;
 
         if (!this.deputies.has(serviceName)) this.deputies.set(serviceName, []);
@@ -403,10 +421,10 @@ export default class ServiceRegistry {
           localTaskName: ctx.localTaskName,
           communicationType: ctx.communicationType,
         });
-
-        emit("meta.service_registry.deputy_registered", ctx);
       },
-    ).doOn("meta.deputy.created");
+    )
+      .doOn("meta.deputy.created")
+      .emits("meta.service_registry.deputy_registered");
 
     this.getAllInstances = Cadenza.createMetaTask(
       "Get all instances",
@@ -438,12 +456,13 @@ export default class ServiceRegistry {
         return context;
       },
       "Deletes instance.",
-    ).doOn("CadenzaDB.meta.service_instance.deleted");
+    ).doOn("global.meta.service_instance.deleted");
 
     this.getBalancedInstance = Cadenza.createMetaTask(
       "Get balanced instance",
       (context, emit) => {
-        const { __serviceName, __triedInstances, __retries } = context;
+        const { __serviceName, __triedInstances, __retries, __broadcast } =
+          context;
         let retries = __retries ?? 0;
         let triedInstances = __triedInstances ?? [];
 
@@ -462,9 +481,7 @@ export default class ServiceRegistry {
           return context;
         }
 
-        // TODO: A way to specify if you want to send to all instances
-
-        if (instances[0].isFrontend) {
+        if (__broadcast || instances[0].isFrontend) {
           for (const instance of instances) {
             emit(
               `meta.service_registry.selected_instance_for_socket:${instance.address}`,
@@ -518,13 +535,20 @@ export default class ServiceRegistry {
         return context;
       },
       "Gets a balanced instance for load balancing",
-    ).doOn(
-      "meta.deputy.delegation_requested",
-      "meta.signal_transmission.requested",
-      "meta.socket_client.delegate_failed",
-      "meta.fetch.delegate_failed",
-      "meta.socket_client.signal_transmission_failed",
-    );
+    )
+      .doOn(
+        "meta.deputy.delegation_requested",
+        "meta.signal_transmission.requested",
+        "meta.socket_client.delegate_failed",
+        "meta.fetch.delegate_failed",
+        "meta.socket_client.signal_transmission_failed",
+      )
+      .attachSignal(
+        "meta.service_registry.load_balance_failed",
+        "meta.service_registry.selected_instance_for_socket",
+        "meta.service_registry.selected_instance_for_fetch",
+        "meta.service_registry.socket_failed",
+      );
 
     this.getStatusTask = Cadenza.createMetaTask("Get status", (ctx) => {
       if (!this.serviceName) {
@@ -682,7 +706,7 @@ export default class ServiceRegistry {
         retryDelay: 1000,
       },
     )
-      .doOn("meta.rest.network_configured", "meta.rest.browser_detected")
+      .doOn("global.meta.rest.network_configured", "meta.rest.browser_detected")
       .then(
         Cadenza.createMetaTask(
           "Setup service",
@@ -716,12 +740,13 @@ export default class ServiceRegistry {
             .doAfter(this.fullSyncTask)
             .then(
               Cadenza.createCadenzaDBQueryTask("signal_registry", {
-                fields: ["name", "service_name"],
+                fields: ["name"],
                 filter: {
-                  source_service_name: [ctx.__serviceName, "*"],
+                  global: true,
                 },
               }).then(
                 Cadenza.createMetaTask(
+                  // TODO this is outdated. Fix it.
                   "Create signal transmission tasks",
                   (ctx, emit) => {
                     const signalRegistry = ctx.signalRegistry;

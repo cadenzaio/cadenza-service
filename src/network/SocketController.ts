@@ -189,10 +189,13 @@ export default class SocketController {
                           );
                         }
                       },
-                    ).doOn(
-                      `meta.service_registry.selected_instance_for_socket:${fetchId}`,
-                    );
+                    )
+                      .doOn(
+                        `meta.service_registry.selected_instance_for_socket:${fetchId}`,
+                      )
+                      .attachSignal("meta.socket_client.transmitted");
                   }
+
                   Cadenza.emit("meta.socket.handshake", ctx);
                 },
               );
@@ -200,16 +203,25 @@ export default class SocketController {
               ws.on(
                 "delegation",
                 (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
-                  console.log("Received socket delegation request", {
-                    localTaskName: ctx.__localTaskName,
-                    localServiceName: ctx.__localServiceName,
-                    remoteRoutineName: ctx.__remoteRoutineName,
-                  });
                   const deputyExecId = ctx.__metadata.__deputyExecId;
+                  console.log(
+                    "Received socket delegation request",
+                    deputyExecId,
+                    ctx.__localTaskName,
+                    ctx.__localServiceName,
+                  );
 
                   Cadenza.createEphemeralMetaTask(
                     "Resolve delegation",
-                    callback,
+                    (ctx: AnyObject) => {
+                      console.log(
+                        "Resolved socket delegation",
+                        deputyExecId,
+                        ctx.__localTaskName,
+                        ctx.__localServiceName,
+                      );
+                      callback(ctx);
+                    },
                     "Resolves a delegation request using the provided callback from the client (.emitWithAck())",
                     { register: false },
                   )
@@ -256,9 +268,17 @@ export default class SocketController {
                       __status: "success",
                       __signalName: ctx.__signalName,
                     });
-                    console.log("Received signal", ctx.__signalName);
+                    console.log(
+                      "Received signal",
+                      ctx.__signalName,
+                      ctx.__serviceName,
+                    );
                     Cadenza.emit(ctx.__signalName, ctx);
                   } else {
+                    Cadenza.log(
+                      `No such signal ${ctx.__signalName} on ${ctx.__serviceName}`,
+                      "warning",
+                    );
                     callback({
                       ...ctx,
                       __status: "error",
@@ -322,7 +342,7 @@ export default class SocketController {
         }),
       ],
       "Bootstraps the socket server",
-    ).doOn("meta.rest.network_configured");
+    ).doOn("global.meta.rest.network_configured");
 
     Cadenza.createMetaTask(
       "Connect to socket server",
@@ -533,13 +553,15 @@ export default class SocketController {
             }
 
             return new Promise((resolve) => {
-              console.log("Socket Delegate:", {
-                localTaskName: ctx.__localTaskName,
-                remoteRoutineName: ctx.__remoteRoutineName,
-                serviceName: ctx.__serviceName,
-              });
+              console.log(
+                "Socket Delegate:",
+                ctx.__remoteRoutineName,
+                "on",
+                ctx.__serviceName,
+              );
 
               delete ctx.__isSubMeta;
+              delete ctx.__broadcast;
               emitWhenReady(
                 "delegation",
                 ctx,
@@ -560,7 +582,9 @@ export default class SocketController {
             });
           },
           `Delegate flow to service ${serviceName} with address ${URL}`,
-        ).doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`);
+        )
+          .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
+          .attachSignal("meta.socket_client.delegated");
 
         const transmitTask = Cadenza.createMetaTask(
           `Transmit signal to ${URL}`,
@@ -570,9 +594,11 @@ export default class SocketController {
             }
 
             return new Promise((resolve) => {
+              delete ctx.__broadcast;
+
               emitWhenReady("signal", ctx, 10_000, (response: AnyObject) => {
                 console.log(
-                  "Transmitted signal",
+                  "Socket transmitted signal",
                   ctx.__signalName,
                   serviceName,
                 );
@@ -588,7 +614,9 @@ export default class SocketController {
             });
           },
           `Transmits signal to service ${serviceName} with address ${URL}`,
-        ).doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`);
+        )
+          .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
+          .attachSignal("meta.socket_client.transmitted");
 
         Cadenza.createEphemeralMetaTask(
           `Shutdown SocketClient ${URL}`,

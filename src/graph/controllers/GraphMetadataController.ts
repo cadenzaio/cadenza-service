@@ -13,7 +13,7 @@ export default class GraphMetadataController {
       return {
         data: {
           ...ctx.data,
-          service_name: Cadenza.serviceRegistry.serviceName,
+          serviceName: Cadenza.serviceRegistry.serviceName,
           // input_context_schema_id: ctx.data.inputContextSchema ? {  // TODO
           //
           // } : null,
@@ -24,30 +24,30 @@ export default class GraphMetadataController {
       };
     })
       .doOn("meta.task.created")
-      .emits("meta.graph_metadata.task_created");
+      .emits("global.meta.graph_metadata.task_created");
 
     Cadenza.createMetaTask("Handle task update", (ctx) => {
       return {
         ...ctx,
         filter: {
           ...ctx.filter,
-          service_name: Cadenza.serviceRegistry.serviceName,
+          serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };
     })
       .doOn("meta.task.layer_index_changed", "meta.task.destroyed")
-      .emits("meta.graph_metadata.task_updated");
+      .emits("global.meta.graph_metadata.task_updated");
 
     Cadenza.createMetaTask("Handle task relationship creation", (ctx) => {
       return {
         data: {
           ...ctx.data,
-          service_name: Cadenza.serviceRegistry.serviceName,
+          serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };
     })
       .doOn("meta.task.relationship_added")
-      .emits("meta.graph_metadata.task_relationship_created");
+      .emits("global.meta.graph_metadata.task_relationship_created");
 
     Cadenza.createMetaTask(
       "Handle task deputy relationship creation",
@@ -56,70 +56,48 @@ export default class GraphMetadataController {
         return {
           data: {
             triggered_task_name: ctx.remoteRoutineName,
-            triggered_task_version: 1, // TODO
+            triggered_task_version: 1,
             triggered_service_name: ctx.serviceName,
             deputy_task_name: ctx.localTaskName,
-            deputy_task_version: 1, // TODO
+            deputy_task_version: 1,
             deputy_service_name: Cadenza.serviceRegistry.serviceName,
           },
         };
       },
     )
       .doOn("meta.service_registry.deputy_registered")
-      .emits("meta.graph_metadata.deputy_relationship_created");
+      .emits("global.meta.graph_metadata.deputy_relationship_created");
 
     Cadenza.createMetaTask("Handle task signal observation", (ctx) => {
-      const firstChar = ctx.data.signalName.charAt(0);
-      let _signal = ctx.data.signalName;
-      let signalServiceName;
-      if (
-        firstChar === firstChar.toUpperCase() &&
-        firstChar !== firstChar.toLowerCase()
-      ) {
-        // TODO handle wildcards
-        signalServiceName = ctx.data.signalName.split(".")[0];
-        _signal = ctx.data.signalName.split(".").slice(1).join(".");
-      }
       return {
         data: {
           ...ctx.data,
-          signalName: _signal,
-          taskServiceName: Cadenza.serviceRegistry.serviceName,
-          signalServiceName:
-            signalServiceName ?? Cadenza.serviceRegistry.serviceName,
+          serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };
     })
       .doOn("meta.task.observed_signal")
-      .emits("meta.graph_metadata.task_signal_observed");
+      .emits("global.meta.graph_metadata.task_signal_observed");
 
     Cadenza.createMetaTask("Handle task signal attachment", (ctx) => {
       return {
         data: {
           ...ctx.data,
-          service_name: Cadenza.serviceRegistry.serviceName,
+          serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };
     })
       .doOn("meta.task.attached_signal")
-      .emits("meta.graph_metadata.task_attached_signal");
+      .emits("global.meta.graph_metadata.task_attached_signal");
 
     Cadenza.createMetaTask("Handle task unsubscribing signal", (ctx) => {
-      // const firstChar = ctx.data.signalName.charAt(0);
-      // let signalServiceName;
-      // if (
-      //   firstChar === firstChar.toUpperCase() &&
-      //   firstChar !== firstChar.toLowerCase()
-      // ) {
-      //   signalServiceName = ctx.data.signalName.split(".")[0];
-      // }
       return {
         data: {
           deleted: true,
         },
         filter: {
           ...ctx.filter,
-          task_service_name: Cadenza.serviceRegistry.serviceName,
+          serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };
     })
@@ -133,46 +111,46 @@ export default class GraphMetadataController {
         },
         filter: {
           ...ctx.filter,
-          service_name: Cadenza.serviceRegistry.serviceName,
+          serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };
     })
       .doOn("meta.task.detached_signal")
-      .emits("meta.graph_metadata.task_detached_signal");
+      .emits("global.meta.graph_metadata.task_detached_signal");
 
     Cadenza.createMetaTask("Handle routine creation", (ctx) => {
       return {
         data: {
           ...ctx.data,
-          service_name: Cadenza.serviceRegistry.serviceName,
+          serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };
     })
       .doAfter(Cadenza.registry.registerRoutine)
-      .emits("meta.graph_metadata.routine_created");
+      .emits("global.meta.graph_metadata.routine_created");
 
     Cadenza.createMetaTask("Handle routine update", (ctx) => {
       return {
         ...ctx,
         filter: {
           ...ctx.filter,
-          service_name: Cadenza.serviceRegistry.serviceName,
+          serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };
     })
       .doOn("meta.routine.destroyed")
-      .emits("meta.graph_metadata.routine_updated");
+      .emits("global.meta.graph_metadata.routine_updated");
 
     Cadenza.createMetaTask("Handle adding task to routine", (ctx) => {
       return {
         data: {
           ...ctx.data,
-          service_name: Cadenza.serviceRegistry.serviceName,
+          serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };
     })
       .doOn("meta.routine.task_added")
-      .emits("meta.graph_metadata.task_added_to_routine");
+      .emits("global.meta.graph_metadata.task_added_to_routine");
 
     Cadenza.createMetaTask("Handle new trace", (ctx) => {
       const context = ctx.data.context;
@@ -189,7 +167,7 @@ export default class GraphMetadataController {
             data: {
               uuid: context.id,
               context: context.context,
-              is_meta: ctx.data.isMeta,
+              isMeta: ctx.data.isMeta,
             },
             return: "uuid",
           },
@@ -197,7 +175,7 @@ export default class GraphMetadataController {
       };
     })
       .doOn("meta.runner.new_trace", "sub_meta.signal_broker.new_trace")
-      .emits("meta.graph_metadata.execution_trace_created");
+      .emits("global.meta.graph_metadata.execution_trace_created");
 
     Cadenza.createMetaTask(
       "Handle routine execution creation",
@@ -208,9 +186,9 @@ export default class GraphMetadataController {
           queryData: {
             data: {
               ...ctx.data,
-              service_name: Cadenza.serviceRegistry.serviceName,
-              service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
-              context_id:
+              serviceName: Cadenza.serviceRegistry.serviceName,
+              serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+              contextId:
                 typeof context === "string"
                   ? context
                   : {
@@ -219,7 +197,7 @@ export default class GraphMetadataController {
                       data: {
                         uuid: context.id,
                         context: context.context,
-                        is_meta: ctx.data.isMeta,
+                        isMeta: ctx.data.isMeta,
                       },
                       return: "uuid",
                     },
@@ -231,7 +209,7 @@ export default class GraphMetadataController {
       { concurrency: 100, isSubMeta: true },
     )
       .doOn("meta.runner.added_tasks")
-      .emits("meta.graph_metadata.routine_execution_created");
+      .emits("global.meta.graph_metadata.routine_execution_created");
 
     Cadenza.createMetaTask(
       "Handle routine execution started",
@@ -242,7 +220,7 @@ export default class GraphMetadataController {
       { concurrency: 100, isSubMeta: true },
     )
       .doOn("meta.node.started_routine_execution")
-      .emits("meta.graph_metadata.routine_execution_started");
+      .emits("global.meta.graph_metadata.routine_execution_started");
 
     Cadenza.createMetaTask(
       "Handle routine execution ended",
@@ -252,9 +230,9 @@ export default class GraphMetadataController {
         return {
           data: {
             ...ctx.data,
-            service_name: Cadenza.serviceRegistry.serviceName,
-            service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
-            result_context_id:
+            serviceName: Cadenza.serviceRegistry.serviceName,
+            serviceInstance_id: Cadenza.serviceRegistry.serviceInstanceId,
+            resultContextId:
               typeof context === "string"
                 ? context
                 : {
@@ -277,7 +255,7 @@ export default class GraphMetadataController {
       { concurrency: 100, isSubMeta: true },
     )
       .doOn("meta.node.ended_routine_execution")
-      .emits("meta.graph_metadata.routine_execution_ended");
+      .emits("global.meta.graph_metadata.routine_execution_ended");
 
     Cadenza.createMetaTask(
       "Handle task execution creation",
@@ -287,9 +265,9 @@ export default class GraphMetadataController {
         return {
           data: {
             ...ctx.data,
-            service_name: Cadenza.serviceRegistry.serviceName,
-            service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
-            context_id:
+            serviceName: Cadenza.serviceRegistry.serviceName,
+            serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+            contextId:
               typeof context === "string"
                 ? context
                 : {
@@ -298,7 +276,7 @@ export default class GraphMetadataController {
                     data: {
                       uuid: context.id,
                       context: context.context,
-                      is_meta: ctx.data.isMeta,
+                      isMeta: ctx.data.isMeta,
                     },
                     return: "uuid",
                   },
@@ -309,7 +287,7 @@ export default class GraphMetadataController {
       { concurrency: 100, isSubMeta: true },
     )
       .doOn("meta.node.scheduled")
-      .emits("meta.graph_metadata.task_execution_created");
+      .emits("global.meta.graph_metadata.task_execution_created");
 
     Cadenza.createMetaTask(
       "Handle task execution mapped",
@@ -320,7 +298,7 @@ export default class GraphMetadataController {
       { concurrency: 100, isSubMeta: true },
     )
       .doOn("meta.node.mapped")
-      .emits("meta.graph_metadata.task_execution_mapped");
+      .emits("global.meta.graph_metadata.task_execution_mapped");
 
     Cadenza.createMetaTask(
       "Handle task execution started",
@@ -331,7 +309,7 @@ export default class GraphMetadataController {
       { concurrency: 100, isSubMeta: true },
     )
       .doOn("meta.node.started")
-      .emits("meta.graph_metadata.task_execution_started");
+      .emits("global.meta.graph_metadata.task_execution_started");
 
     Cadenza.createMetaTask(
       "Handle task execution ended",
@@ -341,9 +319,9 @@ export default class GraphMetadataController {
         return {
           data: {
             ...ctx.data,
-            service_name: Cadenza.serviceRegistry.serviceName,
-            service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
-            result_context_id:
+            serviceName: Cadenza.serviceRegistry.serviceName,
+            serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+            resultContextId:
               typeof context === "string"
                 ? context
                 : {
@@ -352,7 +330,7 @@ export default class GraphMetadataController {
                     data: {
                       uuid: context.id,
                       context: context.context,
-                      is_meta: ctx.data.isMeta ?? false,
+                      isMeta: ctx.data.isMeta ?? false,
                     },
                     return: "uuid",
                   },
@@ -366,19 +344,19 @@ export default class GraphMetadataController {
       { concurrency: 100, isSubMeta: true },
     )
       .doOn("meta.node.ended")
-      .emits("meta.graph_metadata.task_execution_ended");
+      .emits("global.meta.graph_metadata.task_execution_ended");
 
     Cadenza.createMetaTask(
       "Handle task execution relationship creation",
       (ctx) => {
         return {
           data: {
-            execution_count: "increment",
-            last_executed: formatTimestamp(Date.now()),
+            executionCount: "increment",
+            lastExecuted: formatTimestamp(Date.now()),
           },
           filter: {
             ...ctx.filter,
-            service_name: Cadenza.serviceRegistry.serviceName,
+            serviceName: Cadenza.serviceRegistry.serviceName,
           },
         };
       },
@@ -386,7 +364,7 @@ export default class GraphMetadataController {
       { concurrency: 100, isSubMeta: true },
     )
       .doOn("meta.node.mapped")
-      .emits("meta.graph_metadata.relationship_executed");
+      .emits("global.meta.graph_metadata.relationship_executed");
 
     Cadenza.createMetaTask(
       "Handle explicit task execution relationship creation",
@@ -400,7 +378,7 @@ export default class GraphMetadataController {
       },
     )
       .doOn("meta.node.detected_previous_task_execution")
-      .emits("meta.graph_metadata.explicit_relationship_created");
+      .emits("global.meta.graph_metadata.explicit_relationship_created");
 
     Cadenza.createMetaTask(
       "Handle explicit task execution relationship execution",
@@ -423,6 +401,6 @@ export default class GraphMetadataController {
       },
     )
       .doOn("meta.node.detected_previous_task_execution")
-      .emits("meta.graph_metadata.explicit_relationship_executed");
+      .emits("global.meta.graph_metadata.explicit_relationship_executed");
   }
 }
