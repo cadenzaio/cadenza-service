@@ -461,7 +461,7 @@ export default class CadenzaService {
     signalName: string,
     serviceName: string,
     options: TaskOptions = {},
-  ): SignalTransmissionTask {
+  ): SignalTransmissionTask | undefined {
     this.bootstrap();
     this.validateName(signalName);
     this.validateName(serviceName);
@@ -490,7 +490,8 @@ export default class CadenzaService {
 
     const name = `Transmit signal: ${signalName} to ${serviceName}`;
     if (this.get(name)) {
-      throw new Error(`Task '${name}' already exists`);
+      console.log("Signal transmission task already exists", name);
+      return;
     }
 
     return new SignalTransmissionTask(
@@ -810,11 +811,17 @@ export default class CadenzaService {
     };
 
     if (options.cadenzaDB?.connect) {
-      this.createMetaTask("Create service", async (_, emit) => {
+      this.createEphemeralMetaTask("Create service", async (context, emit) => {
         emit("meta.create_service_requested", initContext);
       }).doOn("meta.fetch.handshake_complete");
     } else {
       this.emit("meta.create_service_requested", initContext);
+      this.createMetaTask("Create signal transmission for sync", (ctx) => {
+        this.createSignalTransmissionTask(
+          "global.meta.cadenza_db.gathered_sync_data",
+          ctx.serviceName,
+        );
+      }).doOn("meta.rest.handshake");
     }
 
     this.createMetaTask("Handle service setup completion", () => {

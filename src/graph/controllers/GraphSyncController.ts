@@ -24,6 +24,7 @@ export default class GraphSyncController {
     this.splitRoutinesTask = Cadenza.createMetaTask(
       "Split routines for registration",
       (ctx, emit) => {
+        console.log("SPLITTING ROUTINES FOR REGISTRATION");
         const { routines } = ctx;
         if (!routines) return;
         for (const routine of routines) {
@@ -68,6 +69,8 @@ export default class GraphSyncController {
             uuid: Cadenza.serviceRegistry.serviceInstanceId,
           },
         });
+
+        Cadenza.log("Synced resources...");
       },
     ).attachSignal(
       "global.meta.sync_controller.routine_added",
@@ -128,6 +131,7 @@ export default class GraphSyncController {
     this.splitTasksForRegistration = Cadenza.createMetaTask(
       "Split tasks for registration",
       function* (ctx) {
+        console.log("SPLITTING TASKS FOR REGISTRATION");
         const tasks = ctx.tasks;
         for (const task of tasks) {
           if (task.registered) continue;
@@ -443,6 +447,8 @@ export default class GraphSyncController {
       );
 
     Cadenza.throttle("sync_controller.sync_tick", { __syncing: true }, 120000);
-    Cadenza.schedule("meta.sync_requested", { __syncing: true }, 2000);
+    if (this.isCadenzaDBReady) {
+      Cadenza.schedule("meta.sync_requested", { __syncing: true }, 2000);
+    }
   }
 }

@@ -869,6 +869,8 @@ export default class DatabaseController {
       return { errored: true, __error: "No data provided for insert" };
     }
 
+    let resultContext = {};
+
     const client = transaction ? await this.getClient() : this.dbClient;
     try {
       if (transaction) await client.query("BEGIN");
@@ -934,7 +936,7 @@ export default class DatabaseController {
       if (transaction) await client.query("COMMIT");
       const resultRows = this.toCamelCase(result.rows);
 
-      return {
+      resultContext = {
         [`${camelCase(tableName)}${isBatch ? "s" : ""}`]: isBatch
           ? resultRows
           : resultRows[0],
@@ -942,19 +944,28 @@ export default class DatabaseController {
         __success: true,
       };
     } catch (error: any) {
-      if (transaction) await client.query("ROLLBACK");
-      return {
-        ...context,
-        errored: true,
-        __error: `Insert failed: ${error.message}`,
-        __success: false,
-      };
+      if (error.message.includes("violates unique constraint")) {
+        resultContext = {
+          [`${camelCase(tableName)}`]: null,
+          __success: false,
+        };
+      } else {
+        if (transaction) await client.query("ROLLBACK");
+        resultContext = {
+          ...context,
+          errored: true,
+          __error: `Insert failed: ${error.message}`,
+          __success: false,
+        };
+      }
     } finally {
       if (transaction && client) {
         // @ts-ignore
         client.release();
       }
     }
+
+    return resultContext;
   }
 
   /**
@@ -981,6 +992,8 @@ export default class DatabaseController {
     if (!data || Object.keys(data).length === 0) {
       return { errored: true, __error: "No data provided for update" };
     }
+
+    let resultContext = {};
 
     const client = transaction ? await this.getClient() : this.dbClient;
     try {
@@ -1021,20 +1034,20 @@ export default class DatabaseController {
       const rows = this.toCamelCase(result.rows);
 
       if (rows.length === 0) {
-        return {
+        resultContext = {
           sql,
           params,
           __success: false,
         };
+      } else {
+        resultContext = {
+          [`${camelCase(tableName)}`]: rows[0],
+          __success: true,
+        };
       }
-
-      return {
-        [`${camelCase(tableName)}`]: rows[0],
-        __success: true,
-      };
     } catch (error: any) {
       if (transaction) await client.query("ROLLBACK");
-      return {
+      resultContext = {
         ...context,
         errored: true,
         __error: `Update failed: ${error.message}`,
@@ -1046,6 +1059,8 @@ export default class DatabaseController {
         client.release();
       }
     }
+
+    return resultContext;
   }
 
   /**
@@ -1068,6 +1083,8 @@ export default class DatabaseController {
       return { errored: true, __error: "No filter provided for delete" };
     }
 
+    let resultContext = {};
+
     const client = transaction ? await this.getClient() : this.dbClient;
     try {
       if (transaction) await client.query("BEGIN");
@@ -1078,13 +1095,13 @@ export default class DatabaseController {
       const result = await client.query(sql, params);
       if (transaction) await client.query("COMMIT");
       const rows = this.toCamelCase(result.rows);
-      return {
+      resultContext = {
         [`${camelCase(tableName)}`]: rows[0],
         __success: true,
       };
     } catch (error: any) {
       if (transaction) await client.query("ROLLBACK");
-      return {
+      resultContext = {
         errored: true,
         __error: `Delete failed: ${error.message}`,
         __errors: { delete: error.message },
@@ -1096,6 +1113,8 @@ export default class DatabaseController {
         client.release();
       }
     }
+
+    return resultContext;
   }
 
   /**

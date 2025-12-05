@@ -1,4 +1,4 @@
-import { Task } from "@cadenza.io/core";
+import { GraphRoutine, Task } from "@cadenza.io/core";
 import type { AnyObject } from "@cadenza.io/core";
 import Cadenza from "../Cadenza";
 import { isBrowser } from "../utils/environment";
@@ -53,7 +53,7 @@ export default class ServiceRegistry {
   handleGlobalSignalRegistrationTask: Task;
   getRemoteSignalsTask: Task;
   handleSocketStatusUpdateTask: Task;
-  fullSyncTask: Task;
+  fullSyncTask: GraphRoutine;
   getAllInstances: Task;
   doForEachInstance: Task;
   deleteInstance: Task;
@@ -177,12 +177,16 @@ export default class ServiceRegistry {
     this.handleGlobalSignalRegistrationTask = Cadenza.createMetaTask(
       "Handle global Signal Registration",
       (ctx) => {
-        const { signalToTaskMap } = ctx;
-        const sortedSignalToTaskMap = signalToTaskMap.sort((a: any, b: any) => {
-          if (a.deleted && !b.deleted) return -1;
-          if (!a.deleted && b.deleted) return 1;
-          return 0;
-        });
+        const { signalToTaskMaps } = ctx;
+        const sortedSignalToTaskMap = signalToTaskMaps.sort(
+          (a: any, b: any) => {
+            if (a.deleted && !b.deleted) return -1;
+            if (!a.deleted && b.deleted) return 1;
+            return 0;
+          },
+        );
+
+        console.log("signalToTaskMap", sortedSignalToTaskMap);
 
         const locallyEmittedSignals = Cadenza.broker
           .listEmittedSignals()
@@ -190,31 +194,31 @@ export default class ServiceRegistry {
 
         for (const map of sortedSignalToTaskMap) {
           if (map.deleted) {
-            this.remoteSignals.get(map.taskServiceName)?.delete(map.signal);
+            this.remoteSignals.get(map.serviceName)?.delete(map.signalName);
 
-            if (!this.remoteSignals.get(map.taskServiceName)?.size) {
-              this.remoteSignals.delete(map.taskServiceName);
+            if (!this.remoteSignals.get(map.serviceName)?.size) {
+              this.remoteSignals.delete(map.serviceName);
             }
 
             Cadenza.get(
-              `Transmit signal: ${map.signal} to ${map.taskServiceName}`,
+              `Transmit signal: ${map.signalName} to ${map.serviceName}`,
             )?.destroy();
             continue;
           }
 
-          if (locallyEmittedSignals.includes(map.signal)) {
-            if (!this.remoteSignals.get(map.taskServiceName)) {
-              this.remoteSignals.set(map.taskServiceName, new Set());
+          if (locallyEmittedSignals.includes(map.signalName)) {
+            if (!this.remoteSignals.get(map.serviceName)) {
+              this.remoteSignals.set(map.serviceName, new Set());
             }
 
-            if (!this.remoteSignals.get(map.taskServiceName)?.has(map.signal)) {
+            if (!this.remoteSignals.get(map.serviceName)?.has(map.signalName)) {
               Cadenza.createSignalTransmissionTask(
-                map.signal,
-                map.taskServiceName,
+                map.signalName,
+                map.serviceName,
               );
             }
 
-            this.remoteSignals.get(map.taskServiceName)?.add(map.signal);
+            this.remoteSignals.get(map.serviceName)?.add(map.signalName);
           }
         }
 
@@ -326,50 +330,44 @@ export default class ServiceRegistry {
       "Handles status update from socket broadcast",
     ).doOn("meta.socket_client.status_received");
 
-    this.fullSyncTask = Cadenza.createCadenzaDBQueryTask("service_instance", {
-      filter: {
-        deleted: false,
-        is_active: true,
-        is_non_responsive: false,
-        is_blocked: false,
+    const mergeSyncDataTask = Cadenza.createUniqueMetaTask(
+      "Merge sync data",
+      (ctx) => {
+        let joinedContext: any = {};
+        ctx.joinedContexts.forEach((ctx: any) => {
+          joinedContext = { ...joinedContext, ...ctx };
+        });
+        console.log("Full sync joinedContext", joinedContext);
+        return joinedContext;
       },
-      fields: [
-        "uuid",
-        "address",
-        "port",
-        "service_name",
-        "is_active",
-        "is_non_responsive",
-        "is_blocked",
-        "health",
-        "exposed",
-        "created",
-        "is_frontend",
-      ],
-    })
-      .doOn("meta.sync_requested")
-      .emits("meta.service_registry.synced_instances")
-      .then(
-        Cadenza.createMetaTask(
-          "Split service instances",
-          function* (ctx: AnyObject) {
-            const { serviceInstances } = ctx;
-            if (!serviceInstances) {
-              Cadenza.log(
-                "SyncFailed: No service instances found",
-                ctx,
-                "error",
-              );
-              return;
-            }
-            for (const serviceInstance of serviceInstances) {
-              yield { serviceInstance };
-            }
-          },
-        )
-          .then(this.handleInstanceUpdateTask)
-          .doOn("meta.signal_controller.signal_map_added"),
-      );
+    ).then(this.handleGlobalSignalRegistrationTask);
+
+    this.fullSyncTask = Cadenza.createMetaRoutine("Full sync", [
+      Cadenza.createCadenzaDBQueryTask("signal_to_task_map", {
+        fields: ["signal_name", "service_name", "deleted"],
+      }).then(mergeSyncDataTask),
+      Cadenza.createCadenzaDBQueryTask("service_instance", {
+        filter: {
+          deleted: false,
+          is_active: true,
+          is_non_responsive: false,
+          is_blocked: false,
+        },
+        fields: [
+          "uuid",
+          "address",
+          "port",
+          "service_name",
+          "is_active",
+          "is_non_responsive",
+          "is_blocked",
+          "health",
+          "exposed",
+          "created",
+          "is_frontend",
+        ],
+      }).then(mergeSyncDataTask),
+    ]).doOn("meta.sync_requested");
 
     this.getInstanceById = Cadenza.createMetaTask(
       "Get instance by id",
@@ -719,7 +717,7 @@ export default class ServiceRegistry {
           Cadenza.createMetaTask("Prepare for signal sync", () => {
             return {};
           })
-            .doAfter(this.fullSyncTask)
+            // .doAfter(this.fullSyncTask)
             .then(
               Cadenza.createCadenzaDBQueryTask("signal_registry", {
                 fields: ["name"],
