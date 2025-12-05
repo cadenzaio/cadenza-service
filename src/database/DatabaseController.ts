@@ -943,13 +943,14 @@ export default class DatabaseController {
         __success: true,
       };
     } catch (error: any) {
+      if (transaction) await client.query("ROLLBACK");
+
       if (error.message.includes("violates unique constraint")) {
         resultContext = {
           [`${camelCase(tableName)}`]: null,
           __success: false,
         };
       } else {
-        if (transaction) await client.query("ROLLBACK");
         resultContext = {
           ...context,
           errored: true,
