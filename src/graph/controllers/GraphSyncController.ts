@@ -446,8 +446,21 @@ export default class GraphSyncController {
           ),
       );
 
-    Cadenza.throttle("sync_controller.sync_tick", { __syncing: true }, 120000);
-    if (this.isCadenzaDBReady) {
+    console.log("Sync controller init", this.isCadenzaDBReady);
+
+    if (!this.isCadenzaDBReady) {
+      Cadenza.throttle(
+        "sync_controller.sync_tick",
+        { __syncing: true },
+        300000,
+        true,
+      );
+    } else {
+      Cadenza.throttle(
+        "sync_controller.sync_tick",
+        { __syncing: true },
+        180000,
+      );
       Cadenza.schedule("meta.sync_requested", { __syncing: true }, 2000);
     }
   }
