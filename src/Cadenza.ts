@@ -810,14 +810,14 @@ export default class CadenzaService {
     };
 
     if (options.cadenzaDB?.connect) {
-      this.createEphemeralMetaTask("Create service", async (_, emit) => {
+      this.createMetaTask("Create service", async (_, emit) => {
         emit("meta.create_service_requested", initContext);
       }).doOn("meta.fetch.handshake_complete");
     } else {
       this.emit("meta.create_service_requested", initContext);
     }
 
-    this.createEphemeralMetaTask("Handle service setup completion", () => {
+    this.createMetaTask("Handle service setup completion", () => {
       GraphMetadataController.instance;
       GraphSyncController.instance.isCadenzaDBReady =
         !!options.cadenzaDB?.connect;
@@ -903,24 +903,9 @@ export default class CadenzaService {
       options,
     });
 
-    this.createEphemeralMetaTask("Set database connection", () => {
-      if (options.cadenzaDB?.connect) {
-        this.createEphemeralMetaTask("Insert database service", (_, emit) => {
-          emit("global.meta.created_database_service", {
-            data: {
-              service_name: name,
-              description,
-              schema,
-              is_meta: options.isMeta,
-            },
-          });
-          this.log("Database service created", {
-            name,
-            isMeta: options.isMeta,
-          });
-        }).doOn("meta.service_registry.service_inserted");
-      } else {
-        this.emit("global.meta.created_database_service", {
+    this.createMetaTask("Set database connection", () => {
+      this.createMetaTask("Insert database service", (_, emit) => {
+        emit("global.meta.created_database_service", {
           data: {
             service_name: name,
             description,
@@ -932,7 +917,7 @@ export default class CadenzaService {
           name,
           isMeta: options.isMeta,
         });
-      }
+      }).doOn("meta.service_registry.service_inserted");
 
       this.createCadenzaService(name, description, options);
     }).doOn("meta.database.setup_done");

@@ -99,7 +99,6 @@ export default class GraphSyncController {
               domain,
               action,
               isMeta,
-              serviceName: Cadenza.serviceRegistry.serviceName,
             },
           };
         }

@@ -236,7 +236,7 @@ export default class DatabaseController {
                         if (field.generated)
                           def += ` GENERATED ALWAYS AS ${field.generated.toUpperCase()} STORED`;
                         if (field.references)
-                          def += ` REFERENCES ${field.references} ON DELETE ${field.onDelete || "DO NOTHING"}`;
+                          def += ` REFERENCES ${field.references} ON DELETE ${field.onDelete || "CASCADE"}`;
                         if (field.encrypted) def += " ENCRYPTED"; // Pseudo, handle via app-side
 
                         if (field.constraints?.check) {
@@ -1202,9 +1202,9 @@ export default class DatabaseController {
       let result;
       if (op.subOperation === "insert") {
         const resolvedData = await this.resolveNestedData(op.data, op.table);
-        const sql = `INSERT INTO ${op.table} (${Object.keys(resolvedData).join(", ")}) VALUES (${Object.values(
-          resolvedData,
-        )
+        const sql = `INSERT INTO ${op.table} (${Object.keys(resolvedData)
+          .map((k) => snakeCase(k))
+          .join(", ")}) VALUES (${Object.values(resolvedData)
           .map((_, i) => `$${i + 1}`)
           .join(", ")}) ON CONFLICT DO NOTHING RETURNING ${op.return ?? "*"}`;
         result = await client.query(sql, Object.values(resolvedData));

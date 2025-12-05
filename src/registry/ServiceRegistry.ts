@@ -623,16 +623,6 @@ export default class ServiceRegistry {
         retryDelayFactor: 1.3,
       },
     )
-      .then(
-        Cadenza.createMetaTask(
-          "Set service name",
-          ({ __serviceName }) => {
-            this.serviceName = __serviceName;
-            return true;
-          },
-          "Sets service name after insertion",
-        ),
-      )
       .emits("meta.service_registry.service_inserted")
       .emitsOnFail("meta.service_registry.service_insertion_failed");
 
