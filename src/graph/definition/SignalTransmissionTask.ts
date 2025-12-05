@@ -126,6 +126,7 @@ export default class SignalTransmissionTask extends Task {
     this.signalName = signalName;
 
     this.attachSignal("meta.signal_transmission.requested");
+    this.doOn(signalName);
 
     this.emit("meta.deputy.created", {
       localTaskName: this.name,

@@ -321,7 +321,6 @@ export default class ServiceRegistry {
         ctx.joinedContexts.forEach((ctx: any) => {
           joinedContext = { ...joinedContext, ...ctx };
         });
-        console.log("Full sync joinedContext", joinedContext);
         return joinedContext;
       },
     ).then(this.handleGlobalSignalRegistrationTask);
