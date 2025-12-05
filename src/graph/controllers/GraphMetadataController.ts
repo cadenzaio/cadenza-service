@@ -69,9 +69,11 @@ export default class GraphMetadataController {
       .emits("global.meta.graph_metadata.deputy_relationship_created");
 
     Cadenza.createMetaTask("Handle task signal observation", (ctx) => {
+      const isGlobal = ctx.signalName.startsWith("global.");
       return {
         data: {
           ...ctx.data,
+          isGlobal,
           serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };

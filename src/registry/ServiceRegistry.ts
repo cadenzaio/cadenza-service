@@ -328,6 +328,9 @@ export default class ServiceRegistry {
 
     this.fullSyncTask = Cadenza.createMetaRoutine("Full sync", [
       Cadenza.createCadenzaDBQueryTask("signal_to_task_map", {
+        filter: {
+          isGlobal: true,
+        },
         fields: ["signal_name", "service_name", "deleted"],
       }).then(mergeSyncDataTask),
       Cadenza.createCadenzaDBQueryTask("service_instance", {

@@ -229,6 +229,7 @@ export default class GraphSyncController {
                 },
                 return: "name",
               },
+              isGlobal,
               taskName: task.name,
               taskVersion: task.version,
               serviceName: Cadenza.serviceRegistry.serviceName,

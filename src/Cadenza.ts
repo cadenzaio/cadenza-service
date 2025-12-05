@@ -339,7 +339,7 @@ export default class CadenzaService {
     const name = `${routineName} (Proxy)`;
 
     options = {
-      concurrency: 0,
+      concurrency: 100,
       timeout: 0,
       register: true,
       isUnique: false,
@@ -467,7 +467,7 @@ export default class CadenzaService {
     this.validateName(serviceName);
 
     options = {
-      concurrency: 0,
+      concurrency: 100,
       timeout: 0,
       register: true,
       isUnique: false,
@@ -547,7 +547,7 @@ export default class CadenzaService {
     const taskName = `db${operation.charAt(0).toUpperCase() + operation.slice(1)}${tableNameFormatted}`;
 
     options = {
-      concurrency: 0,
+      concurrency: 100,
       timeout: 0,
       register: true,
       isUnique: false,
