@@ -110,7 +110,7 @@ export default class GraphSyncController {
       (this.isCadenzaDBReady
         ? Cadenza.createCadenzaDBInsertTask("signal_registry", {
             onConflict: {
-              target: ["name", "service_name"],
+              target: ["name"],
               action: {
                 do: "nothing",
               },
