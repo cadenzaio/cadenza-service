@@ -204,7 +204,7 @@ export default class RestController {
 
                 app.post("/handshake", (req: Request, res: Response) => {
                   try {
-                    Cadenza.log("New fetch connection.", { body: req.body });
+                    Cadenza.log("New fetch connection.", req.body);
                     Cadenza.emit("meta.rest.handshake", req.body);
                     res.send({
                       __status: "success",

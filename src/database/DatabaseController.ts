@@ -495,7 +495,6 @@ export default class DatabaseController {
                                     if (ddl && ddl.length > 0) {
                                       for (const sql of ddl) {
                                         try {
-                                          console.log("Applying SQL", sql);
                                           await this.dbClient.query(sql);
                                         } catch (error: any) {
                                           console.error(

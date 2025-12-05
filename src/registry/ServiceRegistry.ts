@@ -51,7 +51,6 @@ export default class ServiceRegistry {
 
   handleInstanceUpdateTask: Task;
   handleGlobalSignalRegistrationTask: Task;
-  getRemoteSignalsTask: Task;
   handleSocketStatusUpdateTask: Task;
   fullSyncTask: GraphRoutine;
   getAllInstances: Task;
@@ -229,21 +228,6 @@ export default class ServiceRegistry {
       .emits("meta.service_registry.registered_global_signals")
       .doOn("global.meta.cadenza_db.gathered_sync_data");
 
-    this.getRemoteSignalsTask = Cadenza.createMetaTask(
-      "Get remote signals",
-      (ctx) => {
-        const { serviceName } = ctx;
-        return {
-          remoteSignals: this.remoteSignals.get(serviceName) ?? [],
-          ...ctx,
-        };
-      },
-      "Gets remote signals",
-    ).doOn(
-      "meta.register_remote_signals_requested",
-      "meta.fetch.handshake_complete",
-    );
-
     this.handleServiceNotRespondingTask = Cadenza.createMetaTask(
       "Handle service not responding",
       (ctx, emit) => {
@@ -296,7 +280,7 @@ export default class ServiceRegistry {
         );
         for (const instance of instances ?? []) {
           instance.isActive = true;
-          instance.isNonResponsive = true;
+          instance.isNonResponsive = false;
           emit("global.meta.service_registry.service_handshake", {
             data: {
               isActive: instance.isActive,
@@ -463,7 +447,9 @@ export default class ServiceRegistry {
 
         if (!instances || instances.length === 0 || retries > this.retryCount) {
           context.errored = true;
-          context.__error = "No active instances";
+          context.__error = `No active instances for ${__serviceName}. Retries: ${retries}. ${this.instances.get(
+            __serviceName,
+          )}`;
           emit(
             `meta.service_registry.load_balance_failed:${context.__metadata.__deputyExecId}`,
             context,
