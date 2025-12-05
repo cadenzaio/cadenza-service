@@ -108,14 +108,18 @@ export default class GraphSyncController {
       },
     ).then(
       (this.isCadenzaDBReady
-        ? Cadenza.createCadenzaDBInsertTask("signal_registry", {
-            onConflict: {
-              target: ["name"],
-              action: {
-                do: "nothing",
+        ? Cadenza.createCadenzaDBInsertTask(
+            "signal_registry",
+            {
+              onConflict: {
+                target: ["name"],
+                action: {
+                  do: "nothing",
+                },
               },
             },
-          })
+            { concurrency: 50 },
+          )
         : Cadenza.get("dbInsertSignalRegistry")
       )?.then(
         Cadenza.createMetaTask("Process signal registration", (ctx) => {
@@ -171,14 +175,18 @@ export default class GraphSyncController {
       },
     ).then(
       (this.isCadenzaDBReady
-        ? Cadenza.createCadenzaDBInsertTask("task", {
-            onConflict: {
-              target: ["name", "service_name", "version"],
-              action: {
-                do: "nothing",
+        ? Cadenza.createCadenzaDBInsertTask(
+            "task",
+            {
+              onConflict: {
+                target: ["name", "service_name", "version"],
+                action: {
+                  do: "nothing",
+                },
               },
             },
-          })
+            { concurrency: 50 },
+          )
         : Cadenza.get("dbInsertTask")
       )?.then(
         Cadenza.createMetaTask("Record registration", (ctx) => {
@@ -229,19 +237,23 @@ export default class GraphSyncController {
       },
     ).then(
       (this.isCadenzaDBReady
-        ? Cadenza.createCadenzaDBInsertTask("signal_to_task_map", {
-            onConflict: {
-              target: [
-                "task_name",
-                "task_version",
-                "service_name",
-                "signal_name",
-              ],
-              action: {
-                do: "nothing",
+        ? Cadenza.createCadenzaDBInsertTask(
+            "signal_to_task_map",
+            {
+              onConflict: {
+                target: [
+                  "task_name",
+                  "task_version",
+                  "service_name",
+                  "signal_name",
+                ],
+                action: {
+                  do: "nothing",
+                },
               },
             },
-          })
+            { concurrency: 50 },
+          )
         : Cadenza.get("dbInsertSignalToTaskMap")
       )?.then(registerSignalTask),
     );
@@ -274,19 +286,23 @@ export default class GraphSyncController {
       },
     ).then(
       (this.isCadenzaDBReady
-        ? Cadenza.createCadenzaDBInsertTask("task_to_signal_map", {
-            onConflict: {
-              target: [
-                "task_name",
-                "task_version",
-                "service_name",
-                "signal_name",
-              ],
-              action: {
-                do: "nothing",
+        ? Cadenza.createCadenzaDBInsertTask(
+            "task_to_signal_map",
+            {
+              onConflict: {
+                target: [
+                  "task_name",
+                  "task_version",
+                  "service_name",
+                  "signal_name",
+                ],
+                action: {
+                  do: "nothing",
+                },
               },
             },
-          })
+            { concurrency: 50 },
+          )
         : Cadenza.get("dbInsertTaskToSignalMap")
       )?.then(registerSignalTask),
     );
@@ -317,20 +333,24 @@ export default class GraphSyncController {
       },
     ).then(
       (this.isCadenzaDBReady
-        ? Cadenza.createCadenzaDBInsertTask("directional_task_graph_map", {
-            onConflict: {
-              target: [
-                "task_name",
-                "predecessor_task_name",
-                "task_version",
-                "predecessor_task_version",
-                "service_name",
-              ],
-              action: {
-                do: "nothing",
+        ? Cadenza.createCadenzaDBInsertTask(
+            "directional_task_graph_map",
+            {
+              onConflict: {
+                target: [
+                  "task_name",
+                  "predecessor_task_name",
+                  "task_version",
+                  "predecessor_task_version",
+                  "service_name",
+                ],
+                action: {
+                  do: "nothing",
+                },
               },
             },
-          })
+            { concurrency: 50 },
+          )
         : Cadenza.get("dbInsertDirectionalTaskGraphMap")
       )?.then(
         Cadenza.createMetaTask("Record task map registration", (ctx) => {
@@ -366,21 +386,25 @@ export default class GraphSyncController {
       },
     ).then(
       (this.isCadenzaDBReady
-        ? Cadenza.createCadenzaDBInsertTask("deputy_task_map", {
-            onConflict: {
-              target: [
-                "deputy_task_name",
-                "triggered_task_name",
-                "deputy_task_version",
-                "triggered_task_version",
-                "deputy_service_name",
-                "triggered_service_name",
-              ],
-              action: {
-                do: "nothing",
+        ? Cadenza.createCadenzaDBInsertTask(
+            "deputy_task_map",
+            {
+              onConflict: {
+                target: [
+                  "deputy_task_name",
+                  "triggered_task_name",
+                  "deputy_task_version",
+                  "triggered_task_version",
+                  "deputy_service_name",
+                  "triggered_service_name",
+                ],
+                action: {
+                  do: "nothing",
+                },
               },
             },
-          })
+            { concurrency: 50 },
+          )
         : Cadenza.get("dbInsertDeputyTaskMap")
       )?.then(
         Cadenza.createMetaTask(

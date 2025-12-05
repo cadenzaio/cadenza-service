@@ -271,7 +271,7 @@ export default class SocketController {
                     console.log(
                       "Received signal",
                       ctx.__signalName,
-                      ctx.__serviceName,
+                      ctx.__localServiceName,
                     );
 
                     Cadenza.emit(ctx.__signalName, ctx);

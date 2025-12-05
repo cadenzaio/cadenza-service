@@ -155,6 +155,7 @@ export default class SignalTransmissionTask extends Task {
 
     const deputyContext = {
       __localTaskName: this.name,
+      __localServiceName: Cadenza.serviceRegistry.serviceName,
       __serviceName: this.serviceName,
       __executionTraceId: metadata.__executionTraceId ?? null,
       __localRoutineExecId:
