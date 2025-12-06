@@ -86,25 +86,9 @@ export default class GraphMetadataController {
       .emits("global.meta.graph_metadata.task_signal_observed");
 
     Cadenza.createMetaTask("Handle task signal attachment", (ctx) => {
-      const { isGlobal, domain, action, isMeta } = decomposeSignalName(
-        ctx.data.signalName,
-      );
-
       return {
         data: {
           ...ctx.data,
-          signalName: {
-            subOperation: "insert",
-            table: "signal_registry",
-            data: {
-              name: ctx.data.signalName,
-              isGlobal,
-              domain,
-              action,
-              isMeta,
-            },
-            return: "name",
-          },
           serviceName: Cadenza.serviceRegistry.serviceName,
         },
       };
