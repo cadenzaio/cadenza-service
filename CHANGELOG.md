@@ -1,3 +1,10 @@
+## [2.0.15](https://github.com/cadenzaio/cadenza-service/compare/v2.0.14...v2.0.15) (2025-12-11)
+
+
+### Bug Fixes
+
+* task registration. ([7647151](https://github.com/cadenzaio/cadenza-service/commit/7647151981ffad71fd7fd26969cb9c1eed6a9979))
+
 ## [2.0.14](https://github.com/cadenzaio/cadenza-service/compare/v2.0.13...v2.0.14) (2025-12-11)
 
 
