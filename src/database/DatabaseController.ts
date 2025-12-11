@@ -495,10 +495,12 @@ export default class DatabaseController {
                                     if (ddl && ddl.length > 0) {
                                       for (const sql of ddl) {
                                         try {
+                                          console.log("Executing DDL", sql);
                                           await this.dbClient.query(sql);
                                         } catch (error: any) {
                                           console.error(
                                             "Error applying DDL",
+                                            sql,
                                             error,
                                           );
                                         }
