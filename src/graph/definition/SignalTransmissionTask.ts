@@ -165,6 +165,7 @@ export default class SignalTransmissionTask extends Task {
         __deputyTaskName: this.name,
       },
       __signalName: this.signalName,
+      __signalEmissionId: metadata.__signalEmission?.uuid,
       ...ctx,
     };
 

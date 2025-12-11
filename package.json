@@ -81,7 +81,7 @@
     "vitest": "^3.2.3"
   },
   "dependencies": {
-    "@cadenza.io/core": "^3.15.5",
+    "@cadenza.io/core": "^3.15.9",
     "@types/pg": "^8.15.4",
     "@types/uuid": "^10.0.0",
     "body-parser": "^2.2.0",
