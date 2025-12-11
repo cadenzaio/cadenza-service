@@ -22,7 +22,7 @@ export default class GraphSyncController {
   init() {
     this.splitRoutinesTask = Cadenza.createMetaTask(
       "Split routines for registration",
-      (ctx, emit) => {
+      function* (ctx, emit) {
         console.log("SPLITTING ROUTINES FOR REGISTRATION");
         const { routines } = ctx;
         if (!routines) return;
@@ -44,7 +44,7 @@ export default class GraphSyncController {
 
             while (tasks.hasNext()) {
               const nextTask = tasks.next();
-              emit("global.meta.sync_controller.task_to_routine_map", {
+              yield {
                 data: {
                   taskName: nextTask.name,
                   taskVersion: nextTask.version,
@@ -52,30 +52,52 @@ export default class GraphSyncController {
                   routineVersion: routine.version,
                   serviceName: Cadenza.serviceRegistry.serviceName,
                 },
-              });
+              };
             }
           }
         }
-
-        emit("global.meta.sync_controller.synced", {
-          data: {
-            is_active: true,
-            is_non_responsive: false,
-            is_blocked: false,
-            last_active: formatTimestamp(Date.now()),
-          },
-          filter: {
-            uuid: Cadenza.serviceRegistry.serviceInstanceId,
-          },
-        });
-
-        Cadenza.log("Synced resources...");
       },
-    ).attachSignal(
-      "global.meta.sync_controller.routine_added",
-      "global.meta.sync_controller.task_to_routine_map",
-      "global.meta.sync_controller.synced",
-    );
+    )
+      .attachSignal("global.meta.sync_controller.routine_added")
+      .then(
+        (this.isCadenzaDBReady
+          ? Cadenza.createCadenzaDBInsertTask(
+              "task_to_routine_map",
+              {
+                onConflict: {
+                  target: [
+                    "task_name",
+                    "routine_name",
+                    "task_version",
+                    "routine_version",
+                    "service_name",
+                  ],
+                  action: {
+                    do: "nothing",
+                  },
+                },
+              },
+              { concurrency: 50 },
+            )
+          : Cadenza.get("dbInsertTaskToRoutineMap")
+        )?.then(
+          Cadenza.createUniqueMetaTask("Finish sync", (ctx, emit) => {
+            emit("global.meta.sync_controller.synced", {
+              data: {
+                is_active: true,
+                is_non_responsive: false,
+                is_blocked: false,
+                last_active: formatTimestamp(Date.now()),
+              },
+              filter: {
+                uuid: Cadenza.serviceRegistry.serviceInstanceId,
+              },
+            });
+
+            Cadenza.log("Synced resources...");
+          }).attachSignal("global.meta.sync_controller.synced"),
+        ),
+      );
 
     this.splitSignalsTask = Cadenza.createMetaTask(
       "Split signals for registration",
