@@ -39,21 +39,32 @@ export default class GraphSyncController {
             },
           });
 
-          for (const task of routine.tasks) {
-            const tasks = task.getIterator();
+          try {
+            for (const task of routine.tasks) {
+              if (!task) {
+                console.log("task is null", routine, task);
+                continue;
+              }
+              const tasks = task.getIterator();
 
-            while (tasks.hasNext()) {
-              const nextTask = tasks.next();
-              yield {
-                data: {
-                  taskName: nextTask.name,
-                  taskVersion: nextTask.version,
-                  routineName: routine.name,
-                  routineVersion: routine.version,
-                  serviceName: Cadenza.serviceRegistry.serviceName,
-                },
-              };
+              while (tasks.hasNext()) {
+                const nextTask = tasks.next();
+                yield {
+                  data: {
+                    taskName: nextTask.name,
+                    taskVersion: nextTask.version,
+                    routineName: routine.name,
+                    routineVersion: routine.version,
+                    serviceName: Cadenza.serviceRegistry.serviceName,
+                  },
+                };
+              }
             }
+          } catch (e: any) {
+            return {
+              errored: true,
+              __error: e.message,
+            };
           }
         }
       },
