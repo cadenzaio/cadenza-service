@@ -167,10 +167,12 @@ export default class GraphSyncController {
               retryDelayMax: task.retryDelayMax,
               retryDelayFactor: task.retryDelayFactor,
               service_name: Cadenza.serviceRegistry.serviceName,
-              emitsSignals: Array.from(task.emitsSignals),
-              signalsToEmitAfter: Array.from(task.signalsToEmitAfter),
-              signalsToEmitOnFail: Array.from(task.signalsToEmitOnFail),
-              observedSignals: Array.from(task.observedSignals),
+              signals: {
+                emits: Array.from(task.emitsSignals),
+                signalsToEmitAfter: Array.from(task.signalsToEmitAfter),
+                signalsToEmitOnFail: Array.from(task.signalsToEmitOnFail),
+                observed: Array.from(task.observedSignals),
+              },
             },
             __name: task.name,
           };

@@ -68,6 +68,7 @@ export default class SignalController {
       "Add data to signal emission",
       (ctx) => {
         const signalEmission = ctx.__signalEmission;
+        delete ctx.__signalEmission;
 
         if (!signalEmission) {
           return false;
@@ -85,7 +86,8 @@ export default class SignalController {
             is_metric: signalEmission.isMetric ?? false,
             routine_execution_id: signalEmission.routineExecutionId,
             execution_trace_id: signalEmission.executionTraceId,
-            data: ctx,
+            context: ctx,
+            metadata: signalEmission,
             service_name: Cadenza.serviceRegistry.serviceName,
             service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
           },
@@ -96,22 +98,5 @@ export default class SignalController {
     )
       .doOn("sub_meta.signal_broker.emitting_signal")
       .emits("global.sub_meta.signal_controller.signal_emitted");
-
-    Cadenza.createMetaTask(
-      "Add metadata to signal consumption",
-      (ctx) => {
-        return {
-          data: {
-            ...ctx.data,
-            serviceName: Cadenza.serviceRegistry.serviceName,
-            serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-          },
-        };
-      },
-      "",
-      { isSubMeta: true, concurrency: 100 },
-    )
-      .doOn("meta.node.consumed_signal")
-      .emits("global.sub_meta.signal_controller.signal_consumed");
   }
 }
