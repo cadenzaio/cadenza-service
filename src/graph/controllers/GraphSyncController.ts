@@ -128,6 +128,8 @@ export default class GraphSyncController {
           const { isMeta, isGlobal, domain, action } =
             decomposeSignalName(signal);
 
+          console.log("REGISTERING SIGNAL", signal);
+
           yield {
             data: {
               name: signal,
@@ -161,9 +163,9 @@ export default class GraphSyncController {
             return;
           }
 
-          console.log("REGISTERING SIGNAL", ctx.signalName);
+          console.log("REGISTERING SIGNAL", ctx.signalName, ctx.signalRegistry);
 
-          return { signalName: ctx.signalName };
+          return { signalName: ctx.signalRegistry?.name };
         }).then(Cadenza.broker.registerSignalTask!),
       ),
     );
@@ -237,6 +239,12 @@ export default class GraphSyncController {
             return;
           }
 
+          console.log(
+            "REGISTERING TASK",
+            ctx.__name,
+            !!Cadenza.get(ctx.__name),
+          );
+
           Cadenza.get(ctx.__name)!.registered = true;
         }),
       ),
@@ -248,6 +256,13 @@ export default class GraphSyncController {
         if (!ctx.__syncing) {
           return;
         }
+
+        console.log(
+          "REGISTERING TASK SIGNAL",
+          ctx.__name,
+          ctx.signalName,
+          !!Cadenza.get(ctx.__name),
+        );
 
         Cadenza.get(ctx.__name)?.registeredSignals.add(ctx.signalName);
       },
@@ -358,6 +373,13 @@ export default class GraphSyncController {
             return;
           }
 
+          console.log(
+            "REGISTERING TASK MAP",
+            ctx.__name,
+            ctx.__nextTaskName,
+            !!Cadenza.get(ctx.__name),
+          );
+
           Cadenza.get(ctx.__name)?.taskMapRegistration.add(ctx.__nextTaskName);
         }),
       ),
@@ -420,6 +442,12 @@ export default class GraphSyncController {
             if (!ctx.__syncing) {
               return;
             }
+
+            console.log(
+              "REGISTERING DEPUTY MAP",
+              ctx.__name,
+              !!Cadenza.get(ctx.__name),
+            );
 
             (Cadenza.get(ctx.__name) as DeputyTask).registeredDeputyMap = true;
           },
