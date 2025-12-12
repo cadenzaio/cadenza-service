@@ -28,6 +28,7 @@ export default class GraphSyncController {
         if (!routines) return;
         for (const routine of routines) {
           if (routine.registered) continue;
+          console.log("REGISTERING ROUTINE", routine.name);
           routine.registered = true;
           emit("global.meta.sync_controller.routine_added", {
             data: {
@@ -135,6 +136,7 @@ export default class GraphSyncController {
               action,
               isMeta,
             },
+            signalName: signal,
           };
         }
       },
@@ -159,7 +161,9 @@ export default class GraphSyncController {
             return;
           }
 
-          return { signalName: ctx.signalRegistry?.name };
+          console.log("REGISTERING SIGNAL", ctx.signalName);
+
+          return { signalName: ctx.signalName };
         }).then(Cadenza.broker.registerSignalTask!),
       ),
     );
@@ -172,6 +176,7 @@ export default class GraphSyncController {
         for (const task of tasks) {
           if (task.registered) continue;
           const { __functionString, __getTagCallback } = task.export();
+          console.log("EXPORTING TASK", task.name);
 
           yield {
             data: {
@@ -260,6 +265,8 @@ export default class GraphSyncController {
 
           const { isGlobal } = decomposeSignalName(_signal);
 
+          console.log("Registering signal map for task", task.name, signal);
+
           yield {
             data: {
               signalName: _signal,
@@ -303,9 +310,11 @@ export default class GraphSyncController {
         if (task.hidden || !task.register) return;
 
         for (const t of task.nextTasks) {
-          if (task.taskMapRegistration.has(t.name)) {
+          if (task.taskMapRegistration.has(t.name) || t.hidden || !t.register) {
             continue;
           }
+
+          console.log("Registering task map for task", task.name, t.name);
 
           yield {
             data: {
@@ -362,6 +371,13 @@ export default class GraphSyncController {
 
         if (task.isDeputy && !task.signalName) {
           if (task.registeredDeputyMap) return;
+
+          console.log(
+            "Registering deputy map for task",
+            task.name,
+            task.remoteRoutineName,
+            task.serviceName,
+          );
           return {
             data: {
               task_name: task.remoteRoutineName,

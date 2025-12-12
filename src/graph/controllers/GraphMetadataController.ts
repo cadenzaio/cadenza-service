@@ -1,5 +1,5 @@
 import Cadenza from "../../Cadenza";
-import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
+import { formatTimestamp } from "../../utils/tools";
 
 export default class GraphMetadataController {
   private static _instance: GraphMetadataController;
