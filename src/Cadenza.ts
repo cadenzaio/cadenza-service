@@ -181,7 +181,7 @@ export default class CadenzaService {
     this.broker?.emit(signal, data);
   }
 
-  static debounce(signal: string, context: any, delayMs: number = 500) {
+  static debounce(signal: string, context: any = {}, delayMs: number = 500) {
     this.broker?.debounce(signal, context, delayMs);
   }
 
