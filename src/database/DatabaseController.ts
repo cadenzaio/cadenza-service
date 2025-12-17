@@ -1331,10 +1331,15 @@ export default class DatabaseController {
         }
 
         try {
-          context = await queryFunction(
+          const result = await queryFunction(
             tableName,
             context.queryData ?? context,
           );
+
+          context = {
+            ...context,
+            ...result,
+          };
         } catch (e) {
           Cadenza.log(
             "Database task errored.",

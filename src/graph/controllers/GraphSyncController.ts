@@ -2,6 +2,7 @@ import Cadenza from "../../Cadenza";
 import { Task } from "@cadenza.io/core";
 import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 import { DeputyTask } from "../../index";
+import { sleep } from "../../utils/promise";
 
 export default class GraphSyncController {
   private static _instance: GraphSyncController;
@@ -22,11 +23,12 @@ export default class GraphSyncController {
   init() {
     this.splitRoutinesTask = Cadenza.createMetaTask(
       "Split routines for registration",
-      function* (ctx, emit) {
+      async function* (ctx, emit) {
         console.log("SPLITTING ROUTINES FOR REGISTRATION");
         const { routines } = ctx;
         Cadenza.debounce("sync_controller.synced_resource");
         if (!routines) return;
+        const routineTasksToRegister = [];
         for (const routine of routines) {
           if (routine.registered) continue;
           console.log("REGISTERING ROUTINE", routine.name);
@@ -51,7 +53,7 @@ export default class GraphSyncController {
 
               while (tasks.hasNext()) {
                 const nextTask = tasks.next();
-                yield {
+                routineTasksToRegister.push({
                   data: {
                     taskName: nextTask.name,
                     taskVersion: nextTask.version,
@@ -59,7 +61,7 @@ export default class GraphSyncController {
                     routineVersion: routine.version,
                     serviceName: Cadenza.serviceRegistry.serviceName,
                   },
-                };
+                });
               }
             }
           } catch (e: any) {
@@ -68,6 +70,12 @@ export default class GraphSyncController {
               __error: e.message,
             };
           }
+        }
+
+        await sleep(100);
+
+        for (const routineTaskToRegister of routineTasksToRegister) {
+          yield routineTaskToRegister;
         }
       },
     )
@@ -149,10 +157,10 @@ export default class GraphSyncController {
             return;
           }
 
-          console.log("REGISTERING SIGNAL", ctx.signalRegistry?.name);
+          console.log("RECORDING SIGNAL", ctx.signalName);
           Cadenza.debounce("sync_controller.synced_resource");
 
-          return { signalName: ctx.signalRegistry?.name };
+          return { signalName: ctx.signalName };
         }).then(Cadenza.broker.registerSignalTask!),
       ),
     );
