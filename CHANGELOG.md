@@ -1,3 +1,10 @@
+## [2.0.23](https://github.com/cadenzaio/cadenza-service/compare/v2.0.22...v2.0.23) (2025-12-18)
+
+
+### Bug Fixes
+
+* faster signal transmission. ([b02d65a](https://github.com/cadenzaio/cadenza-service/commit/b02d65a07427918fdd4dcb048db8f6b148f08781))
+
 ## [2.0.22](https://github.com/cadenzaio/cadenza-service/compare/v2.0.21...v2.0.22) (2025-12-17)
 
 
