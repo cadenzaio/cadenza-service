@@ -55,7 +55,7 @@ export default class SignalTransmissionTask extends Task {
     timeout: number = 0,
     register: boolean = true,
     isUnique: boolean = false,
-    isMeta: boolean = false,
+    isMeta: boolean = true,
     isSubMeta: boolean = false,
     isHidden: boolean = false,
     getTagCallback: ThrottleTagGetter | undefined = undefined,
@@ -68,36 +68,9 @@ export default class SignalTransmissionTask extends Task {
     retryDelayMax: number = 0,
     retryDelayFactor: number = 1,
   ) {
-    const taskFunction = (
-      context: AnyObject,
-      emit: (signal: string, ctx: AnyObject) => void,
-    ): Promise<TaskResult> => {
-      return new Promise((resolve, reject) => {
-        const processId = uuid();
-
-        context.__routineExecId = processId;
-        emit("meta.signal_transmission.requested", context);
-
-        // Ephemeral meta-task for resolution
-        Cadenza.createEphemeralMetaTask(
-          `Resolve signal transmission for ${this.signalName}`,
-          (responseCtx) => {
-            if (responseCtx?.errored) {
-              reject(new Error(responseCtx.__error));
-            } else {
-              resolve(responseCtx);
-            }
-          },
-          `Ephemeral resolver for signal transmission ${processId}`,
-          {
-            isSubMeta: true,
-            register: false,
-          },
-        ).doOn(
-          `meta.socket_client.transmitted:${processId}`,
-          `meta.fetch.transmitted:${processId}`,
-        );
-      });
+    const taskFunction = (context: AnyObject): TaskResult => {
+      context.__routineExecId = uuid();
+      return context;
     };
 
     super(
@@ -125,8 +98,8 @@ export default class SignalTransmissionTask extends Task {
     this.serviceName = serviceName;
     this.signalName = signalName;
 
-    this.attachSignal("meta.signal_transmission.requested");
     this.doOn(signalName);
+    this.then(Cadenza.serviceRegistry.getBalancedInstance);
 
     this.emit("meta.deputy.created", {
       localTaskName: this.name,
