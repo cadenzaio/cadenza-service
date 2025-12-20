@@ -100,14 +100,6 @@ export default class SignalTransmissionTask extends Task {
 
     this.doOn(signalName);
     this.then(Cadenza.serviceRegistry.getBalancedInstance);
-
-    this.emit("meta.deputy.created", {
-      localTaskName: this.name,
-      localTaskVersion: this.version,
-      serviceName: this.serviceName,
-      communicationType: "signal",
-      signalName: this.signalName,
-    });
   }
 
   /**

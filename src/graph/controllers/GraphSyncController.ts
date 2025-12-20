@@ -26,7 +26,7 @@ export default class GraphSyncController {
       async function* (ctx, emit) {
         console.log("SPLITTING ROUTINES FOR REGISTRATION");
         const { routines } = ctx;
-        Cadenza.debounce("sync_controller.synced_resource");
+        Cadenza.debounce("meta.sync_controller.synced_resource");
         if (!routines) return;
         const routineTasksToRegister = [];
         for (const routine of routines) {
@@ -75,6 +75,11 @@ export default class GraphSyncController {
         await sleep(100);
 
         for (const routineTaskToRegister of routineTasksToRegister) {
+          console.log(
+            "REGISTERING ROUTINE TASK",
+            routineTaskToRegister.data.routineName,
+            routineTaskToRegister.data.taskName,
+          );
           yield routineTaskToRegister;
         }
       },
@@ -107,7 +112,7 @@ export default class GraphSyncController {
       "Split signals for registration",
       function* (ctx) {
         console.log("Splitting signals for registration...");
-        Cadenza.debounce("sync_controller.synced_resource");
+        Cadenza.debounce("meta.sync_controller.synced_resource");
 
         const { signals } = ctx;
         if (!signals) return;
@@ -132,7 +137,7 @@ export default class GraphSyncController {
               action,
               isMeta,
             },
-            signalName: signal,
+            _signalName: signal,
           };
         }
       },
@@ -157,10 +162,10 @@ export default class GraphSyncController {
             return;
           }
 
-          console.log("RECORDING SIGNAL", ctx.signalName);
-          Cadenza.debounce("sync_controller.synced_resource");
+          console.log("RECORDING SIGNAL", ctx._signalName);
+          Cadenza.debounce("meta.sync_controller.synced_resource");
 
-          return { signalName: ctx.signalName };
+          return { signalName: ctx._signalName };
         }).then(Cadenza.broker.registerSignalTask!),
       ),
     );
@@ -169,7 +174,7 @@ export default class GraphSyncController {
       "Split tasks for registration",
       function* (ctx) {
         console.log("SPLITTING TASKS FOR REGISTRATION");
-        Cadenza.debounce("sync_controller.synced_resource");
+        Cadenza.debounce("meta.sync_controller.synced_resource");
 
         const tasks = ctx.tasks;
         for (const task of tasks) {
@@ -242,7 +247,7 @@ export default class GraphSyncController {
             !!Cadenza.get(ctx.__name),
           );
 
-          Cadenza.debounce("sync_controller.synced_resource");
+          Cadenza.debounce("meta.sync_controller.synced_resource");
 
           Cadenza.get(ctx.__name)!.registered = true;
         }),
@@ -259,11 +264,13 @@ export default class GraphSyncController {
         console.log(
           "REGISTERING TASK SIGNAL",
           ctx.__name,
-          ctx.signalName,
+          ctx._signalName,
           !!Cadenza.get(ctx.__name),
         );
 
-        Cadenza.get(ctx.__name)?.registeredSignals.add(ctx.signalName);
+        Cadenza.debounce("meta.sync_controller.synced_resource");
+
+        Cadenza.get(ctx.__name)?.registeredSignals.add(ctx._signalName);
       },
     );
 
@@ -290,7 +297,7 @@ export default class GraphSyncController {
               serviceName: Cadenza.serviceRegistry.serviceName,
             },
             __name: task.name,
-            signalName: signal,
+            _signalName: signal,
           };
         }
       },
@@ -321,7 +328,7 @@ export default class GraphSyncController {
       "Register task map to DB",
       function* (ctx) {
         const task = ctx.task;
-        Cadenza.debounce("sync_controller.synced_resource");
+        Cadenza.debounce("meta.sync_controller.synced_resource");
         if (task.hidden || !task.register) return;
 
         for (const t of task.nextTasks) {
@@ -379,6 +386,8 @@ export default class GraphSyncController {
             ctx.__nextTaskName,
             !!Cadenza.get(ctx.__name),
           );
+
+          Cadenza.debounce("meta.sync_controller.synced_resource");
 
           Cadenza.get(ctx.__name)?.taskMapRegistration.add(ctx.__nextTaskName);
         }),
@@ -449,6 +458,8 @@ export default class GraphSyncController {
               !!Cadenza.get(ctx.__name),
             );
 
+            Cadenza.debounce("meta.sync_controller.synced_resource");
+
             (Cadenza.get(ctx.__name) as DeputyTask).registeredDeputyMap = true;
           },
         ),
@@ -457,7 +468,7 @@ export default class GraphSyncController {
 
     Cadenza.broker
       .getSignalsTask!.clone()
-      .doOn("sync_controller.sync_tick", "meta.sync_requested")
+      .doOn("meta.sync_controller.sync_tick", "meta.sync_requested")
       .then(
         this.splitSignalsTask,
         Cadenza.registry
@@ -495,20 +506,20 @@ export default class GraphSyncController {
       Cadenza.log("Synced resources...");
     })
       .attachSignal("global.meta.sync_controller.synced")
-      .doOn("sync_controller.synced_resource");
+      .doOn("meta.sync_controller.synced_resource");
 
     console.log("Sync controller init", this.isCadenzaDBReady);
 
     if (!this.isCadenzaDBReady) {
       Cadenza.throttle(
-        "sync_controller.sync_tick",
+        "meta.sync_controller.sync_tick",
         { __syncing: true },
         300000,
         true,
       );
     } else {
       Cadenza.throttle(
-        "sync_controller.sync_tick",
+        "meta.sync_controller.sync_tick",
         { __syncing: true },
         180000,
       );
