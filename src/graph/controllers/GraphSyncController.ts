@@ -256,6 +256,8 @@ export default class GraphSyncController {
           Cadenza.debounce("meta.sync_controller.synced_resource");
 
           Cadenza.get(ctx.__name)!.registered = true;
+
+          return true;
         }).then(
           Cadenza.createUniqueMetaTask(
             "Gather task registration",
