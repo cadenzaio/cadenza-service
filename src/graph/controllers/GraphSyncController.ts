@@ -166,7 +166,13 @@ export default class GraphSyncController {
           Cadenza.debounce("meta.sync_controller.synced_resource");
 
           return { signalName: ctx._signalName };
-        }).then(Cadenza.broker.registerSignalTask!),
+        }).then(
+          Cadenza.broker.registerSignalTask!,
+          Cadenza.createUniqueMetaTask(
+            "Gather signal registration",
+            (ctx) => {},
+          ).emits("meta.sync_controller.synced_signals"),
+        ),
       ),
     );
 
@@ -250,7 +256,12 @@ export default class GraphSyncController {
           Cadenza.debounce("meta.sync_controller.synced_resource");
 
           Cadenza.get(ctx.__name)!.registered = true;
-        }),
+        }).then(
+          Cadenza.createUniqueMetaTask(
+            "Gather task registration",
+            (ctx) => {},
+          ).emits("meta.sync_controller.synced_tasks"),
+        ),
       ),
     );
 
@@ -469,25 +480,25 @@ export default class GraphSyncController {
     Cadenza.broker
       .getSignalsTask!.clone()
       .doOn("meta.sync_controller.sync_tick", "meta.sync_requested")
+      .then(this.splitSignalsTask);
+
+    Cadenza.registry
+      .getAllTasks!.clone()
+      .doOn("meta.sync_controller.synced_signals")
+      .then(this.splitTasksForRegistration);
+
+    Cadenza.registry
+      .getAllRoutines!.clone()
+      .doOn("meta.sync_controller.synced_tasks")
+      .then(this.splitRoutinesTask);
+
+    Cadenza.registry
+      .doForEachTask!.clone()
+      .doOn("meta.sync_controller.synced_tasks")
       .then(
-        this.splitSignalsTask,
-        Cadenza.registry
-          .getAllTasks!.clone()
-          .then(
-            this.splitTasksForRegistration,
-            Cadenza.registry
-              .getAllRoutines!.clone()
-              .then(
-                this.splitRoutinesTask,
-                Cadenza.registry
-                  .doForEachTask!.clone()
-                  .then(
-                    this.registerTaskMapTask,
-                    this.registerSignalToTaskMapTask,
-                    this.registerDeputyRelationshipTask,
-                  ),
-              ),
-          ),
+        this.registerTaskMapTask,
+        this.registerSignalToTaskMapTask,
+        this.registerDeputyRelationshipTask,
       );
 
     Cadenza.createMetaTask("Finish sync", (ctx, emit) => {
