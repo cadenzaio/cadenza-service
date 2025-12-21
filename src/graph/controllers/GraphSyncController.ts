@@ -170,7 +170,7 @@ export default class GraphSyncController {
           Cadenza.broker.registerSignalTask!,
           Cadenza.createUniqueMetaTask(
             "Gather signal registration",
-            (ctx) => {},
+            (ctx) => true,
           ).emits("meta.sync_controller.synced_signals"),
         ),
       ),
@@ -259,7 +259,7 @@ export default class GraphSyncController {
         }).then(
           Cadenza.createUniqueMetaTask(
             "Gather task registration",
-            (ctx) => {},
+            (ctx) => true,
           ).emits("meta.sync_controller.synced_tasks"),
         ),
       ),
