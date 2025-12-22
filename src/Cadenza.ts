@@ -185,6 +185,25 @@ export default class CadenzaService {
     this.broker?.debounce(signal, context, delayMs);
   }
 
+  public static schedule(
+    signal: string,
+    context: AnyObject,
+    timeoutMs: number,
+    exactDateTime?: Date,
+  ) {
+    this.broker?.schedule(signal, context, timeoutMs, exactDateTime);
+  }
+
+  public static interval(
+    signal: string,
+    context: AnyObject,
+    intervalMs: number,
+    leading = false,
+    startDateTime?: Date,
+  ) {
+    this.broker?.interval(signal, context, intervalMs, leading, startDateTime);
+  }
+
   /**
    * Executes the given task or graph routine within the provided context using the configured runner.
    *
@@ -208,26 +227,6 @@ export default class CadenzaService {
   static run(task: Task | GraphRoutine, context: AnyObject) {
     this.runner?.run(task, context);
   }
-
-  public static schedule(
-    signal: string,
-    context: AnyObject,
-    timeoutMs: number,
-    exactDateTime?: Date,
-  ) {
-    this.broker?.schedule(signal, context, timeoutMs, exactDateTime);
-  }
-
-  public static throttle(
-    signal: string,
-    context: AnyObject,
-    intervalMs: number,
-    leading = false,
-    startDateTime?: Date,
-  ) {
-    this.broker?.throttle(signal, context, intervalMs, leading, startDateTime);
-  }
-
   /**
    * Logs a message with a specified log level and additional contextual data.
    * Records in the CadenzaDB when available.
@@ -272,6 +271,10 @@ export default class CadenzaService {
 
   public static get(taskName: string): Task | undefined {
     return Cadenza.get(taskName);
+  }
+
+  public static getRoutine(routineName: string): GraphRoutine | undefined {
+    return Cadenza.getRoutine(routineName);
   }
 
   /**

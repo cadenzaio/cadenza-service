@@ -2,7 +2,6 @@ import Cadenza from "../../Cadenza";
 import { Task } from "@cadenza.io/core";
 import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 import { DeputyTask } from "../../index";
-import { sleep } from "../../utils/promise";
 
 export default class GraphSyncController {
   private static _instance: GraphSyncController;
@@ -17,6 +16,7 @@ export default class GraphSyncController {
   registerTaskMapTask: Task | undefined;
   registerDeputyRelationshipTask: Task | undefined;
   splitRoutinesTask: Task | undefined;
+  splitTasksInRoutines: Task | undefined;
 
   isCadenzaDBReady: boolean = false;
 
@@ -26,14 +26,13 @@ export default class GraphSyncController {
       async function* (ctx, emit) {
         console.log("SPLITTING ROUTINES FOR REGISTRATION");
         const { routines } = ctx;
-        Cadenza.debounce("meta.sync_controller.synced_resource");
         if (!routines) return;
-        const routineTasksToRegister = [];
+        Cadenza.debounce("meta.sync_controller.synced_resource");
+
         for (const routine of routines) {
           if (routine.registered) continue;
           console.log("REGISTERING ROUTINE", routine.name);
-          routine.registered = true;
-          emit("global.meta.sync_controller.routine_added", {
+          yield {
             data: {
               name: routine.name,
               version: routine.version,
@@ -41,72 +40,111 @@ export default class GraphSyncController {
               serviceName: Cadenza.serviceRegistry.serviceName,
               isMeta: routine.isMeta,
             },
-          });
-
-          try {
-            for (const task of routine.tasks) {
-              if (!task) {
-                console.log("task is null", routine, task);
-                continue;
-              }
-              const tasks = task.getIterator();
-
-              while (tasks.hasNext()) {
-                const nextTask = tasks.next();
-                routineTasksToRegister.push({
-                  data: {
-                    taskName: nextTask.name,
-                    taskVersion: nextTask.version,
-                    routineName: routine.name,
-                    routineVersion: routine.version,
-                    serviceName: Cadenza.serviceRegistry.serviceName,
-                  },
-                });
-              }
-            }
-          } catch (e: any) {
-            return {
-              errored: true,
-              __error: e.message,
-            };
-          }
-        }
-
-        await sleep(500);
-
-        for (const routineTaskToRegister of routineTasksToRegister) {
-          console.log(
-            "REGISTERING ROUTINE TASK",
-            routineTaskToRegister.data.routineName,
-            routineTaskToRegister.data.taskName,
-          );
-          yield routineTaskToRegister;
+            __routineName: routine.name,
+          };
         }
       },
-    )
-      .attachSignal("global.meta.sync_controller.routine_added")
-      .then(
-        this.isCadenzaDBReady
-          ? Cadenza.createCadenzaDBInsertTask(
-              "task_to_routine_map",
-              {
-                onConflict: {
-                  target: [
-                    "task_name",
-                    "routine_name",
-                    "task_version",
-                    "routine_version",
-                    "service_name",
-                  ],
-                  action: {
-                    do: "nothing",
-                  },
+    ).then(
+      (this.isCadenzaDBReady
+        ? Cadenza.createCadenzaDBInsertTask(
+            "routine",
+            {
+              onConflict: {
+                target: ["name", "version", "service_name"],
+                action: {
+                  do: "nothing",
                 },
               },
-              { concurrency: 50 },
-            )
-          : Cadenza.get("dbInsertTaskToRoutineMap"),
-      );
+            },
+            { concurrency: 50 },
+          )
+        : Cadenza.get("dbInsertRoutine")
+      )?.then(
+        Cadenza.createMetaTask("Register routine", (ctx) => {
+          if (!ctx.__syncing) {
+            return;
+          }
+          console.log("RECORDING ROUTINE", ctx.__routineName);
+          Cadenza.debounce("meta.sync_controller.synced_resource");
+          Cadenza.getRoutine(ctx.__routineName)!.registered = true;
+        }).then(
+          Cadenza.createUniqueMetaTask(
+            "Gather routine registration",
+            () => true,
+          ).emits("meta.sync_controller.synced_routines"),
+        ),
+      ),
+    );
+
+    this.splitTasksInRoutines = Cadenza.createMetaTask(
+      "Split tasks in routines",
+      function* (ctx) {
+        const { routines } = ctx;
+        if (!routines) return;
+        Cadenza.debounce("meta.sync_controller.synced_resource");
+        for (const routine of routines) {
+          for (const task of routine.tasks) {
+            if (!task) {
+              console.log("task is null", routine, task);
+              continue;
+            }
+
+            if (routine.registeredTasks.has(task.name)) continue;
+
+            const tasks = task.getIterator();
+
+            while (tasks.hasNext()) {
+              const nextTask = tasks.next();
+              yield {
+                data: {
+                  taskName: nextTask.name,
+                  taskVersion: nextTask.version,
+                  routineName: routine.name,
+                  routineVersion: routine.version,
+                  serviceName: Cadenza.serviceRegistry.serviceName,
+                },
+                __routineName: routine.name,
+                __taskName: nextTask.name,
+              };
+            }
+          }
+        }
+      },
+    ).then(
+      (this.isCadenzaDBReady
+        ? Cadenza.createCadenzaDBInsertTask(
+            "task_to_routine_map",
+            {
+              onConflict: {
+                target: [
+                  "task_name",
+                  "routine_name",
+                  "task_version",
+                  "routine_version",
+                  "service_name",
+                ],
+                action: {
+                  do: "nothing",
+                },
+              },
+            },
+            { concurrency: 50 },
+          )
+        : Cadenza.get("dbInsertTaskToRoutineMap")
+      )?.then(
+        Cadenza.createMetaTask("Register routine task", (ctx) => {
+          if (!ctx.__syncing) {
+            return;
+          }
+
+          console.log("RECORDING ROUTINE TASK", ctx.__taskName);
+          Cadenza.debounce("meta.sync_controller.synced_resource");
+          Cadenza.getRoutine(ctx.__routineName)!.registeredTasks.add(
+            ctx.__taskName,
+          );
+        }),
+      ),
+    );
 
     this.splitSignalsTask = Cadenza.createMetaTask(
       "Split signals for registration",
@@ -137,7 +175,7 @@ export default class GraphSyncController {
               action,
               isMeta,
             },
-            _signalName: signal,
+            __signal: signal,
           };
         }
       },
@@ -162,10 +200,10 @@ export default class GraphSyncController {
             return;
           }
 
-          console.log("RECORDING SIGNAL", ctx._signalName);
+          console.log("RECORDING SIGNAL", ctx.__signal);
           Cadenza.debounce("meta.sync_controller.synced_resource");
 
-          return { signalName: ctx._signalName };
+          return { signalName: ctx.__signal };
         }).then(
           Cadenza.broker.registerSignalTask!,
           Cadenza.createUniqueMetaTask(
@@ -277,13 +315,13 @@ export default class GraphSyncController {
         console.log(
           "REGISTERING TASK SIGNAL",
           ctx.__taskName,
-          ctx._signalName,
+          ctx.__signal,
           !!Cadenza.get(ctx.__taskName),
         );
 
         Cadenza.debounce("meta.sync_controller.synced_resource");
 
-        Cadenza.get(ctx.__taskName)?.registeredSignals.add(ctx._signalName);
+        Cadenza.get(ctx.__taskName)?.registeredSignals.add(ctx.__signal);
       },
     );
 
@@ -310,7 +348,7 @@ export default class GraphSyncController {
               serviceName: Cadenza.serviceRegistry.serviceName,
             },
             __taskName: task.name,
-            _signalName: signal,
+            __signal: signal,
           };
         }
       },
@@ -506,6 +544,11 @@ export default class GraphSyncController {
         this.registerDeputyRelationshipTask,
       );
 
+    Cadenza.registry
+      .getAllRoutines!.clone()
+      .doOn("meta.sync_controller.synced_routines")
+      .then(this.splitTasksInRoutines);
+
     Cadenza.createMetaTask("Finish sync", (ctx, emit) => {
       emit("global.meta.sync_controller.synced", {
         data: {
@@ -527,14 +570,14 @@ export default class GraphSyncController {
     console.log("Sync controller init", this.isCadenzaDBReady);
 
     if (!this.isCadenzaDBReady) {
-      Cadenza.throttle(
+      Cadenza.interval(
         "meta.sync_controller.sync_tick",
         { __syncing: true },
         300000,
         true,
       );
     } else {
-      Cadenza.throttle(
+      Cadenza.interval(
         "meta.sync_controller.sync_tick",
         { __syncing: true },
         180000,
