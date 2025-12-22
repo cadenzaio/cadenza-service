@@ -64,9 +64,15 @@ export default class GraphSyncController {
           if (!ctx.__syncing) {
             return;
           }
-          console.log("RECORDING ROUTINE", ctx.__routineName);
+          console.log(
+            "RECORDING ROUTINE",
+            ctx.__routineName,
+            !!Cadenza.getRoutine(ctx.__routineName),
+          );
           Cadenza.debounce("meta.sync_controller.synced_resource");
           Cadenza.getRoutine(ctx.__routineName)!.registered = true;
+
+          return true;
         }).then(
           Cadenza.createUniqueMetaTask(
             "Gather routine registration",
