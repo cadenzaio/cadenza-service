@@ -1,3 +1,10 @@
+## [2.0.29](https://github.com/cadenzaio/cadenza-service/compare/v2.0.28...v2.0.29) (2025-12-22)
+
+
+### Bug Fixes
+
+* sync fixes. ([7ae174b](https://github.com/cadenzaio/cadenza-service/commit/7ae174b44c75a353766f37991bcaabd60e0305d8))
+
 ## [2.0.28](https://github.com/cadenzaio/cadenza-service/compare/v2.0.27...v2.0.28) (2025-12-22)
 
 
