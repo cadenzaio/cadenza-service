@@ -54,25 +54,6 @@ export default class GraphMetadataController {
       Cadenza.log(`Error in task ${ctx.data.taskName}`, ctx.data, "error");
     }).doOn("meta.node.errored");
 
-    Cadenza.createMetaTask(
-      "Handle task deputy relationship creation",
-      (ctx) => {
-        if (ctx.signalName) return;
-        return {
-          data: {
-            triggered_task_name: ctx.remoteRoutineName,
-            triggered_task_version: 1,
-            triggered_service_name: ctx.serviceName,
-            deputy_task_name: ctx.localTaskName,
-            deputy_task_version: 1,
-            deputy_service_name: Cadenza.serviceRegistry.serviceName,
-          },
-        };
-      },
-    )
-      .doOn("meta.service_registry.deputy_registered")
-      .emits("global.meta.graph_metadata.deputy_relationship_created");
-
     Cadenza.createMetaTask("Handle task signal observation", (ctx) => {
       const isGlobal = ctx.signalName.startsWith("global.");
       return {

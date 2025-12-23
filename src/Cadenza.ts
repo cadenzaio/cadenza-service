@@ -3,6 +3,7 @@ import Cadenza, {
   CadenzaMode,
   DebounceOptions,
   DebounceTask,
+  EmitOptions,
   EphemeralTask,
   EphemeralTaskOptions,
   GraphRegistry,
@@ -168,6 +169,7 @@ export default class CadenzaService {
    *
    * @param {string} signal - The name of the event or signal to emit.
    * @param {AnyObject} [data={}] - The data to be emitted along with the signal.
+   * @param options
    * @return {void} No return value.
    *
    * @example
@@ -177,12 +179,12 @@ export default class CadenzaService {
    * Cadenza.emit('main.my_event', { foo: 'bar' });
    * ```
    */
-  static emit(signal: string, data: AnyObject = {}) {
-    this.broker?.emit(signal, data);
+  static emit(signal: string, data: AnyObject = {}, options: EmitOptions = {}) {
+    Cadenza.emit(signal, data, options);
   }
 
   static debounce(signal: string, context: any = {}, delayMs: number = 500) {
-    this.broker?.debounce(signal, context, delayMs);
+    Cadenza.debounce(signal, context, delayMs);
   }
 
   public static schedule(
@@ -191,7 +193,7 @@ export default class CadenzaService {
     timeoutMs: number,
     exactDateTime?: Date,
   ) {
-    this.broker?.schedule(signal, context, timeoutMs, exactDateTime);
+    Cadenza.schedule(signal, context, timeoutMs, exactDateTime);
   }
 
   public static interval(
@@ -201,7 +203,7 @@ export default class CadenzaService {
     leading = false,
     startDateTime?: Date,
   ) {
-    this.broker?.interval(signal, context, intervalMs, leading, startDateTime);
+    Cadenza.interval(signal, context, intervalMs, leading, startDateTime);
   }
 
   /**

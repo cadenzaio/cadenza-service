@@ -398,9 +398,7 @@ export default class ServiceRegistry {
           communicationType: ctx.communicationType,
         });
       },
-    )
-      .doOn("meta.deputy.created")
-      .emits("meta.service_registry.deputy_registered");
+    ).doOn("meta.deputy.created");
 
     this.getAllInstances = Cadenza.createMetaTask(
       "Get all instances",
