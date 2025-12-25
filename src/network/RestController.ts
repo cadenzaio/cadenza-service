@@ -226,20 +226,10 @@ export default class RestController {
                   let ctx;
                   ctx = req.body;
                   deputyExecId = ctx.__metadata.__deputyExecId;
-                  console.log(
-                    "Rest delegation",
-                    deputyExecId,
-                    ctx.__localTaskName,
-                  );
 
                   Cadenza.createEphemeralMetaTask(
                     "Resolve delegation",
                     (endCtx) => {
-                      console.log(
-                        "Resolve Rest delegation",
-                        deputyExecId,
-                        endCtx.errored ? endCtx : "",
-                      );
                       const metadata = endCtx.__metadata;
                       delete endCtx.__metadata;
                       res.json({
@@ -312,8 +302,6 @@ export default class RestController {
                     });
                     return;
                   }
-
-                  console.log("Rest signal", ctx.__signalName);
 
                   Cadenza.emit(ctx.__signalName, ctx);
                 });
@@ -602,8 +590,6 @@ export default class RestController {
               return;
             }
 
-            console.log("Delegating via REST", ctx);
-
             let resultContext;
             try {
               const response = await fetch(`${URL}/delegation`, {
@@ -660,8 +646,6 @@ export default class RestController {
                 },
                 1000,
               );
-
-              console.log("SIGNAL TRANSMITTED", response);
 
               if (ctx.__routineExecId) {
                 emit(`meta.fetch.transmitted:${ctx.__routineExecId}`, response);

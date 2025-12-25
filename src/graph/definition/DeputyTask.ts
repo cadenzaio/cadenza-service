@@ -117,11 +117,6 @@ export default class DeputyTask extends Task {
         Cadenza.createEphemeralMetaTask(
           `Resolve deputy ${this.remoteRoutineName}`,
           (responseCtx) => {
-            console.log(
-              "Resolving deputy",
-              context.__localTaskName,
-              responseCtx.errored ? responseCtx.__error : "",
-            );
             if (responseCtx?.errored) {
               reject(new Error(responseCtx.__error));
             } else {

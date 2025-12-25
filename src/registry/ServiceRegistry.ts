@@ -185,8 +185,6 @@ export default class ServiceRegistry {
           },
         );
 
-        console.log("signalToTaskMap", sortedSignalToTaskMap);
-
         const locallyEmittedSignals = Cadenza.broker
           .listEmittedSignals()
           .filter((s: any) => s.startsWith("global."));

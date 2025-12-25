@@ -204,22 +204,10 @@ export default class SocketController {
                 "delegation",
                 (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
                   const deputyExecId = ctx.__metadata.__deputyExecId;
-                  console.log(
-                    "Received socket delegation request",
-                    deputyExecId,
-                    ctx.__localTaskName,
-                    ctx.__localServiceName,
-                  );
 
                   Cadenza.createEphemeralMetaTask(
                     "Resolve delegation",
                     (ctx: AnyObject) => {
-                      console.log(
-                        "Resolved socket delegation",
-                        deputyExecId,
-                        ctx.__localTaskName,
-                        ctx.__localServiceName,
-                      );
                       callback(ctx);
                     },
                     "Resolves a delegation request using the provided callback from the client (.emitWithAck())",
@@ -268,11 +256,6 @@ export default class SocketController {
                       __status: "success",
                       __signalName: ctx.__signalName,
                     });
-                    console.log(
-                      "Received signal",
-                      ctx.__signalName,
-                      ctx.__localServiceName,
-                    );
 
                     Cadenza.emit(ctx.__signalName, ctx);
                   } else {
@@ -554,13 +537,6 @@ export default class SocketController {
             }
 
             return new Promise((resolve) => {
-              console.log(
-                "Socket Delegate:",
-                ctx.__remoteRoutineName,
-                "on",
-                ctx.__serviceName,
-              );
-
               delete ctx.__isSubMeta;
               delete ctx.__broadcast;
               emitWhenReady(
@@ -598,12 +574,6 @@ export default class SocketController {
               delete ctx.__broadcast;
 
               emitWhenReady("signal", ctx, 10_000, (response: AnyObject) => {
-                console.log(
-                  "Socket transmitted signal",
-                  ctx.__signalName,
-                  serviceName,
-                );
-
                 if (ctx.__routineExecId) {
                   emit(
                     `meta.socket_client.transmitted:${ctx.__routineExecId}`,

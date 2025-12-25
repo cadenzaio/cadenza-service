@@ -495,7 +495,6 @@ export default class CadenzaService {
 
     const name = `Transmit signal: ${signalName} to ${serviceName}`;
     if (this.get(name)) {
-      console.log("Signal transmission task already exists", name);
       return;
     }
 
