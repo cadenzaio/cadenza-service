@@ -30,11 +30,8 @@ export default class DatabaseController {
   databaseName: string = "";
 
   dbClient = new Pool({
-    user: process.env.DATABASE_USER ?? "postgres",
-    host: process.env.DATABASE_ADDRESS ?? "localhost",
-    port: parseInt(process.env.DATABASE_PORT ?? "5432"),
+    connectionString: process.env.DATABASE_ADDRESS ?? "",
     database: "postgres",
-    password: process.env.DATABASE_PASSWORD ?? "03gibnEF",
     ssl: {
       rejectUnauthorized: false, // ← This bypasses the chain validation error
     },
@@ -80,9 +77,7 @@ export default class DatabaseController {
                 );
               }
               console.log(`Creating database ${databaseName}`, {
-                user: process.env.DATABASE_USER ?? "postgres",
-                host: process.env.DATABASE_ADDRESS ?? "localhost",
-                port: parseInt(process.env.DATABASE_PORT ?? "5432"),
+                connectionString: process.env.DATABASE_ADDRESS ?? "",
                 database: "postgres",
                 password: process.env.DATABASE_PASSWORD ?? "03gibnEF",
               });
@@ -91,11 +86,8 @@ export default class DatabaseController {
               console.log(`Database ${databaseName} created`);
               // Update dbClient to use the new database
               this.dbClient = new Pool({
-                user: process.env.DATABASE_USER ?? "postgres",
-                host: process.env.DATABASE_ADDRESS ?? "localhost",
-                port: parseInt(process.env.DATABASE_PORT ?? "5432"),
+                connectionString: process.env.DATABASE_ADDRESS ?? "",
                 database: databaseName,
-                password: process.env.DATABASE_PASSWORD ?? "03gibnEF",
                 ssl: {
                   rejectUnauthorized: false, // ← This bypasses the chain validation error
                 },
