@@ -1,3 +1,10 @@
+## [2.2.2](https://github.com/cadenzaio/cadenza-service/compare/v2.2.1...v2.2.2) (2026-01-15)
+
+
+### Bug Fixes
+
+* ssl fix in database controller ([f6e5d74](https://github.com/cadenzaio/cadenza-service/commit/f6e5d748ec033318664925951511ba70bee11774))
+
 ## [2.2.1](https://github.com/cadenzaio/cadenza-service/compare/v2.2.0...v2.2.1) (2026-01-15)
 
 
