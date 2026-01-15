@@ -1,3 +1,10 @@
+# [2.2.0](https://github.com/cadenzaio/cadenza-service/compare/v2.1.0...v2.2.0) (2026-01-15)
+
+
+### Features
+
+* Added Inquiry and intent feature. ([5df99ec](https://github.com/cadenzaio/cadenza-service/commit/5df99ec25ef52e494dc4d312e06d6df747141036))
+
 # [2.1.0](https://github.com/cadenzaio/cadenza-service/compare/v2.0.35...v2.1.0) (2025-12-25)
 
 
