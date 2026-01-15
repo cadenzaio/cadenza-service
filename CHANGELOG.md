@@ -1,3 +1,10 @@
+## [2.2.1](https://github.com/cadenzaio/cadenza-service/compare/v2.2.0...v2.2.1) (2026-01-15)
+
+
+### Bug Fixes
+
+* added DB debug logs ([ebd7cf8](https://github.com/cadenzaio/cadenza-service/commit/ebd7cf840b9ba3d5e4935a9c97489c9be55aaa59))
+
 # [2.2.0](https://github.com/cadenzaio/cadenza-service/compare/v2.1.0...v2.2.0) (2026-01-15)
 
 
