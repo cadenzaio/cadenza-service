@@ -76,6 +76,14 @@ export default class DatabaseController {
                   `Invalid database name ${databaseName}. Names must only contain lowercase alphanumeric characters and underscores`,
                 );
               }
+              console.log(`Creating database ${databaseName}`, {
+                user: process.env.DATABASE_USER ?? "postgres",
+                host: process.env.DATABASE_ADDRESS ?? "localhost",
+                port: parseInt(process.env.DATABASE_PORT ?? "5432"),
+                database: "postgres",
+                password: process.env.DATABASE_PASSWORD ?? "03gibnEF",
+              });
+
               await this.dbClient.query(`CREATE DATABASE ${databaseName}`);
               console.log(`Database ${databaseName} created`);
               // Update dbClient to use the new database
@@ -95,6 +103,7 @@ export default class DatabaseController {
                 // Database already exists
                 return true;
               }
+              console.error("Failed to create database", error);
               throw new Error(`Failed to create database: ${error.message}`);
             }
           },
@@ -495,6 +504,7 @@ export default class DatabaseController {
                                     if (ddl && ddl.length > 0) {
                                       for (const sql of ddl) {
                                         try {
+                                          console.log("Executing DDL", sql);
                                           await this.dbClient.query(sql);
                                         } catch (error: any) {
                                           console.error(

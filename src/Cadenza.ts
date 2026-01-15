@@ -926,6 +926,8 @@ export default class CadenzaService {
       ...options,
     };
 
+    console.log("Creating database service", options);
+
     this.emit("meta.database_init_requested", {
       schema,
       databaseName: options.databaseName,
