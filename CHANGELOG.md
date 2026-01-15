@@ -1,3 +1,10 @@
+## [2.2.4](https://github.com/cadenzaio/cadenza-service/compare/v2.2.3...v2.2.4) (2026-01-15)
+
+
+### Bug Fixes
+
+* Errors that would make services of same sort connect to each other. ([cfbe177](https://github.com/cadenzaio/cadenza-service/commit/cfbe177cd9339c6e3fedc560ec6387a1ea24ad09))
+
 ## [2.2.3](https://github.com/cadenzaio/cadenza-service/compare/v2.2.2...v2.2.3) (2026-01-15)
 
 
