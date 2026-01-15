@@ -999,7 +999,10 @@ export default class DatabaseController {
     const { data, filter = {}, transaction = true } = context;
 
     if (!data || Object.keys(data).length === 0) {
-      return { errored: true, __error: "No data provided for update" };
+      return {
+        errored: true,
+        __error: `No data provided for update of ${tableName}`,
+      };
     }
 
     let resultContext = {};

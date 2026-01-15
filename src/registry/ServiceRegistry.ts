@@ -95,6 +95,10 @@ export default class ServiceRegistry {
           instances.push(serviceInstance);
         }
 
+        if (this.serviceName === serviceName) {
+          return false;
+        }
+
         if (
           (!isFrontend && this.deputies.has(serviceName)) ||
           this.remoteSignals.has(serviceName)
@@ -271,24 +275,28 @@ export default class ServiceRegistry {
     this.handleServiceHandshakeTask = Cadenza.createMetaTask(
       "Handle service handshake",
       (ctx, emit) => {
-        const { serviceName, serviceAddress, servicePort } = ctx;
+        const { serviceName, serviceInstanceId } = ctx;
         const serviceInstances = this.instances.get(serviceName);
-        const instances = serviceInstances?.filter(
-          (i) => i.address === serviceAddress && i.port === servicePort,
+        const instance = serviceInstances?.find(
+          (i) => i.uuid === serviceInstanceId,
         );
-        for (const instance of instances ?? []) {
-          instance.isActive = true;
-          instance.isNonResponsive = false;
-          emit("global.meta.service_registry.service_handshake", {
-            data: {
-              isActive: instance.isActive,
-              isNonResponsive: instance.isNonResponsive,
-            },
-            filter: {
-              uuid: instance.uuid,
-            },
-          });
+
+        if (!instance) {
+          return false;
         }
+
+        instance.isActive = true;
+        instance.isNonResponsive = false;
+        emit("global.meta.service_registry.service_handshake", {
+          data: {
+            isActive: instance.isActive,
+            isNonResponsive: instance.isNonResponsive,
+          },
+          filter: {
+            uuid: instance.uuid,
+          },
+        });
+
         return true;
       },
       "Handles service handshake",
