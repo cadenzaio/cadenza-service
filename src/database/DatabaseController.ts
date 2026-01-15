@@ -35,6 +35,9 @@ export default class DatabaseController {
     port: parseInt(process.env.DATABASE_PORT ?? "5432"),
     database: "postgres",
     password: process.env.DATABASE_PASSWORD ?? "03gibnEF",
+    ssl: {
+      rejectUnauthorized: false, // ← This bypasses the chain validation error
+    },
   });
 
   reset() {
@@ -93,6 +96,9 @@ export default class DatabaseController {
                 port: parseInt(process.env.DATABASE_PORT ?? "5432"),
                 database: databaseName,
                 password: process.env.DATABASE_PASSWORD ?? "03gibnEF",
+                ssl: {
+                  rejectUnauthorized: false, // ← This bypasses the chain validation error
+                },
               });
 
               this.databaseName = databaseName;
