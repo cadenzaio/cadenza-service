@@ -9,6 +9,9 @@ import Cadenza, {
   GraphRegistry,
   GraphRoutine,
   GraphRunner,
+  InquiryBroker,
+  InquiryOptions,
+  Intent,
   SignalBroker,
   Task,
   TaskFunction,
@@ -68,7 +71,8 @@ export interface DatabaseOptions {
  * This class handles the initialization (`bootstrap`) and validation of services, as well as the creation of tasks associated with services and signals.
  */
 export default class CadenzaService {
-  public static broker: SignalBroker;
+  public static signalBroker: SignalBroker;
+  public static inquiryBroker: InquiryBroker;
   public static runner: GraphRunner;
   public static metaRunner: GraphRunner;
   public static registry: GraphRegistry;
@@ -87,7 +91,8 @@ export default class CadenzaService {
     this.isBootstrapped = true;
 
     Cadenza.bootstrap();
-    this.broker = Cadenza.broker;
+    this.signalBroker = Cadenza.signalBroker;
+    this.inquiryBroker = Cadenza.inquiryBroker;
     this.runner = Cadenza.runner;
     this.metaRunner = Cadenza.metaRunner;
     this.registry = Cadenza.registry;
@@ -204,6 +209,19 @@ export default class CadenzaService {
     startDateTime?: Date,
   ) {
     Cadenza.interval(signal, context, intervalMs, leading, startDateTime);
+  }
+
+  public static defineIntent(intent: Intent): Intent {
+    this.inquiryBroker?.intents.set(intent.name, intent);
+    return intent;
+  }
+
+  public static async inquire(
+    inquiry: string,
+    context: AnyObject,
+    options?: InquiryOptions,
+  ): Promise<AnyObject> {
+    return this.inquiryBroker?.inquire(inquiry, context, options);
   }
 
   /**

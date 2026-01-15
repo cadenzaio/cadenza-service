@@ -185,7 +185,7 @@ export default class ServiceRegistry {
           },
         );
 
-        const locallyEmittedSignals = Cadenza.broker
+        const locallyEmittedSignals = Cadenza.signalBroker
           .listEmittedSignals()
           .filter((s: any) => s.startsWith("global."));
 

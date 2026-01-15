@@ -212,7 +212,7 @@ export default class GraphSyncController {
 
           return { signalName: ctx.__signal };
         }).then(
-          Cadenza.broker.registerSignalTask!,
+          Cadenza.signalBroker.registerSignalTask!,
           Cadenza.createUniqueMetaTask(
             "Gather signal registration",
             () => true,
@@ -501,7 +501,7 @@ export default class GraphSyncController {
       ),
     );
 
-    Cadenza.broker
+    Cadenza.signalBroker
       .getSignalsTask!.clone()
       .doOn("meta.sync_controller.sync_tick", "meta.sync_requested")
       .then(this.splitSignalsTask);

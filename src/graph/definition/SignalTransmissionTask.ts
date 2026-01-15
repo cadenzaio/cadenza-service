@@ -1,4 +1,4 @@
-import { GraphContext, Task } from "@cadenza.io/core";
+import { GraphContext, InquiryOptions, Task } from "@cadenza.io/core";
 import type {
   AnyObject,
   SchemaDefinition,
@@ -107,12 +107,18 @@ export default class SignalTransmissionTask extends Task {
    *
    * @param {GraphContext} context - The context object providing the graph execution environment and metadata.
    * @param {Function} emit - A function to emit signals with the provided name and context.
+   * @param inquire
    * @param {Function} progressCallback - A callback function to report the progress of the task execution as a number between 0 and 1.
    * @return {TaskResult} The result of the executed task function.
    */
   execute(
     context: GraphContext,
     emit: (signal: string, ctx: AnyObject) => void,
+    inquire: (
+      inquiry: string,
+      context: AnyObject,
+      options: InquiryOptions,
+    ) => Promise<AnyObject>,
     progressCallback: (progress: number) => void,
   ): TaskResult {
     const ctx = context.getContext();
@@ -134,6 +140,6 @@ export default class SignalTransmissionTask extends Task {
       ...ctx,
     };
 
-    return this.taskFunction(deputyContext, emit, progressCallback);
+    return this.taskFunction(deputyContext, emit, inquire, progressCallback);
   }
 }

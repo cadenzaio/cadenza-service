@@ -274,7 +274,7 @@ export default class RestController {
                   try {
                     ctx = req.body;
                     if (
-                      !Cadenza.broker
+                      !Cadenza.signalBroker
                         .listObservedSignals()
                         .includes(ctx.__signalName)
                     ) {

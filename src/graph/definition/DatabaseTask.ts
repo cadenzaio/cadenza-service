@@ -1,5 +1,5 @@
 import DeputyTask from "./DeputyTask";
-import { GraphContext } from "@cadenza.io/core";
+import { GraphContext, InquiryOptions } from "@cadenza.io/core";
 import type {
   AnyObject,
   SchemaDefinition,
@@ -96,6 +96,7 @@ export default class DatabaseTask extends DeputyTask {
    *
    * @param {GraphContext} context - The execution context for the current task, which includes data and metadata required for processing.
    * @param {(signal: string, ctx: AnyObject) => void} emit - A function used to send signals or events during task execution.
+   * @param inquire
    * @param {(progress: number) => void} progressCallback - A function to report execution progress as a percentage (0-100).
    * @param {{ nodeId: string; routineExecId: string }} nodeData - An object containing identifiers for the current node and routine execution.
    * @return {TaskResult} The result of the task execution.
@@ -103,6 +104,11 @@ export default class DatabaseTask extends DeputyTask {
   execute(
     context: GraphContext,
     emit: (signal: string, ctx: AnyObject) => void,
+    inquire: (
+      inquiry: string,
+      context: AnyObject,
+      options: InquiryOptions,
+    ) => Promise<AnyObject>,
     progressCallback: (progress: number) => void,
     nodeData: { nodeId: string; routineExecId: string },
   ): TaskResult {
@@ -134,6 +140,6 @@ export default class DatabaseTask extends DeputyTask {
       },
     };
 
-    return this.taskFunction(deputyContext, emit, progressCallback);
+    return this.taskFunction(deputyContext, emit, inquire, progressCallback);
   }
 }

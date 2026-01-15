@@ -1,5 +1,5 @@
 import { v4 as uuid } from "uuid";
-import { GraphContext, Task } from "@cadenza.io/core";
+import { GraphContext, InquiryOptions, Task } from "@cadenza.io/core";
 import type {
   AnyObject,
   SchemaDefinition,
@@ -73,6 +73,11 @@ export default class DeputyTask extends Task {
     const taskFunction = (
       context: AnyObject,
       emit: (signal: string, ctx: AnyObject) => void,
+      inquire: (
+        inquiry: string,
+        context: AnyObject,
+        options: InquiryOptions,
+      ) => Promise<AnyObject>,
       progressCallback: (progress: number) => void,
     ): Promise<TaskResult> => {
       return new Promise((resolve, reject) => {
@@ -176,6 +181,7 @@ export default class DeputyTask extends Task {
    *
    * @param {GraphContext} context - The execution context containing methods and metadata for task execution.
    * @param {function(string, AnyObject): void} emit - A function for emitting signals with associated data during execution.
+   * @param inquire
    * @param {function(number): void} progressCallback - A callback function to report progress updates during task processing.
    * @param {{ nodeId: string, routineExecId: string }} nodeData - Object containing identifiers for the node and routine execution.
    * @return {TaskResult} Returns the result of the task function execution.
@@ -183,6 +189,11 @@ export default class DeputyTask extends Task {
   execute(
     context: GraphContext,
     emit: (signal: string, ctx: AnyObject) => void,
+    inquire: (
+      inquiry: string,
+      context: AnyObject,
+      options: InquiryOptions,
+    ) => Promise<AnyObject>,
     progressCallback: (progress: number) => void,
     nodeData: { nodeId: string; routineExecId: string },
   ): TaskResult {
@@ -206,6 +217,6 @@ export default class DeputyTask extends Task {
       ...ctx,
     };
 
-    return this.taskFunction(deputyContext, emit, progressCallback);
+    return this.taskFunction(deputyContext, emit, inquire, progressCallback);
   }
 }

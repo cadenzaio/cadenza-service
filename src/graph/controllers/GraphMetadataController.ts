@@ -283,5 +283,15 @@ export default class GraphMetadataController {
     )
       .doOn("meta.node.mapped", "meta.node.detected_previous_task_execution")
       .emits("global.meta.graph_metadata.relationship_executed");
+
+    Cadenza.createMetaTask("Handle Intent Creation", (ctx) => {
+      return {
+        data: {
+          ...ctx.data,
+        },
+      };
+    })
+      .doOn("meta.inquiry_broker.added")
+      .emits("global.meta.graph_metadata.intent_created");
   }
 }

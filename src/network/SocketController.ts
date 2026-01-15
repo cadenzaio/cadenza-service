@@ -248,7 +248,7 @@ export default class SocketController {
                 "signal",
                 (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
                   if (
-                    Cadenza.broker
+                    Cadenza.signalBroker
                       .listObservedSignals()
                       .includes(ctx.__signalName)
                   ) {
@@ -428,7 +428,11 @@ export default class SocketController {
         });
 
         socket.on("signal", (ctx) => {
-          if (Cadenza.broker.listObservedSignals().includes(ctx.__signalName)) {
+          if (
+            Cadenza.signalBroker
+              .listObservedSignals()
+              .includes(ctx.__signalName)
+          ) {
             Cadenza.emit(ctx.__signalName, ctx);
           }
         });
@@ -539,11 +543,13 @@ export default class SocketController {
             return new Promise((resolve) => {
               delete ctx.__isSubMeta;
               delete ctx.__broadcast;
+              const requestSentAt = Date.now();
               emitWhenReady(
                 "delegation",
                 ctx,
                 20_000,
                 (resultContext: AnyObject) => {
+                  const requestDuration = Date.now() - requestSentAt;
                   const metadata = resultContext.__metadata;
                   delete resultContext.__metadata;
                   emit(
@@ -551,6 +557,7 @@ export default class SocketController {
                     {
                       ...resultContext,
                       ...metadata,
+                      __requestDuration: requestDuration,
                     },
                   );
                   resolve(resultContext);
