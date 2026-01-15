@@ -1,3 +1,10 @@
+## [2.2.3](https://github.com/cadenzaio/cadenza-service/compare/v2.2.2...v2.2.3) (2026-01-15)
+
+
+### Bug Fixes
+
+* Pool client ([a64b936](https://github.com/cadenzaio/cadenza-service/commit/a64b9362eac02d79f4fa29917a6f321c3082c134))
+
 ## [2.2.2](https://github.com/cadenzaio/cadenza-service/compare/v2.2.1...v2.2.2) (2026-01-15)
 
 
