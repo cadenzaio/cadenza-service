@@ -1,3 +1,10 @@
+# [2.3.0](https://github.com/cadenzaio/cadenza-service/compare/v2.2.4...v2.3.0) (2026-01-19)
+
+
+### Features
+
+* More robust version ([e3f7e4b](https://github.com/cadenzaio/cadenza-service/commit/e3f7e4bf34771d67a41e97377e50c80090f77486))
+
 ## [2.2.4](https://github.com/cadenzaio/cadenza-service/compare/v2.2.3...v2.2.4) (2026-01-15)
 
 
