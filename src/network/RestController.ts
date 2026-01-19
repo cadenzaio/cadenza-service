@@ -328,7 +328,7 @@ export default class RestController {
                 Cadenza.createMetaTask(
                   "Configure network",
                   async (ctx) => {
-                    let address: string = "localhost";
+                    let address: string = "undefined";
                     let port: number = ctx.__port;
                     let exposed: boolean = false;
 
@@ -349,7 +349,7 @@ export default class RestController {
                             }
                           } else {
                             // @ts-ignore
-                            address = server?.address()?.address || "";
+                            address = server?.address()?.address || "undefined";
                           }
 
                           console.log(
