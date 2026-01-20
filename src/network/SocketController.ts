@@ -331,13 +331,25 @@ export default class SocketController {
     Cadenza.createMetaTask(
       "Connect to socket server",
       (ctx) => {
-        const { serviceName, serviceAddress, servicePort, protocol } = ctx;
+        const {
+          serviceInstanceId,
+          communicationTypes,
+          serviceName,
+          serviceAddress,
+          servicePort,
+          protocol,
+        } = ctx;
 
         const socketProtocol = protocol === "https" ? "wss" : "ws";
         const port = protocol === "https" ? 443 : servicePort;
         const URL = `${socketProtocol}://${serviceAddress}:${port}`;
         const fetchId = `${serviceAddress}_${port}`;
         let handshake = false;
+
+        if (Cadenza.get(`Socket handshake with ${URL}`)) {
+          console.error("Socket client already exists", URL);
+          return;
+        }
 
         const socket = io(URL, {
           reconnection: true,
@@ -447,7 +459,7 @@ export default class SocketController {
             { error: err.message, serviceName, socketId: socket.id, URL },
             "error",
           );
-          Cadenza.emit("meta.socket_client.connect_error", err);
+          Cadenza.emit(`meta.socket_client.connect_error:${fetchId}`, err);
         });
 
         socket.on("reconnect_attempt", (attempt) => {
@@ -497,8 +509,8 @@ export default class SocketController {
 
         socket.connect();
 
-        Cadenza.createEphemeralMetaTask(
-          `Handshake with ${URL}`,
+        const handshakeTask = Cadenza.createMetaTask(
+          `Socket handshake with ${URL}`,
           async () => {
             if (handshake) return;
             handshake = true;
@@ -534,7 +546,7 @@ export default class SocketController {
         ).doOn(`meta.socket_client.connected:${fetchId}`);
 
         const delegateTask = Cadenza.createMetaTask(
-          `Delegate flow to ${URL}`,
+          `Delegate flow to Socket service ${URL}`,
           async (ctx, emit) => {
             if (ctx.__remoteRoutineName === undefined) {
               return;
@@ -571,7 +583,7 @@ export default class SocketController {
           .attachSignal("meta.socket_client.delegated");
 
         const transmitTask = Cadenza.createMetaTask(
-          `Transmit signal to ${URL}`,
+          `Transmit signal to socket server ${URL}`,
           async (ctx, emit) => {
             if (ctx.__signalName === undefined) {
               return;
@@ -598,10 +610,24 @@ export default class SocketController {
 
         Cadenza.createEphemeralMetaTask(
           `Shutdown SocketClient ${URL}`,
-          () => {
+          (ctx, emit) => {
+            Cadenza.log("Shutting down socket client", { URL, serviceName });
             socket?.close();
+            handshakeTask.destroy();
             delegateTask.destroy();
             transmitTask.destroy();
+            emit(`meta.fetch.handshake_requested:${fetchId}`, {
+              serviceInstanceId,
+              serviceName,
+              communicationTypes,
+              serviceAddress,
+              servicePort,
+              protocol,
+              handshakeData: {
+                instanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                serviceName: Cadenza.serviceRegistry.serviceName,
+              },
+            });
           },
           "Shuts down the socket client",
         )
@@ -609,6 +635,7 @@ export default class SocketController {
             `meta.socket_shutdown_requested:${fetchId}`,
             `meta.socket_client.disconnected:${fetchId}`,
             `meta.fetch.handshake_failed:${fetchId}`,
+            `meta.socket_client.connect_error:${fetchId}`,
           )
           .emits("meta.socket_client_shutdown_complete");
 
