@@ -710,7 +710,7 @@ export default class RestController {
           statusTask.destroy();
         })
           .doOn(
-            "meta.fetch.destroy_requested",
+            `meta.fetch.destroy_requested:${fetchId}`,
             `meta.socket_client.disconnected:${fetchId}`,
             `meta.fetch.handshake_failed:${fetchId}`,
           )

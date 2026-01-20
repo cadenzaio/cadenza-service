@@ -80,9 +80,41 @@ export default class ServiceRegistry {
       "Handle Instance Update",
       (ctx, emit) => {
         const { serviceInstance } = ctx;
-        const { uuid, serviceName, address, port, exposed, isFrontend } =
-          serviceInstance;
+        const {
+          uuid,
+          serviceName,
+          address,
+          port,
+          exposed,
+          isFrontend,
+          deleted,
+        } = serviceInstance;
         if (uuid === this.serviceInstanceId) return;
+
+        if (deleted) {
+          this.instances
+            .get(serviceName)
+            ?.splice(
+              this.instances
+                .get(serviceName)
+                ?.findIndex((i) => i.uuid === uuid) ?? -1,
+              1,
+            );
+
+          if (this.instances.get(serviceName)?.length === 0) {
+            this.instances.delete(serviceName);
+          } else if (
+            this.instances
+              .get(serviceName)
+              ?.filter((i) => i.address === address && i.port === port)
+              .length === 0
+          ) {
+            emit(`meta.socket_shutdown_requested:${address}_${port}`, {});
+            emit(`meta.fetch.destroy_requested:${address}_${port}`, {});
+          }
+
+          return;
+        }
 
         if (!this.instances.has(serviceName))
           this.instances.set(serviceName, []);
@@ -163,7 +195,11 @@ export default class ServiceRegistry {
         "meta.service_instance.updated",
         "meta.socket_client.status_received",
       )
-      .attachSignal("meta.service_registry.dependee_registered");
+      .attachSignal(
+        "meta.service_registry.dependee_registered",
+        "meta.socket_shutdown_requested",
+        "meta.fetch.destroy_requested",
+      );
 
     Cadenza.createMetaTask("Split service instances", function* (ctx: any) {
       if (!ctx.serviceInstances) {
@@ -275,7 +311,8 @@ export default class ServiceRegistry {
     this.handleServiceHandshakeTask = Cadenza.createMetaTask(
       "Handle service handshake",
       (ctx, emit) => {
-        const { serviceName, serviceInstanceId } = ctx;
+        const { serviceName, serviceInstanceId, serviceAddress, servicePort } =
+          ctx;
         const serviceInstances = this.instances.get(serviceName);
         const instance = serviceInstances?.find(
           (i) => i.uuid === serviceInstanceId,
@@ -297,12 +334,38 @@ export default class ServiceRegistry {
           },
         });
 
+        const instancesToDelete = serviceInstances?.filter(
+          (i) =>
+            i.uuid !== serviceInstanceId &&
+            i.address === serviceAddress &&
+            i.port === servicePort,
+        );
+
+        for (const i of instancesToDelete ?? []) {
+          this.instances
+            .get(serviceName)
+            ?.splice(this.instances.get(serviceName)?.indexOf(i) ?? -1, 1);
+          emit("global.meta.service_registry.deleted", {
+            data: {
+              isActive: false,
+              isNonResponsive: false,
+              deleted: true,
+            },
+            filter: {
+              uuid: i.uuid,
+            },
+          });
+        }
+
         return true;
       },
       "Handles service handshake",
     )
       .doOn("meta.fetch.handshake_complete")
-      .attachSignal("global.meta.service_registry.service_handshake");
+      .attachSignal(
+        "global.meta.service_registry.service_handshake",
+        "global.meta.service_registry.deleted",
+      );
 
     this.handleSocketStatusUpdateTask = Cadenza.createMetaTask(
       "Handle Socket Status Update",
