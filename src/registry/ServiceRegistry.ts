@@ -91,6 +91,8 @@ export default class ServiceRegistry {
         } = serviceInstance;
         if (uuid === this.serviceInstanceId) return;
 
+        console.log("service instance", serviceName, uuid, address, deleted);
+
         if (deleted) {
           this.instances
             .get(serviceName)
@@ -216,6 +218,8 @@ export default class ServiceRegistry {
     this.handleGlobalSignalRegistrationTask = Cadenza.createMetaTask(
       "Handle global Signal Registration",
       (ctx) => {
+        console.log("Handling global signal registration...");
+
         const { signalToTaskMaps } = ctx;
         const sortedSignalToTaskMap = signalToTaskMaps.sort(
           (a: any, b: any) => {
@@ -390,6 +394,10 @@ export default class ServiceRegistry {
         ctx.joinedContexts.forEach((ctx: any) => {
           joinedContext = { ...joinedContext, ...ctx };
         });
+        console.log(
+          "merging contexts of full sync...",
+          joinedContext.keys().join(", "),
+        );
         return joinedContext;
       },
     ).then(this.handleGlobalSignalRegistrationTask);

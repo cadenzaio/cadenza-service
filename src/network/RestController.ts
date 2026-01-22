@@ -108,6 +108,9 @@ export default class RestController {
               });
               return;
             }
+
+            console.log("Service inserted...");
+
             const app = express();
             app.use(bodyParser.json());
 
@@ -592,15 +595,20 @@ export default class RestController {
 
             let resultContext;
             try {
-              const response = await fetch(`${URL}/delegation`, {
-                headers: {
-                  "Content-Type": "application/json",
+              const response = await this.fetchDataWithTimeout(
+                `${URL}/delegation`,
+                {
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  method: "POST",
+                  body: JSON.stringify(ctx),
                 },
-                method: "POST",
-                body: JSON.stringify(ctx),
-              });
+                30_000,
+              );
               resultContext = await response.json();
             } catch (e) {
+              console.error("Error in delegation", e);
               // TODO: Retry on too many requests
               resultContext = {
                 __error: `Error: ${e}`,
@@ -652,6 +660,7 @@ export default class RestController {
               }
             } catch (e) {
               // TODO: Retry on too many requests
+              console.error("Error in transmission", e);
 
               response = {
                 __error: `Error: ${e}`,

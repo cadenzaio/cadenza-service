@@ -454,6 +454,7 @@ export default class SocketController {
         });
 
         socket.on("connect_error", (err) => {
+          handshake = false;
           Cadenza.log(
             "Socket connect error",
             { error: err.message, serviceName, socketId: socket.id, URL },
@@ -475,6 +476,7 @@ export default class SocketController {
         });
 
         socket.on("reconnect_error", (err) => {
+          handshake = false;
           Cadenza.log(
             "Socket reconnect failed.",
             { error: err.message, serviceName, URL, socketId: socket.id },
@@ -611,6 +613,7 @@ export default class SocketController {
         Cadenza.createEphemeralMetaTask(
           `Shutdown SocketClient ${URL}`,
           (ctx, emit) => {
+            handshake = false;
             Cadenza.log("Shutting down socket client", { URL, serviceName });
             socket?.close();
             handshakeTask.destroy();
