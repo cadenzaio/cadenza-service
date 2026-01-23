@@ -1,3 +1,10 @@
+## [2.3.4](https://github.com/cadenzaio/cadenza-service/compare/v2.3.3...v2.3.4) (2026-01-23)
+
+
+### Bug Fixes
+
+* Bug fix in delegation ([bbf3916](https://github.com/cadenzaio/cadenza-service/commit/bbf3916c81977bff806e92c829e80cd7616f6f47))
+
 ## [2.3.3](https://github.com/cadenzaio/cadenza-service/compare/v2.3.2...v2.3.3) (2026-01-22)
 
 
