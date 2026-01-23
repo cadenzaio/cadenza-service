@@ -2,8 +2,8 @@ import Cadenza from "../Cadenza";
 import { Server } from "socket.io";
 import { IRateLimiterOptions, RateLimiterMemory } from "rate-limiter-flexible";
 import xss from "xss";
-import type { AnyObject } from "@cadenza.io/core";
-import { io } from "socket.io-client";
+import type { AnyObject, Task } from "@cadenza.io/core";
+import { io, Socket } from "socket.io-client";
 import { isBrowser } from "../utils/environment";
 
 /**
@@ -345,13 +345,31 @@ export default class SocketController {
         const URL = `${socketProtocol}://${serviceAddress}:${port}`;
         const fetchId = `${serviceAddress}_${port}`;
         let handshake = false;
+        let errorCount = 0;
+        const ERROR_LIMIT = 5;
 
         if (Cadenza.get(`Socket handshake with ${URL}`)) {
           console.error("Socket client already exists", URL);
           return;
         }
 
-        const socket = io(URL, {
+        const pendingDelegationIds = new Set<string>();
+        const pendingTimers = new Set<NodeJS.Timeout>();
+
+        let handshakeTask: Task | null = null;
+        let emitWhenReady:
+          | (<T>(
+              event: string,
+              data: any,
+              timeoutMs: number,
+              ack?: (response: T) => void,
+            ) => Promise<T>)
+          | null = null;
+        let transmitTask: Task | null = null;
+        let delegateTask: Task | null = null;
+        let socket: Socket | null = null;
+
+        socket = io(URL, {
           reconnection: true,
           reconnectionAttempts: 5,
           reconnectionDelay: 2000,
@@ -361,7 +379,7 @@ export default class SocketController {
           autoConnect: false,
         });
 
-        const emitWhenReady = <T>(
+        emitWhenReady = <T>(
           event: string,
           data: any,
           timeoutMs: number = 20_000,
@@ -369,9 +387,9 @@ export default class SocketController {
         ): Promise<T> => {
           return new Promise((resolve) => {
             const tryEmit = () => {
-              if (!socket.connected) {
+              if (!socket?.connected) {
                 // should never happen because we await connect below, but safety net
-                socket.once("connect", tryEmit);
+                socket?.once("connect", tryEmit);
                 return;
               }
 
@@ -380,7 +398,7 @@ export default class SocketController {
                 timer = setTimeout(() => {
                   Cadenza.log(
                     `Socket event '${event}' timed out`,
-                    { socketId: socket.id, serviceName, URL },
+                    { socketId: socket?.id, serviceName, URL },
                     "error",
                   );
                   resolve({
@@ -388,21 +406,24 @@ export default class SocketController {
                     errored: true,
                     __error: `Socket event '${event}' timed out`,
                     error: `Socket event '${event}' timed out`,
-                    socketId: socket.id,
+                    socketId: socket?.id,
                     serviceName,
                     URL,
                   });
-                }, timeoutMs + 5);
+                }, timeoutMs + 10);
+                pendingTimers.add(timer);
               }
 
               socket
                 .timeout(timeoutMs)
                 .emit(event, data, (err: any, response: T) => {
                   if (timer) clearTimeout(timer);
+                  pendingTimers.delete(timer);
+                  timer = null;
                   if (err) {
                     Cadenza.log(
                       "Socket timeout.",
-                      { error: err, socketId: socket.id, serviceName },
+                      { error: err, socketId: socket?.id, serviceName },
                       "warning",
                     );
                     response = {
@@ -417,10 +438,10 @@ export default class SocketController {
                 });
             };
 
-            if (socket.connected) {
+            if (socket?.connected) {
               tryEmit();
             } else {
-              socket.once("connect", tryEmit);
+              socket?.once("connect", tryEmit);
             }
           });
         };
@@ -456,7 +477,7 @@ export default class SocketController {
           handshake = false;
           Cadenza.log(
             "Socket connect error",
-            { error: err.message, serviceName, socketId: socket.id, URL },
+            { error: err.message, serviceName, socketId: socket?.id, URL },
             "error",
           );
           Cadenza.emit(`meta.socket_client.connect_error:${fetchId}`, err);
@@ -468,7 +489,7 @@ export default class SocketController {
 
         socket.on("reconnect", (attempt) => {
           Cadenza.log(`Socket reconnected after ${attempt} tries`, {
-            socketId: socket.id,
+            socketId: socket?.id,
             URL,
             serviceName,
           });
@@ -478,17 +499,18 @@ export default class SocketController {
           handshake = false;
           Cadenza.log(
             "Socket reconnect failed.",
-            { error: err.message, serviceName, URL, socketId: socket.id },
+            { error: err.message, serviceName, URL, socketId: socket?.id },
             "warning",
           );
         });
 
         socket.on("error", (err) => {
           // TODO: Retry on rate limit error
+          errorCount++;
 
           Cadenza.log(
             "Socket error",
-            { error: err, socketId: socket.id, URL, serviceName },
+            { error: err, socketId: socket?.id, URL, serviceName },
             "error",
           );
           Cadenza.emit("meta.socket_client.error", err);
@@ -497,7 +519,7 @@ export default class SocketController {
         socket.on("disconnect", () => {
           Cadenza.log(
             "Socket disconnected.",
-            { URL, serviceName, socketId: socket.id },
+            { URL, serviceName, socketId: socket?.id },
             "warning",
           );
           Cadenza.emit(`meta.socket_client.disconnected:${fetchId}`, {
@@ -510,13 +532,13 @@ export default class SocketController {
 
         socket.connect();
 
-        const handshakeTask = Cadenza.createMetaTask(
+        handshakeTask = Cadenza.createMetaTask(
           `Socket handshake with ${URL}`,
-          async () => {
+          async (ctx, emit) => {
             if (handshake) return;
             handshake = true;
 
-            await emitWhenReady(
+            await emitWhenReady?.(
               "handshake",
               {
                 serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
@@ -530,15 +552,23 @@ export default class SocketController {
                   Cadenza.log("Socket connected", {
                     result,
                     serviceName,
-                    socketId: socket.id,
+                    socketId: socket?.id,
                     URL,
                   });
                 } else {
                   Cadenza.log(
                     "Socket handshake failed",
-                    { result, serviceName, socketId: socket.id, URL },
+                    { result, serviceName, socketId: socket?.id, URL },
                     "warning",
                   );
+                }
+
+                if (result.errored) {
+                  errorCount++;
+                  if (errorCount > ERROR_LIMIT) {
+                    console.error("Too many errors, closing socket", URL);
+                    emit(`meta.socket_shutdown_requested:${fetchId}`, {});
+                  }
                 }
               },
             );
@@ -546,7 +576,7 @@ export default class SocketController {
           "Handshakes with socket server",
         ).doOn(`meta.socket_client.connected:${fetchId}`);
 
-        const delegateTask = Cadenza.createMetaTask(
+        delegateTask = Cadenza.createMetaTask(
           `Delegate flow to Socket service ${URL}`,
           async (ctx, emit) => {
             if (ctx.__remoteRoutineName === undefined) {
@@ -557,7 +587,8 @@ export default class SocketController {
               delete ctx.__isSubMeta;
               delete ctx.__broadcast;
               const requestSentAt = Date.now();
-              emitWhenReady(
+              pendingDelegationIds.add(ctx.__metadata.__deputyExecId);
+              emitWhenReady?.(
                 "delegation",
                 ctx,
                 20_000,
@@ -573,6 +604,16 @@ export default class SocketController {
                       __requestDuration: requestDuration,
                     },
                   );
+
+                  pendingDelegationIds.delete(ctx.__metadata.__deputyExecId);
+
+                  if (resultContext.errored) {
+                    errorCount++;
+                    if (errorCount > ERROR_LIMIT) {
+                      console.error("Too many errors, closing socket", URL);
+                      emit(`meta.socket_shutdown_requested:${fetchId}`, {});
+                    }
+                  }
                   resolve(resultContext);
                 },
               );
@@ -581,9 +622,12 @@ export default class SocketController {
           `Delegate flow to service ${serviceName} with address ${URL}`,
         )
           .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
-          .attachSignal("meta.socket_client.delegated");
+          .attachSignal(
+            "meta.socket_client.delegated",
+            "meta.socket_shutdown_requested",
+          );
 
-        const transmitTask = Cadenza.createMetaTask(
+        transmitTask = Cadenza.createMetaTask(
           `Transmit signal to socket server ${URL}`,
           async (ctx, emit) => {
             if (ctx.__signalName === undefined) {
@@ -593,12 +637,19 @@ export default class SocketController {
             return new Promise((resolve) => {
               delete ctx.__broadcast;
 
-              emitWhenReady("signal", ctx, 10_000, (response: AnyObject) => {
+              emitWhenReady?.("signal", ctx, 5_000, (response: AnyObject) => {
                 if (ctx.__routineExecId) {
                   emit(
                     `meta.socket_client.transmitted:${ctx.__routineExecId}`,
                     response,
                   );
+                }
+                if (response.errored) {
+                  errorCount++;
+                  if (errorCount > ERROR_LIMIT) {
+                    console.error("Too many errors, closing socket", URL);
+                    emit(`meta.socket_shutdown_requested:${fetchId}`, {});
+                  }
                 }
                 resolve(response);
               });
@@ -615,9 +666,14 @@ export default class SocketController {
             handshake = false;
             Cadenza.log("Shutting down socket client", { URL, serviceName });
             socket?.close();
-            handshakeTask.destroy();
-            delegateTask.destroy();
-            transmitTask.destroy();
+            handshakeTask?.destroy();
+            delegateTask?.destroy();
+            transmitTask?.destroy();
+            handshakeTask = null;
+            delegateTask = null;
+            transmitTask = null;
+            emitWhenReady = null;
+            socket = null;
             emit(`meta.fetch.handshake_requested:${fetchId}`, {
               serviceInstanceId,
               serviceName,
@@ -630,6 +686,21 @@ export default class SocketController {
                 serviceName: Cadenza.serviceRegistry.serviceName,
               },
             });
+
+            for (const id of pendingDelegationIds) {
+              emit(`meta.socket_client.delegated:${id}`, {
+                errored: true,
+                __error: "Shutting down socket client",
+              });
+            }
+
+            pendingDelegationIds.clear();
+
+            for (const timer of pendingTimers) {
+              clearTimeout(timer);
+            }
+
+            pendingTimers.clear();
           },
           "Shuts down the socket client",
         )
