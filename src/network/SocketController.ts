@@ -380,7 +380,7 @@ export default class SocketController {
                 timer = setTimeout(() => {
                   Cadenza.log(
                     `Socket event '${event}' timed out`,
-                    { ...data, socketId: socket.id, serviceName, URL },
+                    { socketId: socket.id, serviceName, URL },
                     "error",
                   );
                   resolve({
@@ -410,8 +410,6 @@ export default class SocketController {
                       ...ctx,
                       ...ctx.__metadata,
                     };
-                    resolve(response);
-                    return;
                   }
                   if (timer) clearTimeout(timer);
                   if (ack) ack(response);
