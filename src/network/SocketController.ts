@@ -429,6 +429,7 @@ export default class SocketController {
 
         socket.on("connect", () => {
           if (handshake) return;
+          console.log("socket connected");
           Cadenza.emit(`meta.socket_client.connected:${fetchId}`, ctx);
         });
 
@@ -640,6 +641,7 @@ export default class SocketController {
             `meta.fetch.handshake_failed:${fetchId}`,
             `meta.socket_client.connect_error:${fetchId}`,
           )
+          .attachSignal("meta.fetch.handshake_requested")
           .emits("meta.socket_client_shutdown_complete");
 
         return true;
