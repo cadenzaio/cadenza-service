@@ -595,7 +595,7 @@ export default class RestController {
 
             let resultContext;
             try {
-              const response = await this.fetchDataWithTimeout(
+              resultContext = await this.fetchDataWithTimeout(
                 `${URL}/delegation`,
                 {
                   headers: {
@@ -606,7 +606,6 @@ export default class RestController {
                 },
                 30_000,
               );
-              resultContext = await response.json();
             } catch (e) {
               console.error("Error in delegation", e);
               // TODO: Retry on too many requests
