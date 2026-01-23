@@ -1,3 +1,10 @@
+## [2.3.5](https://github.com/cadenzaio/cadenza-service/compare/v2.3.4...v2.3.5) (2026-01-23)
+
+
+### Bug Fixes
+
+* Bug fix in socket ([d08284c](https://github.com/cadenzaio/cadenza-service/commit/d08284ca917a797a0ec447da55ff39da96d81136))
+
 ## [2.3.4](https://github.com/cadenzaio/cadenza-service/compare/v2.3.3...v2.3.4) (2026-01-23)
 
 
