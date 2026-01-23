@@ -392,12 +392,13 @@ export default class SocketController {
                     serviceName,
                     URL,
                   });
-                }, timeoutMs);
+                }, timeoutMs + 5);
               }
 
               socket
                 .timeout(timeoutMs)
                 .emit(event, data, (err: any, response: T) => {
+                  if (timer) clearTimeout(timer);
                   if (err) {
                     Cadenza.log(
                       "Socket timeout.",
@@ -411,7 +412,6 @@ export default class SocketController {
                       ...ctx.__metadata,
                     };
                   }
-                  if (timer) clearTimeout(timer);
                   if (ack) ack(response);
                   resolve(response);
                 });
