@@ -86,8 +86,11 @@ export default class DatabaseController {
               console.log(`Database ${databaseName} created`);
               // Update dbClient to use the new database
               this.dbClient = new Pool({
-                connectionString: process.env.DATABASE_ADDRESS ?? "",
-                database: databaseName,
+                connectionString: process.env.DATABASE_ADDRESS
+                  ? process.env.DATABASE_ADDRESS +
+                    databaseName +
+                    "?sslmode=disable"
+                  : "",
                 ssl: {
                   rejectUnauthorized: false, // ← This bypasses the chain validation error
                 },

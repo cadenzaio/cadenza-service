@@ -423,7 +423,7 @@ export default class SocketController {
                   if (err) {
                     Cadenza.log(
                       "Socket timeout.",
-                      { error: err, socketId: socket?.id, serviceName },
+                      { error: err.message, socketId: socket?.id, serviceName },
                       "warning",
                     );
                     response = {
