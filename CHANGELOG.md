@@ -1,3 +1,10 @@
+## [2.3.8](https://github.com/cadenzaio/cadenza-service/compare/v2.3.7...v2.3.8) (2026-02-10)
+
+
+### Bug Fixes
+
+* Database connection string update ([6cb04f9](https://github.com/cadenzaio/cadenza-service/commit/6cb04f928d0affd36d75c390133726ec92209456))
+
 ## [2.3.7](https://github.com/cadenzaio/cadenza-service/compare/v2.3.6...v2.3.7) (2026-01-23)
 
 
