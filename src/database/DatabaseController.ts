@@ -79,7 +79,6 @@ export default class DatabaseController {
               console.log(`Creating database ${databaseName}`, {
                 connectionString: process.env.DATABASE_ADDRESS ?? "",
                 database: "postgres",
-                password: process.env.DATABASE_PASSWORD ?? "03gibnEF",
               });
 
               await this.dbClient.query(`CREATE DATABASE ${databaseName}`);
@@ -87,7 +86,11 @@ export default class DatabaseController {
               // Update dbClient to use the new database
               this.dbClient = new Pool({
                 connectionString: process.env.DATABASE_ADDRESS
-                  ? process.env.DATABASE_ADDRESS +
+                  ? process.env.DATABASE_ADDRESS.slice(
+                      0,
+                      process.env.DATABASE_ADDRESS.lastIndexOf("/"),
+                    ) +
+                    "/" +
                     databaseName +
                     "?sslmode=disable"
                   : "",
