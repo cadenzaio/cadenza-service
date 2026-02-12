@@ -1,3 +1,10 @@
+## [2.3.10](https://github.com/cadenzaio/cadenza-service/compare/v2.3.9...v2.3.10) (2026-02-12)
+
+
+### Bug Fixes
+
+* debugging of signal transmission. ([47edb2b](https://github.com/cadenzaio/cadenza-service/commit/47edb2bd3f73ac7274bdcd5a53e9e6b7fcba216b))
+
 ## [2.3.9](https://github.com/cadenzaio/cadenza-service/compare/v2.3.8...v2.3.9) (2026-02-10)
 
 
