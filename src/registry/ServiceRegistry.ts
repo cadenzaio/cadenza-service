@@ -91,7 +91,7 @@ export default class ServiceRegistry {
         } = serviceInstance;
         if (uuid === this.serviceInstanceId) return;
 
-        console.log("service instance", serviceName, uuid, address, deleted);
+        console.log("service instance", serviceName, uuid, address);
 
         if (deleted) {
           this.instances
@@ -229,9 +229,13 @@ export default class ServiceRegistry {
           },
         );
 
+        console.log(sortedSignalToTaskMap);
+
         const locallyEmittedSignals = Cadenza.signalBroker
           .listEmittedSignals()
           .filter((s: any) => s.startsWith("global."));
+
+        console.log(locallyEmittedSignals);
 
         for (const map of sortedSignalToTaskMap) {
           if (map.deleted) {
@@ -253,6 +257,9 @@ export default class ServiceRegistry {
             }
 
             if (!this.remoteSignals.get(map.serviceName)?.has(map.signalName)) {
+              console.log(
+                `Creating signal transmission task for: ${map.signalName} to ${map.serviceName}`,
+              );
               Cadenza.createSignalTransmissionTask(
                 map.signalName,
                 map.serviceName,

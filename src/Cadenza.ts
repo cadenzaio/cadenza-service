@@ -489,6 +489,11 @@ export default class CadenzaService {
     this.validateName(signalName);
     this.validateName(serviceName);
 
+    const name = `Transmit signal: ${signalName} to ${serviceName}`;
+    if (this.get(name)) {
+      return;
+    }
+
     options = {
       concurrency: 100,
       timeout: 0,
@@ -510,11 +515,6 @@ export default class CadenzaService {
     };
 
     options.isMeta = true;
-
-    const name = `Transmit signal: ${signalName} to ${serviceName}`;
-    if (this.get(name)) {
-      return;
-    }
 
     return new SignalTransmissionTask(
       name,
