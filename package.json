@@ -81,14 +81,14 @@
     "vitest": "^3.2.3"
   },
   "dependencies": {
-    "@cadenza.io/core": "^3.19.2",
+    "@cadenza.io/core": "^3.19.3",
     "@types/pg": "^8.15.4",
     "@types/uuid": "^10.0.0",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
-    "lodash-es": "^4.17.21",
+    "lodash-es": "^4.17.23",
     "node-fetch": "^3.3.2",
     "pg": "^8.16.3",
     "rate-limiter-flexible": "^8.1.0",

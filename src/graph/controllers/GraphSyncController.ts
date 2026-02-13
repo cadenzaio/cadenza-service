@@ -561,7 +561,9 @@ export default class GraphSyncController {
         { __syncing: true },
         180000,
       );
-      Cadenza.schedule("meta.sync_requested", { __syncing: true }, 2000);
+      Cadenza.schedule("meta.sync_requested", { __syncing: true }, 5000);
     }
+
+    console.log("Syncing initiated", this.isCadenzaDBReady);
   }
 }

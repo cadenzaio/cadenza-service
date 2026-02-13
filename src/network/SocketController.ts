@@ -448,7 +448,6 @@ export default class SocketController {
 
         socket.on("connect", () => {
           if (handshake) return;
-          console.log("socket connected");
           Cadenza.emit(`meta.socket_client.connected:${fetchId}`, ctx);
         });
 
@@ -549,7 +548,7 @@ export default class SocketController {
               10_000,
               (result: any) => {
                 if (result.status === "success") {
-                  Cadenza.log("Socket connected", {
+                  Cadenza.log("Socket client connected", {
                     result,
                     serviceName,
                     socketId: socket?.id,
