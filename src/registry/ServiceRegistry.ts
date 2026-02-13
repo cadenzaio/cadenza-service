@@ -407,7 +407,9 @@ export default class ServiceRegistry {
         );
         return joinedContext;
       },
-    ).then(this.handleGlobalSignalRegistrationTask);
+    )
+      .emits("meta.service_registry.initial_sync_complete")
+      .then(this.handleGlobalSignalRegistrationTask);
 
     this.fullSyncTask = Cadenza.createMetaRoutine("Full sync", [
       Cadenza.createTask("Confirm full sync", () => {

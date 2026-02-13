@@ -201,6 +201,7 @@ export default class DeputyTask extends Task {
     const metadata = context.getMetadata();
 
     const deputyContext = {
+      __timeout: this.timeout,
       __localTaskName: this.name,
       __localTaskVersion: this.version,
       __localServiceName: Cadenza.serviceRegistry.serviceName,

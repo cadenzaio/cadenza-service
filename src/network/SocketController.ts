@@ -377,7 +377,7 @@ export default class SocketController {
         emitWhenReady = <T>(
           event: string,
           data: any,
-          timeoutMs: number = 20_000,
+          timeoutMs: number = 60_000,
           ack?: (response: T) => void,
         ): Promise<T> => {
           return new Promise((resolve) => {
@@ -418,7 +418,12 @@ export default class SocketController {
                   if (err) {
                     Cadenza.log(
                       "Socket timeout.",
-                      { error: err.message, socketId: socket?.id, serviceName },
+                      {
+                        event,
+                        error: err.message,
+                        socketId: socket?.id,
+                        serviceName,
+                      },
                       "warning",
                     );
                     response = {
@@ -557,13 +562,13 @@ export default class SocketController {
                   );
                 }
 
-                if (result.errored) {
-                  errorCount++;
-                  if (errorCount > ERROR_LIMIT) {
-                    console.error("Too many errors, closing socket", URL);
-                    emit(`meta.socket_shutdown_requested:${fetchId}`, {});
-                  }
-                }
+                // if (result.errored) {
+                //   errorCount++;
+                //   if (errorCount > ERROR_LIMIT) {
+                //     console.error("Too many errors, closing socket", URL);
+                //     emit(`meta.socket_shutdown_requested:${fetchId}`, {});
+                //   }
+                // }
               },
             );
           },
@@ -586,7 +591,7 @@ export default class SocketController {
               emitWhenReady?.(
                 "delegation",
                 ctx,
-                20_000,
+                ctx.__timeout ?? 60_000,
                 (resultContext: AnyObject) => {
                   const requestDuration = Date.now() - requestSentAt;
                   const metadata = resultContext.__metadata;
@@ -608,13 +613,13 @@ export default class SocketController {
 
                   pendingDelegationIds.delete(ctx.__metadata.__deputyExecId);
 
-                  if (resultContext.errored) {
-                    errorCount++;
-                    if (errorCount > ERROR_LIMIT) {
-                      console.error("Too many errors, closing socket", URL);
-                      emit(`meta.socket_shutdown_requested:${fetchId}`, {});
-                    }
-                  }
+                  // if (resultContext.errored) {
+                  //   errorCount++;
+                  //   if (errorCount > ERROR_LIMIT) {
+                  //     console.error("Too many errors, closing socket", URL);
+                  //     emit(`meta.socket_shutdown_requested:${fetchId}`, {});
+                  //   }
+                  // }
                   resolve(resultContext);
                 },
               );
@@ -647,13 +652,13 @@ export default class SocketController {
                     response,
                   );
                 }
-                if (response.errored) {
-                  errorCount++;
-                  if (errorCount > ERROR_LIMIT) {
-                    console.error("Too many errors, closing socket", URL);
-                    emit(`meta.socket_shutdown_requested:${fetchId}`, {});
-                  }
-                }
+                // if (response.errored) {
+                //   errorCount++;
+                //   if (errorCount > ERROR_LIMIT) {
+                //     console.error("Too many errors, closing socket", URL);
+                //     emit(`meta.socket_shutdown_requested:${fetchId}`, {});
+                //   }
+                // }
                 resolve(response);
               });
             });

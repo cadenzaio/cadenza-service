@@ -56,7 +56,7 @@ export default class GraphSyncController {
                 },
               },
             },
-            { concurrency: 50 },
+            { concurrency: 30 },
           )
         : Cadenza.get("dbInsertRoutine")
       )?.then(
@@ -66,7 +66,7 @@ export default class GraphSyncController {
           }
 
           Cadenza.debounce("meta.sync_controller.synced_resource", {
-            delayMs: 2000,
+            delayMs: 3000,
           });
           Cadenza.getRoutine(ctx.__routineName)!.registered = true;
 
@@ -86,7 +86,7 @@ export default class GraphSyncController {
         const { routines } = ctx;
         if (!routines) return;
         Cadenza.debounce("meta.sync_controller.synced_resource", {
-          delayMs: 2000,
+          delayMs: 3000,
         });
         for (const routine of routines) {
           for (const task of routine.tasks) {
@@ -134,7 +134,7 @@ export default class GraphSyncController {
                 },
               },
             },
-            { concurrency: 50 },
+            { concurrency: 30 },
           )
         : Cadenza.get("dbInsertTaskToRoutineMap")
       )?.then(
@@ -157,7 +157,7 @@ export default class GraphSyncController {
       "Split signals for registration",
       function* (ctx) {
         Cadenza.debounce("meta.sync_controller.synced_resource", {
-          delayMs: 2000,
+          delayMs: 3000,
         });
 
         const { signals } = ctx;
@@ -197,7 +197,7 @@ export default class GraphSyncController {
                 },
               },
             },
-            { concurrency: 50 },
+            { concurrency: 30 },
           )
         : Cadenza.get("dbInsertSignalRegistry")
       )?.then(
@@ -207,7 +207,7 @@ export default class GraphSyncController {
           }
 
           Cadenza.debounce("meta.sync_controller.synced_resource", {
-            delayMs: 2000,
+            delayMs: 3000,
           });
 
           return { signalName: ctx.__signal };
@@ -225,7 +225,7 @@ export default class GraphSyncController {
       "Split tasks for registration",
       function* (ctx) {
         Cadenza.debounce("meta.sync_controller.synced_resource", {
-          delayMs: 2000,
+          delayMs: 3000,
         });
 
         const tasks = ctx.tasks;
@@ -283,7 +283,7 @@ export default class GraphSyncController {
                 },
               },
             },
-            { concurrency: 50 },
+            { concurrency: 30 },
           )
         : Cadenza.get("dbInsertTask")
       )?.then(
@@ -293,7 +293,7 @@ export default class GraphSyncController {
           }
 
           Cadenza.debounce("meta.sync_controller.synced_resource", {
-            delayMs: 2000,
+            delayMs: 3000,
           });
 
           Cadenza.get(ctx.__taskName)!.registered = true;
@@ -316,7 +316,7 @@ export default class GraphSyncController {
         }
 
         Cadenza.debounce("meta.sync_controller.synced_resource", {
-          delayMs: 2000,
+          delayMs: 3000,
         });
 
         Cadenza.get(ctx.__taskName)?.registeredSignals.add(ctx.__signal);
@@ -365,7 +365,7 @@ export default class GraphSyncController {
                 },
               },
             },
-            { concurrency: 50 },
+            { concurrency: 30 },
           )
         : Cadenza.get("dbInsertSignalToTaskMap")
       )?.then(registerSignalTask),
@@ -376,7 +376,7 @@ export default class GraphSyncController {
       function* (ctx) {
         const task = ctx.task;
         Cadenza.debounce("meta.sync_controller.synced_resource", {
-          delayMs: 2000,
+          delayMs: 3000,
         });
         if (task.hidden || !task.register) return;
 
@@ -418,7 +418,7 @@ export default class GraphSyncController {
                 },
               },
             },
-            { concurrency: 50 },
+            { concurrency: 30 },
           )
         : Cadenza.get("dbInsertDirectionalTaskGraphMap")
       )?.then(
@@ -428,7 +428,7 @@ export default class GraphSyncController {
           }
 
           Cadenza.debounce("meta.sync_controller.synced_resource", {
-            delayMs: 2000,
+            delayMs: 3000,
           });
 
           Cadenza.get(ctx.__taskName)?.taskMapRegistration.add(
@@ -479,7 +479,7 @@ export default class GraphSyncController {
                 },
               },
             },
-            { concurrency: 50 },
+            { concurrency: 30 },
           )
         : Cadenza.get("dbInsertDirectionalTaskGraphMap")
       )?.then(
@@ -491,7 +491,7 @@ export default class GraphSyncController {
             }
 
             Cadenza.debounce("meta.sync_controller.synced_resource", {
-              delayMs: 2000,
+              delayMs: 3000,
             });
 
             (Cadenza.get(ctx.__taskName) as DeputyTask).registeredDeputyMap =
@@ -503,7 +503,10 @@ export default class GraphSyncController {
 
     Cadenza.signalBroker
       .getSignalsTask!.clone()
-      .doOn("meta.sync_controller.sync_tick", "meta.sync_requested")
+      .doOn(
+        "meta.sync_controller.sync_tick",
+        "meta.service_registry.initial_sync_complete",
+      )
       .then(this.splitSignalsTask);
 
     Cadenza.registry
@@ -561,7 +564,7 @@ export default class GraphSyncController {
         { __syncing: true },
         180000,
       );
-      Cadenza.schedule("meta.sync_requested", { __syncing: true }, 5000);
+      Cadenza.schedule("meta.sync_requested", { __syncing: true }, 2000);
     }
 
     console.log("Syncing initiated", this.isCadenzaDBReady);
