@@ -410,6 +410,9 @@ export default class ServiceRegistry {
     ).then(this.handleGlobalSignalRegistrationTask);
 
     this.fullSyncTask = Cadenza.createMetaRoutine("Full sync", [
+      Cadenza.createTask("Confirm full sync", () => {
+        console.log("Confirming full sync...");
+      }),
       Cadenza.createCadenzaDBQueryTask("signal_to_task_map", {
         filter: {
           isGlobal: true,
