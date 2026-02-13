@@ -145,22 +145,11 @@ export default class SocketController {
             return { ...ctx, __error: "No server", errored: true };
           }
 
-          const handshakeMap: { [key: string]: boolean } = {};
-
           server.on("connection", (ws: any) => {
             try {
               ws.on(
                 "handshake",
                 (ctx: AnyObject, callback: (result: any) => void) => {
-                  if (handshakeMap[ctx.serviceInstanceId]) {
-                    callback({
-                      status: "error",
-                      error: "Duplicate handshake",
-                    });
-                    return;
-                  }
-
-                  handshakeMap[ctx.serviceInstanceId] = true;
                   Cadenza.log("SocketServer: New connection", {
                     ...ctx,
                     socketId: ws.id,
@@ -204,6 +193,11 @@ export default class SocketController {
                 "delegation",
                 (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
                   const deputyExecId = ctx.__metadata.__deputyExecId;
+
+                  console.log(
+                    "Delegation request received:",
+                    ctx.__localTaskName,
+                  );
 
                   Cadenza.createEphemeralMetaTask(
                     "Resolve delegation",
@@ -252,6 +246,7 @@ export default class SocketController {
                       .listObservedSignals()
                       .includes(ctx.__signalName)
                   ) {
+                    console.log("Signal received:", ctx.__signalName);
                     callback({
                       __status: "success",
                       __signalName: ctx.__signalName,
@@ -587,6 +582,7 @@ export default class SocketController {
               delete ctx.__broadcast;
               const requestSentAt = Date.now();
               pendingDelegationIds.add(ctx.__metadata.__deputyExecId);
+              console.log("Delegating task:", ctx.__remoteRoutineName);
               emitWhenReady?.(
                 "delegation",
                 ctx,
@@ -595,6 +591,12 @@ export default class SocketController {
                   const requestDuration = Date.now() - requestSentAt;
                   const metadata = resultContext.__metadata;
                   delete resultContext.__metadata;
+                  console.log(
+                    "Delegation response received:",
+                    ctx.__remoteRoutineName,
+                    "Duration:",
+                    requestDuration,
+                  );
                   emit(
                     `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
                     {
@@ -635,6 +637,8 @@ export default class SocketController {
 
             return new Promise((resolve) => {
               delete ctx.__broadcast;
+
+              console.log("Transmitting signal:", ctx.__signalName);
 
               emitWhenReady?.("signal", ctx, 5_000, (response: AnyObject) => {
                 if (ctx.__routineExecId) {
