@@ -1,3 +1,10 @@
+## [2.3.11](https://github.com/cadenzaio/cadenza-service/compare/v2.3.10...v2.3.11) (2026-02-13)
+
+
+### Bug Fixes
+
+* debugging and bug fixes ([28e527b](https://github.com/cadenzaio/cadenza-service/commit/28e527b4545c49fcf775871a52fedf7b0d046fe8))
+
 ## [2.3.10](https://github.com/cadenzaio/cadenza-service/compare/v2.3.9...v2.3.10) (2026-02-12)
 
 
