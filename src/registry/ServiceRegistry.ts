@@ -402,10 +402,7 @@ export default class ServiceRegistry {
           ctx.joinedContexts.forEach((ctx: any) => {
             joinedContext = { ...joinedContext, ...ctx };
           });
-          console.log(
-            "merging contexts of full sync...",
-            joinedContext.keys().join(", "),
-          );
+          console.log("merging contexts of full sync...", joinedContext);
           return joinedContext;
         } catch (e: any) {
           console.log("Error", e.message, ctx);
