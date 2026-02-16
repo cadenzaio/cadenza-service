@@ -192,7 +192,7 @@ export default class GraphMetadataController {
           data: {
             ...ctx.data,
             serviceName: Cadenza.serviceRegistry.serviceName,
-            serviceInstance_id: Cadenza.serviceRegistry.serviceInstanceId,
+            serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
           },
           filter: {
             ...ctx.filter,

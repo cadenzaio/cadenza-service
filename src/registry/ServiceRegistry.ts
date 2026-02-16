@@ -91,8 +91,6 @@ export default class ServiceRegistry {
         } = serviceInstance;
         if (uuid === this.serviceInstanceId) return;
 
-        console.log("service instance", serviceName, uuid, address);
-
         if (deleted) {
           this.instances
             .get(serviceName)
@@ -218,8 +216,6 @@ export default class ServiceRegistry {
     this.handleGlobalSignalRegistrationTask = Cadenza.createMetaTask(
       "Handle global Signal Registration",
       (ctx) => {
-        console.log("Handling global signal registration...");
-
         const { signalToTaskMaps } = ctx;
         const sortedSignalToTaskMap = signalToTaskMaps.sort(
           (a: any, b: any) => {
@@ -229,13 +225,9 @@ export default class ServiceRegistry {
           },
         );
 
-        console.log(sortedSignalToTaskMap);
-
         const locallyEmittedSignals = Cadenza.signalBroker
           .listEmittedSignals()
           .filter((s: any) => s.startsWith("global."));
-
-        console.log(locallyEmittedSignals);
 
         for (const map of sortedSignalToTaskMap) {
           if (map.deleted) {
@@ -257,9 +249,6 @@ export default class ServiceRegistry {
             }
 
             if (!this.remoteSignals.get(map.serviceName)?.has(map.signalName)) {
-              console.log(
-                `Creating signal transmission task for: ${map.signalName} to ${map.serviceName}`,
-              );
               Cadenza.createSignalTransmissionTask(
                 map.signalName,
                 map.serviceName,
@@ -397,26 +386,17 @@ export default class ServiceRegistry {
     const mergeSyncDataTask = Cadenza.createUniqueMetaTask(
       "Merge sync data",
       (ctx) => {
-        try {
-          let joinedContext: any = {};
-          ctx.joinedContexts.forEach((ctx: any) => {
-            joinedContext = { ...joinedContext, ...ctx };
-          });
-          console.log("merging contexts of full sync...", joinedContext);
-          return joinedContext;
-        } catch (e: any) {
-          console.log("Error", e.message, ctx);
-          return false;
-        }
+        let joinedContext: any = {};
+        ctx.joinedContexts.forEach((ctx: any) => {
+          joinedContext = { ...joinedContext, ...ctx };
+        });
+        return joinedContext;
       },
     )
       .emits("meta.service_registry.initial_sync_complete")
       .then(this.handleGlobalSignalRegistrationTask);
 
     this.fullSyncTask = Cadenza.createMetaRoutine("Full sync", [
-      Cadenza.createTask("Confirm full sync", () => {
-        console.log("Confirming full sync...");
-      }),
       Cadenza.createCadenzaDBQueryTask("signal_to_task_map", {
         filter: {
           isGlobal: true,

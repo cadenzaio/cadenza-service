@@ -566,7 +566,5 @@ export default class GraphSyncController {
       );
       Cadenza.schedule("meta.sync_requested", { __syncing: true }, 2000);
     }
-
-    console.log("Syncing initiated", this.isCadenzaDBReady);
   }
 }
