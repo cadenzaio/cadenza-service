@@ -397,15 +397,20 @@ export default class ServiceRegistry {
     const mergeSyncDataTask = Cadenza.createUniqueMetaTask(
       "Merge sync data",
       (ctx) => {
-        let joinedContext: any = {};
-        ctx.joinedContexts.forEach((ctx: any) => {
-          joinedContext = { ...joinedContext, ...ctx };
-        });
-        console.log(
-          "merging contexts of full sync...",
-          joinedContext.keys().join(", "),
-        );
-        return joinedContext;
+        try {
+          let joinedContext: any = {};
+          ctx.joinedContexts.forEach((ctx: any) => {
+            joinedContext = { ...joinedContext, ...ctx };
+          });
+          console.log(
+            "merging contexts of full sync...",
+            joinedContext.keys().join(", "),
+          );
+          return joinedContext;
+        } catch (e: any) {
+          console.log("Error", e.message, ctx);
+          return false;
+        }
       },
     )
       .emits("meta.service_registry.initial_sync_complete")
