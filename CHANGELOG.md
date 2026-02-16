@@ -1,3 +1,10 @@
+## [2.3.17](https://github.com/cadenzaio/cadenza-service/compare/v2.3.16...v2.3.17) (2026-02-16)
+
+
+### Bug Fixes
+
+* removed logs. ([a629ae2](https://github.com/cadenzaio/cadenza-service/commit/a629ae2839096b634bdec5ef8f64996c27293f76))
+
 ## [2.3.16](https://github.com/cadenzaio/cadenza-service/compare/v2.3.15...v2.3.16) (2026-02-16)
 
 
