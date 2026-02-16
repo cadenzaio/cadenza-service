@@ -1,3 +1,10 @@
+## [2.3.16](https://github.com/cadenzaio/cadenza-service/compare/v2.3.15...v2.3.16) (2026-02-16)
+
+
+### Bug Fixes
+
+* full sync bug. ([fd5a682](https://github.com/cadenzaio/cadenza-service/commit/fd5a682d8a3af6346b330f34b905eecfcefb7a4c))
+
 ## [2.3.15](https://github.com/cadenzaio/cadenza-service/compare/v2.3.14...v2.3.15) (2026-02-16)
 
 
