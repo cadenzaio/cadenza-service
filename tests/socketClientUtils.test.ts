@@ -7,6 +7,19 @@ class MockSocket extends EventEmitter {
 }
 
 describe("waitForSocketConnection", () => {
+  it("returns disconnected when socket is null", async () => {
+    const result = await waitForSocketConnection(
+      null,
+      50,
+      (reason) => `error:${reason}`,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "error:disconnected",
+    });
+  });
+
   it("resolves immediately when already connected", async () => {
     const socket = new MockSocket();
     socket.connected = true;
@@ -55,6 +68,48 @@ describe("waitForSocketConnection", () => {
     expect(result).toEqual({
       ok: false,
       error: "error:connect_error:boom",
+    });
+    expect(socket.listenerCount("connect")).toBe(0);
+    expect(socket.listenerCount("connect_error")).toBe(0);
+    expect(socket.listenerCount("disconnect")).toBe(0);
+  });
+
+  it("resolves when connect is emitted before timeout", async () => {
+    const socket = new MockSocket();
+    const pending = waitForSocketConnection(
+      socket,
+      100,
+      (reason) => `error:${reason}`,
+    );
+
+    setTimeout(() => {
+      socket.connected = true;
+      socket.emit("connect");
+    }, 5);
+
+    const result = await pending;
+    expect(result).toEqual({ ok: true });
+    expect(socket.listenerCount("connect")).toBe(0);
+    expect(socket.listenerCount("connect_error")).toBe(0);
+    expect(socket.listenerCount("disconnect")).toBe(0);
+  });
+
+  it("resolves with disconnected when disconnect is emitted before connect", async () => {
+    const socket = new MockSocket();
+    const pending = waitForSocketConnection(
+      socket,
+      100,
+      (reason) => `error:${reason}`,
+    );
+
+    setTimeout(() => {
+      socket.emit("disconnect");
+    }, 5);
+
+    const result = await pending;
+    expect(result).toEqual({
+      ok: false,
+      error: "error:disconnected",
     });
     expect(socket.listenerCount("connect")).toBe(0);
     expect(socket.listenerCount("connect_error")).toBe(0);
