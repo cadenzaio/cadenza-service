@@ -1,3 +1,16 @@
+# [2.4.0](https://github.com/cadenzaio/cadenza-service/compare/v2.3.17...v2.4.0) (2026-02-25)
+
+
+### Bug Fixes
+
+* added more tests. ([46f912b](https://github.com/cadenzaio/cadenza-service/commit/46f912b4a46a81b2b7c12447bdc7cc80f53431d2))
+
+
+### Features
+
+* Added some tests and improved socket handling. ([1a514ea](https://github.com/cadenzaio/cadenza-service/commit/1a514ead558c14739baf14046c015542bc6e68d8))
+* Several major bugfixes and improvements. For example, improved schema registration. ([94b2749](https://github.com/cadenzaio/cadenza-service/commit/94b2749865bdb5c24611741d05f8a55b33b6d87c))
+
 ## [2.3.17](https://github.com/cadenzaio/cadenza-service/compare/v2.3.16...v2.3.17) (2026-02-16)
 
 
