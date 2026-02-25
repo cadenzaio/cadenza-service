@@ -121,7 +121,7 @@ export interface TableDefinition {
   initialData?: { fields: string[]; data: any[][] };
 }
 
-export interface SchemaDefinition {
+export interface DatabaseSchemaDefinition {
   version?: number;
   tables: Record<string, TableDefinition>;
   relations?: Record<

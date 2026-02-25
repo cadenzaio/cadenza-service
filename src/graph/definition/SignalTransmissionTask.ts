@@ -1,7 +1,7 @@
 import { GraphContext, InquiryOptions, Task } from "@cadenza.io/core";
 import type {
   AnyObject,
-  SchemaDefinition,
+  Schema,
   TaskResult,
   ThrottleTagGetter,
 } from "@cadenza.io/core";
@@ -59,9 +59,9 @@ export default class SignalTransmissionTask extends Task {
     isSubMeta: boolean = false,
     isHidden: boolean = false,
     getTagCallback: ThrottleTagGetter | undefined = undefined,
-    inputSchema: SchemaDefinition | undefined = undefined,
+    inputSchema: Schema | undefined = undefined,
     validateInputContext: boolean = false,
-    outputSchema: SchemaDefinition | undefined = undefined,
+    outputSchema: Schema | undefined = undefined,
     validateOutputContext: boolean = false,
     retryCount: number = 0,
     retryDelay: number = 0,

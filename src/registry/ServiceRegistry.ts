@@ -92,14 +92,12 @@ export default class ServiceRegistry {
         if (uuid === this.serviceInstanceId) return;
 
         if (deleted) {
-          this.instances
-            .get(serviceName)
-            ?.splice(
-              this.instances
-                .get(serviceName)
-                ?.findIndex((i) => i.uuid === uuid) ?? -1,
-              1,
-            );
+          const indexToDelete =
+            this.instances.get(serviceName)?.findIndex((i) => i.uuid === uuid) ??
+            -1;
+          if (indexToDelete >= 0) {
+            this.instances.get(serviceName)?.splice(indexToDelete, 1);
+          }
 
           if (this.instances.get(serviceName)?.length === 0) {
             this.instances.delete(serviceName);
@@ -173,7 +171,6 @@ export default class ServiceRegistry {
                 (i: any) =>
                   i.address === address &&
                   i.port === port &&
-                  i.clientCreated &&
                   i.isActive,
               )
               .forEach((i: any) => {
@@ -305,7 +302,12 @@ export default class ServiceRegistry {
       },
       "Handles service not responding",
     )
-      .doOn("meta.fetch.handshake_failed", "meta.socket_client.disconnected")
+      .doOn(
+        "meta.fetch.handshake_failed",
+        "meta.fetch.handshake_failed.*",
+        "meta.socket_client.disconnected",
+        "meta.socket_client.disconnected.*",
+      )
       .attachSignal("global.meta.service_registry.service_not_responding");
 
     this.handleServiceHandshakeTask = Cadenza.createMetaTask(
@@ -342,9 +344,10 @@ export default class ServiceRegistry {
         );
 
         for (const i of instancesToDelete ?? []) {
-          this.instances
-            .get(serviceName)
-            ?.splice(this.instances.get(serviceName)?.indexOf(i) ?? -1, 1);
+          const indexToDelete = this.instances.get(serviceName)?.indexOf(i) ?? -1;
+          if (indexToDelete >= 0) {
+            this.instances.get(serviceName)?.splice(indexToDelete, 1);
+          }
           emit("global.meta.service_registry.deleted", {
             data: {
               isActive: false,
@@ -530,8 +533,11 @@ export default class ServiceRegistry {
 
         if (__broadcast || instances[0].isFrontend) {
           for (const instance of instances) {
+            const socketKey = instance.isFrontend
+              ? instance.address
+              : `${instance.address}_${instance.port}`;
             emit(
-              `meta.service_registry.selected_instance_for_socket:${instance.address}`,
+              `meta.service_registry.selected_instance_for_socket:${socketKey}`,
               context,
             );
           }

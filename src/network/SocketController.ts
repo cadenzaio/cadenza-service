@@ -5,6 +5,7 @@ import xss from "xss";
 import type { AnyObject, Task } from "@cadenza.io/core";
 import { io, Socket } from "socket.io-client";
 import { isBrowser } from "../utils/environment";
+import { waitForSocketConnection } from "./socketClientUtils";
 
 /**
  * The `SocketController` class handles the setup and management of a WebSocket server,
@@ -375,40 +376,85 @@ export default class SocketController {
           ack?: (response: T) => void,
         ): Promise<T> => {
           return new Promise((resolve) => {
-            const tryEmit = () => {
-              if (!socket?.connected) {
-                // should never happen because we await connect below, but safety net
-                socket?.once("connect", tryEmit);
+            const resolveWithError = (
+              errorMessage: string,
+              fallbackError?: unknown,
+            ) => {
+              resolve({
+                ...data,
+                errored: true,
+                __error: errorMessage,
+                error:
+                  fallbackError instanceof Error
+                    ? fallbackError.message
+                    : errorMessage,
+                socketId: socket?.id,
+                serviceName,
+                URL,
+              });
+            };
+
+            const tryEmit = async () => {
+              const waitTimeoutMs = timeoutMs > 0 ? timeoutMs + 10 : 10_000;
+              const waitResult = await waitForSocketConnection(
+                socket,
+                waitTimeoutMs,
+                (reason, error) => {
+                  if (reason === "connect_timeout") {
+                    return `Socket connect timed out before '${event}'`;
+                  }
+                  if (reason === "connect_error") {
+                    const errMessage =
+                      error instanceof Error ? error.message : String(error);
+                    return `Socket connect error before '${event}': ${errMessage}`;
+                  }
+                  return `Socket disconnected before '${event}'`;
+                },
+              );
+
+              if (!waitResult.ok) {
+                Cadenza.log(
+                  waitResult.error,
+                  { socketId: socket?.id, serviceName, URL, event },
+                  "error",
+                );
+                resolveWithError(waitResult.error);
                 return;
               }
 
-              let timer: any;
+              let timer: NodeJS.Timeout | null = null;
               if (timeoutMs !== 0) {
                 timer = setTimeout(() => {
+                  if (timer) {
+                    pendingTimers.delete(timer);
+                    timer = null;
+                  }
                   Cadenza.log(
                     `Socket event '${event}' timed out`,
                     { socketId: socket?.id, serviceName, URL },
                     "error",
                   );
-                  resolve({
-                    ...data,
-                    errored: true,
-                    __error: `Socket event '${event}' timed out`,
-                    error: `Socket event '${event}' timed out`,
-                    socketId: socket?.id,
-                    serviceName,
-                    URL,
-                  });
+                  resolveWithError(`Socket event '${event}' timed out`);
                 }, timeoutMs + 10);
                 pendingTimers.add(timer);
               }
 
-              socket
+              const connectedSocket = socket;
+              if (!connectedSocket) {
+                resolveWithError(
+                  `Socket unavailable before emitting '${event}'`,
+                );
+                return;
+              }
+
+              connectedSocket
                 .timeout(timeoutMs)
                 .emit(event, data, (err: any, response: T) => {
-                  if (timer) clearTimeout(timer);
-                  pendingTimers.delete(timer);
-                  timer = null;
+                  if (timer) {
+                    clearTimeout(timer);
+                    pendingTimers.delete(timer);
+                    timer = null;
+                  }
                   if (err) {
                     Cadenza.log(
                       "Socket timeout.",
@@ -432,11 +478,7 @@ export default class SocketController {
                 });
             };
 
-            if (socket?.connected) {
-              tryEmit();
-            } else {
-              socket?.once("connect", tryEmit);
-            }
+            void tryEmit();
           });
         };
 

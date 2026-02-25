@@ -2,13 +2,13 @@ import {
   DbOperationType,
   FieldDefinition,
   SCHEMA_TYPES,
-  SchemaDefinition,
+  DatabaseSchemaDefinition,
   TableDefinition,
 } from "../types/database";
 import Cadenza, { DatabaseOptions, ServerOptions } from "../Cadenza";
 import { Pool, PoolClient } from "pg";
 import { camelCase, snakeCase } from "lodash-es";
-import type { AnyObject } from "@cadenza.io/core";
+import type { AnyObject, SchemaDefinition } from "@cadenza.io/core";
 import {
   DbOperationPayload,
   JoinDefinition,
@@ -117,7 +117,7 @@ export default class DatabaseController {
             "Validate schema",
             (ctx) => {
               const { schema } = ctx as {
-                schema: SchemaDefinition;
+                schema: DatabaseSchemaDefinition;
                 options: ServerOptions & DatabaseOptions;
               };
               if (!schema?.tables || typeof schema.tables !== "object") {
@@ -681,7 +681,7 @@ export default class DatabaseController {
    */
   sortTablesByReferences(ctx: AnyObject): AnyObject {
     // Build dependency graph: map of table -> set of dependent tables
-    const schema: SchemaDefinition = ctx.schema;
+    const schema: DatabaseSchemaDefinition = ctx.schema;
     const graph: Map<string, Set<string>> = new Map();
     const allTables = Object.keys(schema.tables);
 
@@ -1298,15 +1298,11 @@ export default class DatabaseController {
               : "";
 
     const defaultSignal = `global.${options.isMeta ? "meta." : ""}${tableName}.${opAction}`;
+    const taskName = `${op.charAt(0).toUpperCase() + op.slice(1)} ${tableName}`;
 
-    const tableNameFormatted = tableName
-      .split("_")
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join("");
+    const schema = this.getInputSchema(op, tableName, table);
 
-    const taskName = `db${op.charAt(0).toUpperCase() + op.slice(1)}${tableNameFormatted}`;
-
-    Cadenza.createThrottledTask(
+    const task = Cadenza.createThrottledTask(
       taskName,
       async (context: AnyObject, emit: any) => {
         for (const action of Object.keys(table.customSignals?.triggers ?? {})) {
@@ -1330,6 +1326,7 @@ export default class DatabaseController {
             table.customSignals?.triggers?.[action].filter(
               (trigger: any) => trigger.queryData,
             );
+
           for (const queryData of triggerQueryData ?? []) {
             if (context.queryData) {
               context.queryData = {
@@ -1411,16 +1408,8 @@ export default class DatabaseController {
       {
         isMeta: options.isMeta,
         isSubMeta: options.isMeta,
-        validateInputContext: false, // TODO
-        inputSchema: {
-          // TODO
-          type: "object",
-          properties: {
-            filter: {
-              type: "object",
-            },
-          },
-        },
+        validateInputContext: options.securityProfile !== "low",
+        inputSchema: schema,
       },
     )
       .doOn(
@@ -1434,5 +1423,462 @@ export default class DatabaseController {
           return typeof signal === "string" ? signal : signal.signal;
         }) ?? []),
       );
+
+    if (op === "query") {
+      const intentName = `query-${Cadenza.serviceRegistry.serviceName}-${tableName}`;
+      Cadenza.defineIntent({
+        name: intentName,
+        description: `Perform a query operation on the ${tableName} table`,
+        input: schema,
+      });
+      task.respondsTo(intentName);
+    }
   }
+
+  getInputSchema(
+    op: DbOperationType,
+    tableName: string,
+    table: TableDefinition,
+  ): SchemaDefinition {
+    const inputSchema: SchemaDefinition = {
+      type: "object",
+      properties: {
+        queryData: {
+          type: "object",
+          properties: {},
+          strict: true,
+        },
+      },
+      strict: true,
+    };
+
+    if (!inputSchema.properties) {
+      return inputSchema;
+    }
+
+    inputSchema.properties.transaction = getTransactionSchema();
+    // @ts-ignore
+    inputSchema.properties.queryData.properties.transaction =
+      inputSchema.properties.transaction;
+
+    switch (op) {
+      case "insert":
+        inputSchema.properties.data = getInsertDataSchemaFromTable(
+          table,
+          tableName,
+        );
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.data =
+          inputSchema.properties.data;
+
+        inputSchema.properties.batch = getQueryBatchSchemaFromTable();
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.batch =
+          inputSchema.properties.batch;
+
+        inputSchema.properties.onConflict = getQueryOnConflictSchemaFromTable(
+          table,
+          tableName,
+        );
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.onConflict =
+          inputSchema.properties.onConflict;
+        break;
+
+      case "query":
+        inputSchema.properties.filter = getQueryFilterSchemaFromTable(
+          table,
+          tableName,
+        );
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.filter =
+          inputSchema.properties.filter;
+
+        inputSchema.properties.fields = getQueryFieldsSchemaFromTable(
+          table,
+          tableName,
+        );
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.fields =
+          inputSchema.properties.fields;
+
+        inputSchema.properties.joins = getQueryJoinsSchemaFromTable(
+          table,
+          tableName,
+        );
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.joins =
+          inputSchema.properties.joins;
+
+        inputSchema.properties.sort = getQuerySortSchemaFromTable(
+          table,
+          tableName,
+        );
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.sort =
+          inputSchema.properties.sort;
+
+        inputSchema.properties.limit = getQueryLimitSchemaFromTable();
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.limit =
+          inputSchema.properties.limit;
+
+        inputSchema.properties.offset = getQueryOffsetSchemaFromTable();
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.offset =
+          inputSchema.properties.offset;
+        break;
+
+      case "update":
+        inputSchema.properties.filter = getQueryFilterSchemaFromTable(
+          table,
+          tableName,
+        );
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.filter =
+          inputSchema.properties.filter;
+
+        inputSchema.properties.fields = getQueryFieldsSchemaFromTable(
+          table,
+          tableName,
+        );
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.fields =
+          inputSchema.properties.fields;
+
+        break;
+
+      case "delete":
+        inputSchema.properties.filter = getQueryFilterSchemaFromTable(
+          table,
+          tableName,
+        );
+        // @ts-ignore
+        inputSchema.properties.queryData.properties.filter =
+          inputSchema.properties.filter;
+        break;
+    }
+
+    return inputSchema;
+  }
+}
+
+function getInsertDataSchemaFromTable(
+  table: TableDefinition,
+  tableName: string,
+): SchemaDefinition[] {
+  const dataSchema: any = {
+    type: "object",
+    properties: {
+      ...Object.fromEntries(
+        Object.entries(table.fields).map((field) => {
+          return [
+            field[0],
+            [
+              {
+                type: tableFieldTypeToSchemaType(field[1].type),
+                description: `Inferred from field '${field[0]}' of type [${field[1].type}] on table ${tableName}.`,
+              },
+              {
+                type: "string",
+                constraints: {
+                  oneOf: ["increment", "decrement", "set"],
+                },
+              },
+              {
+                type: "object",
+                properties: {
+                  subOperation: {
+                    type: "string",
+                    enum: ["insert", "query"],
+                  },
+                  table: {
+                    type: "string",
+                  },
+                  data: [
+                    {
+                      type: "object",
+                    },
+                    {
+                      type: "array",
+                      items: {
+                        type: "object",
+                      },
+                    },
+                  ],
+                  filter: {
+                    type: "object",
+                  },
+                  fields: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                    },
+                  },
+                  return: {
+                    type: "string",
+                  },
+                },
+                required: ["subOperation", "table"],
+              },
+            ],
+          ];
+        }),
+      ),
+    },
+    required: Object.entries(table.fields)
+      .filter((field) => field[1].required || field[1].primary)
+      .map((field) => field[0]),
+    strict: true,
+  };
+
+  return [
+    dataSchema,
+    {
+      type: "array",
+      items: dataSchema,
+    },
+  ];
+}
+
+function getQueryFilterSchemaFromTable(
+  table: TableDefinition,
+  tableName: string,
+): SchemaDefinition {
+  return {
+    type: "object",
+    properties: {
+      ...Object.fromEntries(
+        Object.entries(table.fields).map((field) => {
+          return [
+            field[0],
+            [
+              {
+                type: tableFieldTypeToSchemaType(field[1].type),
+                description: `Inferred from field '${field[0]}' of type [${field[1].type}] on table ${tableName}.`,
+              },
+              {
+                type: "array",
+                items: {
+                  type: tableFieldTypeToSchemaType(field[1].type),
+                },
+              },
+            ],
+          ];
+        }),
+      ),
+    },
+    strict: true,
+    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry.serviceName}.`,
+  };
+}
+
+function getQueryFieldsSchemaFromTable(
+  table: TableDefinition,
+  tableName: string,
+): SchemaDefinition {
+  return {
+    type: "array",
+    items: {
+      type: "string",
+      constraints: {
+        oneOf: Object.keys(table.fields),
+      },
+    },
+    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry.serviceName}.`,
+  };
+}
+
+function getQueryJoinsSchemaFromTable(
+  table: TableDefinition,
+  tableName: string,
+): SchemaDefinition {
+  return {
+    type: "object",
+    properties: {
+      ...Object.fromEntries(
+        Object.entries(table.fields).map((field) => {
+          return [
+            field[0],
+            {
+              type: "object",
+              properties: {
+                on: {
+                  type: "string",
+                },
+                fields: {
+                  type: "array",
+                  items: {
+                    type: "string",
+                  },
+                },
+                filter: {
+                  type: "object",
+                },
+                returnAs: {
+                  type: "string",
+                  constraints: {
+                    oneOf: ["array", "object"],
+                  },
+                },
+                alias: {
+                  type: "string",
+                },
+                joins: {
+                  type: "object",
+                },
+              },
+              required: ["on", "fields"],
+              strict: true,
+            },
+          ];
+        }),
+      ),
+    },
+    strict: true,
+    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry.serviceName}.`,
+  };
+}
+
+function getQuerySortSchemaFromTable(
+  table: TableDefinition,
+  tableName: string,
+): SchemaDefinition {
+  return {
+    type: "object",
+    properties: {
+      ...Object.fromEntries(
+        Object.entries(table.fields).map((field) => {
+          return [
+            field[0],
+            {
+              type: "string",
+              constraints: {
+                oneOf: ["asc", "desc"],
+              },
+            },
+          ];
+        }),
+      ),
+    },
+    strict: true,
+    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry.serviceName}.`,
+  };
+}
+
+function getQueryLimitSchemaFromTable(): SchemaDefinition {
+  return {
+    type: "number",
+    constraints: {
+      min: 1,
+    },
+    description: "Limit for query results",
+  };
+}
+
+function getQueryOffsetSchemaFromTable(): SchemaDefinition {
+  return {
+    type: "number",
+    constraints: {
+      min: 0,
+    },
+    description: "Offset for query results",
+  };
+}
+
+function getTransactionSchema(): SchemaDefinition {
+  return {
+    type: "boolean",
+    description: "Whether to run the query in a transaction",
+  };
+}
+
+function getQueryBatchSchemaFromTable(): SchemaDefinition {
+  return {
+    type: "boolean",
+    description: "Whether to run the query in batch mode",
+  };
+}
+
+function getQueryOnConflictSchemaFromTable(
+  table: TableDefinition,
+  tableName: string,
+): SchemaDefinition {
+  return {
+    type: "object",
+    properties: {
+      target: {
+        type: "array",
+        items: {
+          type: "string",
+          constraints: {
+            oneOf: Object.keys(table.fields),
+          },
+        },
+      },
+      action: {
+        type: "object",
+        properties: {
+          do: {
+            type: "string",
+            constraints: {
+              oneOf: ["nothing", "update"],
+            },
+          },
+          set: {
+            type: "object",
+            properties: {
+              ...Object.fromEntries(
+                Object.entries(table.fields).map((field) => {
+                  return [
+                    field[0],
+                    [
+                      {
+                        type: tableFieldTypeToSchemaType(field[1].type),
+                        description: `Inferred from field '${field[0]}' of type [${field[1].type}] on table ${tableName}.`,
+                      },
+                    ],
+                  ];
+                }),
+              ),
+            },
+          },
+          where: {
+            type: "string",
+          },
+        },
+        required: ["do"],
+      },
+    },
+    required: ["target", "action"],
+    strict: true,
+  };
+}
+
+function tableFieldTypeToSchemaType(type: string) {
+  switch (type) {
+    case "varchar":
+    case "text":
+    case "jsonb":
+    case "uuid":
+    case "date":
+    case "geo_point":
+    case "bytea":
+      return "string";
+
+    case "int":
+    case "bigint":
+    case "decimal":
+    case "timestamp":
+      return "number";
+
+    case "boolean":
+      return "boolean";
+    case "array":
+      return "array";
+    case "object":
+      return "object";
+  }
+
+  return "any";
 }

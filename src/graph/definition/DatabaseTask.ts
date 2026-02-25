@@ -2,7 +2,7 @@ import DeputyTask from "./DeputyTask";
 import { GraphContext, InquiryOptions } from "@cadenza.io/core";
 import type {
   AnyObject,
-  SchemaDefinition,
+  Schema,
   TaskResult,
   ThrottleTagGetter,
 } from "@cadenza.io/core";
@@ -57,9 +57,9 @@ export default class DatabaseTask extends DeputyTask {
     isSubMeta: boolean = false,
     isHidden: boolean = false,
     getTagCallback: ThrottleTagGetter | undefined = undefined,
-    inputSchema: SchemaDefinition | undefined = undefined,
+    inputSchema: Schema | undefined = undefined,
     validateInputContext: boolean = false,
-    outputSchema: SchemaDefinition | undefined = undefined,
+    outputSchema: Schema | undefined = undefined,
     validateOutputContext: boolean = false,
     retryCount: number = 0,
     retryDelay: number = 0,

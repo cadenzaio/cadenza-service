@@ -14,13 +14,28 @@ export default class GraphMetadataController {
         data: {
           ...ctx.data,
           serviceName: Cadenza.serviceRegistry.serviceName,
-          // input_context_schema_id: ctx.data.inputContextSchema ? {  // TODO
-          //
-          // } : null,
-          // output_context_schema_id: ctx.data.outputContextSchema ? {
-          //
-          // } : null,
+          inputContextSchemaId: ctx.data.inputContextSchemaId
+            ? {
+                subOperation: "insert",
+                table: "context_schema",
+                data: {
+                  ...ctx.data.inputContextSchemaId,
+                },
+                return: "uuid",
+              }
+            : null,
+          outputContextSchemaId: ctx.data.outputContextSchemaId
+            ? {
+                subOperation: "insert",
+                table: "context_schema",
+                data: {
+                  ...ctx.data.outputContextSchemaId,
+                },
+                return: "uuid",
+              }
+            : null,
         },
+        transaction: true,
       };
     })
       .doOn("meta.task.created")

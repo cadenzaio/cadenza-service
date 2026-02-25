@@ -27,7 +27,7 @@ import SocketController from "./network/SocketController";
 import SignalController from "./signals/SignalController";
 import { DbOperationPayload, DbOperationType } from "./types/queryData";
 import GraphMetadataController from "./graph/controllers/GraphMetadataController";
-import { SchemaDefinition } from "./types/database";
+import { DatabaseSchemaDefinition } from "./types/database";
 import { snakeCase } from "lodash-es";
 import DatabaseController from "./database/DatabaseController";
 import { v4 as uuid } from "uuid";
@@ -560,13 +560,9 @@ export default class CadenzaService {
     this.bootstrap();
     this.validateName(tableName);
     this.validateName(operation);
-    const tableNameFormatted = tableName
-      .split("_")
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join("");
     const name = `${operation.charAt(0).toUpperCase() + operation.slice(1)} ${tableName} in ${databaseServiceName ?? "default database service"}`;
     const description = `Executes a ${operation} on table ${tableName} in ${databaseServiceName ?? "default database service"}`;
-    const taskName = `db${operation.charAt(0).toUpperCase() + operation.slice(1)}${tableNameFormatted}`;
+    const taskName = `${operation.charAt(0).toUpperCase() + operation.slice(1)} ${tableName}`;
 
     options = {
       concurrency: 100,
@@ -882,14 +878,14 @@ export default class CadenzaService {
    * This method is not supported in a browser environment and will log a warning if called in such an environment.
    *
    * @param {string} name - The name of the database service to be created.
-   * @param {SchemaDefinition} schema - The schema definition for the database service.
+   * @param {DatabaseSchemaDefinition} schema - The schema definition for the database service.
    * @param {string} [description=""] - An optional description of the database service.
    * @param {ServerOptions & DatabaseOptions} [options={}] - Optional configuration settings for the database and server.
    * @return {void} This method does not return a value.
    */
   static createDatabaseService(
     name: string,
-    schema: SchemaDefinition,
+    schema: DatabaseSchemaDefinition,
     description: string = "",
     options: ServerOptions & DatabaseOptions = {},
   ) {
@@ -958,14 +954,14 @@ export default class CadenzaService {
    * Creates a meta database service with the specified configuration.
    *
    * @param {string} name - The name of the database service to be created.
-   * @param {SchemaDefinition} schema - The schema definition for the database.
+   * @param {DatabaseSchemaDefinition} schema - The schema definition for the database.
    * @param {string} [description=""] - An optional description of the database service.
    * @param {ServerOptions & DatabaseOptions} [options={}] - Optional server and database configuration options. The `isMeta` flag will be automatically set to true.
    * @return {void} - This method does not return a value.
    */
   static createMetaDatabaseService(
     name: string,
-    schema: SchemaDefinition,
+    schema: DatabaseSchemaDefinition,
     description: string = "",
     options: ServerOptions & DatabaseOptions = {},
   ) {
