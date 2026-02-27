@@ -52,7 +52,9 @@ export function resolveTableQueryIntents(
         : customIntent.intent?.trim();
 
     if (!name) {
-      warnings.push(`Skipped empty custom query intent for table '${tableName}'.`);
+      warnings.push(
+        `Skipped empty custom query intent for table '${tableName}'.`,
+      );
       continue;
     }
 
@@ -83,11 +85,11 @@ export function resolveTableQueryIntents(
       description:
         typeof customIntent === "string"
           ? `Perform a query operation on the ${tableName} table`
-          : customIntent.description ?? defaultDescription,
+          : (customIntent.description ?? defaultDescription),
       input:
         typeof customIntent === "string"
           ? defaultInputSchema
-          : customIntent.input ?? defaultInputSchema,
+          : (customIntent.input ?? defaultInputSchema),
     });
   }
 
@@ -1569,7 +1571,7 @@ export default class DatabaseController {
           strict: true,
         },
       },
-      strict: true,
+      strict: false,
     };
 
     if (!inputSchema.properties) {
@@ -1687,7 +1689,7 @@ export function getInsertDataSchemaFromTable(
   table: TableDefinition,
   tableName: string,
 ): Schema {
-  const dataSchema: any = {
+  const dataSchema: Schema = {
     type: "object",
     properties: {
       ...Object.fromEntries(
