@@ -54,6 +54,38 @@ export default class RestController {
   private fetchClientDiagnostics: Map<string, FetchClientDiagnosticsState> =
     new Map();
   private readonly diagnosticsErrorHistoryLimit = 100;
+  private readonly diagnosticsMaxClientEntries = 500;
+  private readonly destroyedDiagnosticsTtlMs = 15 * 60_000;
+
+  private pruneFetchClientDiagnostics(now = Date.now()): void {
+    for (const [fetchId, state] of this.fetchClientDiagnostics.entries()) {
+      if (state.destroyed && now - state.updatedAt > this.destroyedDiagnosticsTtlMs) {
+        this.fetchClientDiagnostics.delete(fetchId);
+      }
+    }
+
+    if (this.fetchClientDiagnostics.size <= this.diagnosticsMaxClientEntries) {
+      return;
+    }
+
+    const entriesByEvictionPriority = Array.from(
+      this.fetchClientDiagnostics.entries(),
+    ).sort((left, right) => {
+      if (left[1].destroyed !== right[1].destroyed) {
+        return left[1].destroyed ? -1 : 1;
+      }
+
+      return left[1].updatedAt - right[1].updatedAt;
+    });
+
+    while (
+      this.fetchClientDiagnostics.size > this.diagnosticsMaxClientEntries &&
+      entriesByEvictionPriority.length > 0
+    ) {
+      const [fetchId] = entriesByEvictionPriority.shift()!;
+      this.fetchClientDiagnostics.delete(fetchId);
+    }
+  }
 
   private resolveTransportDiagnosticsOptions(ctx: AnyObject): {
     detailLevel: TransportDetailLevel;
@@ -81,6 +113,9 @@ export default class RestController {
     serviceName: string,
     url: string,
   ): FetchClientDiagnosticsState {
+    const now = Date.now();
+    this.pruneFetchClientDiagnostics(now);
+
     let state = this.fetchClientDiagnostics.get(fetchId);
     if (!state) {
       state = {
@@ -100,7 +135,7 @@ export default class RestController {
         signalFailures: 0,
         statusChecks: 0,
         statusFailures: 0,
-        updatedAt: Date.now(),
+        updatedAt: now,
       };
       this.fetchClientDiagnostics.set(fetchId, state);
     } else {
@@ -108,6 +143,7 @@ export default class RestController {
       state.url = url;
     }
 
+    this.pruneFetchClientDiagnostics(now);
     return state;
   }
 
@@ -149,6 +185,7 @@ export default class RestController {
   }
 
   private collectFetchTransportDiagnostics(ctx: AnyObject): AnyObject {
+    this.pruneFetchClientDiagnostics();
     const { detailLevel, includeErrorHistory, errorHistoryLimit } =
       this.resolveTransportDiagnosticsOptions(ctx);
     const serviceName = Cadenza.serviceRegistry.serviceName ?? "UnknownService";

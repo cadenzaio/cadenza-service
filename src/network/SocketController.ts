@@ -55,6 +55,38 @@ export default class SocketController {
   private socketClientDiagnostics: Map<string, SocketClientDiagnosticsState> =
     new Map();
   private readonly diagnosticsErrorHistoryLimit = 100;
+  private readonly diagnosticsMaxClientEntries = 500;
+  private readonly destroyedDiagnosticsTtlMs = 15 * 60_000;
+
+  private pruneSocketClientDiagnostics(now = Date.now()): void {
+    for (const [fetchId, state] of this.socketClientDiagnostics.entries()) {
+      if (state.destroyed && now - state.updatedAt > this.destroyedDiagnosticsTtlMs) {
+        this.socketClientDiagnostics.delete(fetchId);
+      }
+    }
+
+    if (this.socketClientDiagnostics.size <= this.diagnosticsMaxClientEntries) {
+      return;
+    }
+
+    const entriesByEvictionPriority = Array.from(
+      this.socketClientDiagnostics.entries(),
+    ).sort((left, right) => {
+      if (left[1].destroyed !== right[1].destroyed) {
+        return left[1].destroyed ? -1 : 1;
+      }
+
+      return left[1].updatedAt - right[1].updatedAt;
+    });
+
+    while (
+      this.socketClientDiagnostics.size > this.diagnosticsMaxClientEntries &&
+      entriesByEvictionPriority.length > 0
+    ) {
+      const [fetchId] = entriesByEvictionPriority.shift()!;
+      this.socketClientDiagnostics.delete(fetchId);
+    }
+  }
 
   private resolveTransportDiagnosticsOptions(ctx: AnyObject): {
     detailLevel: TransportDetailLevel;
@@ -82,6 +114,9 @@ export default class SocketController {
     serviceName: string,
     url: string,
   ): SocketClientDiagnosticsState {
+    const now = Date.now();
+    this.pruneSocketClientDiagnostics(now);
+
     let state = this.socketClientDiagnostics.get(fetchId);
     if (!state) {
       state = {
@@ -104,7 +139,7 @@ export default class SocketController {
         lastError: null,
         lastErrorAt: 0,
         errorHistory: [],
-        updatedAt: Date.now(),
+        updatedAt: now,
       };
       this.socketClientDiagnostics.set(fetchId, state);
     } else {
@@ -112,6 +147,7 @@ export default class SocketController {
       state.url = url;
     }
 
+    this.pruneSocketClientDiagnostics(now);
     return state;
   }
 
@@ -156,6 +192,7 @@ export default class SocketController {
   }
 
   private collectSocketTransportDiagnostics(ctx: AnyObject): AnyObject {
+    this.pruneSocketClientDiagnostics();
     const { detailLevel, includeErrorHistory, errorHistoryLimit } =
       this.resolveTransportDiagnosticsOptions(ctx);
     const serviceName = Cadenza.serviceRegistry.serviceName ?? "UnknownService";
@@ -613,11 +650,36 @@ export default class SocketController {
           ack?: (response: T) => void,
         ): Promise<T> => {
           return new Promise((resolve) => {
+            const parsedTimeout = Number(timeoutMs);
+            const normalizedTimeoutMs =
+              Number.isFinite(parsedTimeout) && parsedTimeout > 0
+                ? Math.trunc(parsedTimeout)
+                : 60_000;
+            let timer: NodeJS.Timeout | null = null;
+            let settled = false;
+            const clearPendingTimer = () => {
+              if (!timer) {
+                return;
+              }
+              clearTimeout(timer);
+              pendingTimers.delete(timer);
+              syncPendingCounts();
+              timer = null;
+            };
+            const settle = (response: T) => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              clearPendingTimer();
+              if (ack) ack(response);
+              resolve(response);
+            };
             const resolveWithError = (
               errorMessage: string,
               fallbackError?: unknown,
             ) => {
-              resolve({
+              settle({
                 ...data,
                 errored: true,
                 __error: errorMessage,
@@ -628,11 +690,11 @@ export default class SocketController {
                 socketId: socket?.id,
                 serviceName,
                 URL,
-              });
+              } as T);
             };
 
             const tryEmit = async () => {
-              const waitTimeoutMs = timeoutMs > 0 ? timeoutMs + 10 : 10_000;
+              const waitTimeoutMs = normalizedTimeoutMs + 10;
               const waitResult = await waitForSocketConnection(
                 socket,
                 waitTimeoutMs,
@@ -665,30 +727,26 @@ export default class SocketController {
                 return;
               }
 
-              let timer: NodeJS.Timeout | null = null;
-              if (timeoutMs !== 0) {
-                timer = setTimeout(() => {
-                  if (timer) {
-                    pendingTimers.delete(timer);
-                    syncPendingCounts();
-                    timer = null;
-                  }
-                  Cadenza.log(
-                    `Socket event '${event}' timed out`,
-                    { socketId: socket?.id, serviceName, URL },
-                    "error",
-                  );
-                  this.recordSocketClientError(
-                    fetchId,
-                    serviceName,
-                    URL,
-                    `Socket event '${event}' timed out`,
-                  );
-                  resolveWithError(`Socket event '${event}' timed out`);
-                }, timeoutMs + 10);
-                pendingTimers.add(timer);
-                syncPendingCounts();
-              }
+              timer = setTimeout(() => {
+                if (settled) {
+                  return;
+                }
+                clearPendingTimer();
+                Cadenza.log(
+                  `Socket event '${event}' timed out`,
+                  { socketId: socket?.id, serviceName, URL },
+                  "error",
+                );
+                this.recordSocketClientError(
+                  fetchId,
+                  serviceName,
+                  URL,
+                  `Socket event '${event}' timed out`,
+                );
+                resolveWithError(`Socket event '${event}' timed out`);
+              }, normalizedTimeoutMs + 10);
+              pendingTimers.add(timer);
+              syncPendingCounts();
 
               const connectedSocket = socket;
               if (!connectedSocket) {
@@ -699,14 +757,8 @@ export default class SocketController {
               }
 
               connectedSocket
-                .timeout(timeoutMs)
+                .timeout(normalizedTimeoutMs)
                 .emit(event, data, (err: any, response: T) => {
-                  if (timer) {
-                    clearTimeout(timer);
-                    pendingTimers.delete(timer);
-                    syncPendingCounts();
-                    timer = null;
-                  }
                   if (err) {
                     Cadenza.log(
                       "Socket timeout.",
@@ -731,12 +783,26 @@ export default class SocketController {
                       ...ctx.__metadata,
                     };
                   }
-                  if (ack) ack(response);
-                  resolve(response);
+                  settle(response);
                 });
             };
 
-            void tryEmit();
+            void tryEmit().catch((error) => {
+              Cadenza.log(
+                "Socket emit failed unexpectedly",
+                {
+                  event,
+                  error:
+                    error instanceof Error ? error.message : String(error),
+                  socketId: socket?.id,
+                  serviceName,
+                  URL,
+                },
+                "error",
+              );
+              this.recordSocketClientError(fetchId, serviceName, URL, error);
+              resolveWithError(`Socket event '${event}' failed`, error);
+            });
           });
         };
 
@@ -925,54 +991,75 @@ export default class SocketController {
               return;
             }
 
-            return new Promise((resolve) => {
-              delete ctx.__isSubMeta;
-              delete ctx.__broadcast;
-              const requestSentAt = Date.now();
-              pendingDelegationIds.add(ctx.__metadata.__deputyExecId);
+            delete ctx.__isSubMeta;
+            delete ctx.__broadcast;
+
+            const deputyExecId = ctx.__metadata?.__deputyExecId;
+            const requestSentAt = Date.now();
+            if (deputyExecId) {
+              pendingDelegationIds.add(deputyExecId);
               syncPendingCounts();
-              emitWhenReady?.(
-                "delegation",
-                ctx,
-                ctx.__timeout ?? 60_000,
-                (resultContext: AnyObject) => {
-                  const requestDuration = Date.now() - requestSentAt;
-                  const metadata = resultContext.__metadata;
-                  delete resultContext.__metadata;
-                  emit(
-                    `meta.socket_client.delegated:${ctx.__metadata.__deputyExecId}`,
-                    {
-                      ...resultContext,
-                      ...metadata,
-                      __requestDuration: requestDuration,
-                    },
-                  );
+            }
 
-                  pendingDelegationIds.delete(ctx.__metadata.__deputyExecId);
-                  syncPendingCounts();
+            try {
+              const resultContext =
+                ((await emitWhenReady?.(
+                  "delegation",
+                  ctx,
+                  ctx.__timeout ?? 60_000,
+                )) as AnyObject | undefined) ??
+                ({
+                  errored: true,
+                  __error: "Socket delegation returned no response",
+                } as AnyObject);
 
-                  if (resultContext?.errored || resultContext?.failed) {
-                    this.recordSocketClientError(
-                      fetchId,
-                      serviceName,
-                      URL,
-                      resultContext?.__error ??
-                        resultContext?.error ??
-                        "Socket delegation failed",
-                    );
-                  }
+              const requestDuration = Date.now() - requestSentAt;
+              const metadata = resultContext.__metadata;
+              delete resultContext.__metadata;
 
-                  // if (resultContext.errored) {
-                  //   errorCount++;
-                  //   if (errorCount > ERROR_LIMIT) {
-                  //     console.error("Too many errors, closing socket", URL);
-                  //     emit(`meta.socket_shutdown_requested:${fetchId}`, {});
-                  //   }
-                  // }
-                  resolve(resultContext);
-                },
-              );
-            });
+              if (deputyExecId) {
+                emit(`meta.socket_client.delegated:${deputyExecId}`, {
+                  ...resultContext,
+                  ...metadata,
+                  __requestDuration: requestDuration,
+                });
+              }
+
+              if (resultContext?.errored || resultContext?.failed) {
+                this.recordSocketClientError(
+                  fetchId,
+                  serviceName,
+                  URL,
+                  resultContext?.__error ??
+                    resultContext?.error ??
+                    "Socket delegation failed",
+                );
+              }
+
+              return resultContext;
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              const failedContext = {
+                errored: true,
+                __error: message,
+              };
+
+              if (deputyExecId) {
+                emit(`meta.socket_client.delegated:${deputyExecId}`, {
+                  ...failedContext,
+                  __requestDuration: Date.now() - requestSentAt,
+                });
+              }
+
+              this.recordSocketClientError(fetchId, serviceName, URL, error);
+              return failedContext;
+            } finally {
+              if (deputyExecId) {
+                pendingDelegationIds.delete(deputyExecId);
+                syncPendingCounts();
+              }
+            }
           },
           `Delegate flow to service ${serviceName} with address ${URL}`,
         )
@@ -989,26 +1076,24 @@ export default class SocketController {
               return;
             }
 
-            return new Promise((resolve) => {
-              delete ctx.__broadcast;
+            delete ctx.__broadcast;
 
-              emitWhenReady?.("signal", ctx, 5_000, (response: AnyObject) => {
-                if (ctx.__routineExecId) {
-                  emit(
-                    `meta.socket_client.transmitted:${ctx.__routineExecId}`,
-                    response,
-                  );
-                }
-                // if (response.errored) {
-                //   errorCount++;
-                //   if (errorCount > ERROR_LIMIT) {
-                //     console.error("Too many errors, closing socket", URL);
-                //     emit(`meta.socket_shutdown_requested:${fetchId}`, {});
-                //   }
-                // }
-                resolve(response);
+            const response =
+              ((await emitWhenReady?.("signal", ctx, 5_000)) as
+                | AnyObject
+                | undefined) ??
+              ({
+                errored: true,
+                __error: "Socket signal transmission returned no response",
+              } as AnyObject);
+
+            if (ctx.__routineExecId) {
+              emit(`meta.socket_client.transmitted:${ctx.__routineExecId}`, {
+                ...response,
               });
-            });
+            }
+
+            return response;
           },
           `Transmits signal to service ${serviceName} with address ${URL}`,
         )
