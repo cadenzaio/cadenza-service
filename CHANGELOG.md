@@ -1,3 +1,10 @@
+# [2.6.0](https://github.com/cadenzaio/cadenza-service/compare/v2.5.0...v2.6.0) (2026-02-27)
+
+
+### Features
+
+* **registry:** run full sync via distributed inquiry intent ([4113d11](https://github.com/cadenzaio/cadenza-service/commit/4113d11e3d096c36fc46964d85e2caba8dea5f06))
+
 # [2.5.0](https://github.com/cadenzaio/cadenza-service/compare/v2.4.0...v2.5.0) (2026-02-27)
 
 
