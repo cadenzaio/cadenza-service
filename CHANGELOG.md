@@ -1,3 +1,10 @@
+# [2.7.0](https://github.com/cadenzaio/cadenza-service/compare/v2.6.1...v2.7.0) (2026-02-27)
+
+
+### Features
+
+* **runtime:** add distributed runtime status intent with heartbeat + fallback ([5b26218](https://github.com/cadenzaio/cadenza-service/commit/5b26218611e79621d40d3e243762344f4693927d))
+
 ## [2.6.1](https://github.com/cadenzaio/cadenza-service/compare/v2.6.0...v2.6.1) (2026-02-27)
 
 
