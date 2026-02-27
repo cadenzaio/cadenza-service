@@ -8,6 +8,9 @@ import {
   META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT,
 } from "../utils/inquiry";
 
+const META_SERVICE_REGISTRY_FULL_SYNC_INTENT =
+  "meta-service-registry-full-sync";
+
 export interface ServiceInstanceDescriptor {
   uuid: string;
   address: string;
@@ -73,7 +76,7 @@ export default class ServiceRegistry {
   handleGlobalSignalRegistrationTask: Task;
   handleGlobalIntentRegistrationTask: Task;
   handleSocketStatusUpdateTask: Task;
-  fullSyncTask: GraphRoutine;
+  fullSyncTask: GraphRoutine | Task;
   getAllInstances: Task;
   doForEachInstance: Task;
   deleteInstance: Task;
@@ -645,60 +648,73 @@ export default class ServiceRegistry {
       "Handles status update from socket broadcast",
     ).doOn("meta.socket_client.status_received");
 
-    const mergeSyncDataTask = Cadenza.createUniqueMetaTask(
-      "Merge sync data",
-      (ctx) => {
-        let joinedContext: any = {};
-        ctx.joinedContexts.forEach((ctx: any) => {
-          joinedContext = { ...joinedContext, ...ctx };
-        });
-        return joinedContext;
+    this.fullSyncTask = Cadenza.createMetaTask(
+      "Full sync",
+      async (ctx) => {
+        const inquiryResult = await Cadenza.inquire(
+          META_SERVICE_REGISTRY_FULL_SYNC_INTENT,
+          {
+            syncScope: "service-registry-full-sync",
+          },
+          ctx.inquiryOptions ?? ctx.__inquiryOptions ?? {},
+        );
+
+        const signalToTaskMaps = (inquiryResult.signalToTaskMaps ?? [])
+          .filter((m: any) => !!m.isGlobal)
+          .map((m: any) => ({
+            signalName: m.signalName,
+            serviceName: m.serviceName,
+            deleted: !!m.deleted,
+          }));
+
+        const intentToTaskMaps = (inquiryResult.intentToTaskMaps ?? []).map(
+          (m: any) => ({
+            intentName: m.intentName,
+            taskName: m.taskName,
+            taskVersion: m.taskVersion ?? 1,
+            serviceName: m.serviceName,
+            deleted: !!m.deleted,
+          }),
+        );
+
+        const serviceInstances = (inquiryResult.serviceInstances ?? [])
+          .filter(
+            (instance: any) =>
+              !instance.deleted &&
+              !!instance.isActive &&
+              !instance.isNonResponsive &&
+              !instance.isBlocked,
+          )
+          .map((instance: any) => ({
+            uuid: instance.uuid,
+            address: instance.address,
+            port: instance.port,
+            serviceName: instance.serviceName,
+            isActive: !!instance.isActive,
+            isNonResponsive: !!instance.isNonResponsive,
+            isBlocked: !!instance.isBlocked,
+            health: instance.health ?? {},
+            exposed: !!instance.exposed,
+            created: instance.created,
+            isFrontend: !!instance.isFrontend,
+          }));
+
+        return {
+          ...ctx,
+          signalToTaskMaps,
+          intentToTaskMaps,
+          serviceInstances,
+          __inquiryMeta: inquiryResult.__inquiryMeta,
+        };
       },
+      "Runs service registry full sync through one distributed inquiry intent.",
     )
+      .doOn("meta.sync_requested")
       .emits("meta.service_registry.initial_sync_complete")
       .then(
         this.handleGlobalSignalRegistrationTask,
         this.handleGlobalIntentRegistrationTask,
       );
-
-    this.fullSyncTask = Cadenza.createMetaRoutine("Full sync", [
-      Cadenza.createCadenzaDBQueryTask("signal_to_task_map", {
-        filter: {
-          isGlobal: true,
-        },
-        fields: ["signal_name", "service_name", "deleted"],
-      }).then(mergeSyncDataTask),
-      Cadenza.createCadenzaDBQueryTask("intent_to_task_map", {
-        fields: [
-          "intent_name",
-          "task_name",
-          "task_version",
-          "service_name",
-          "deleted",
-        ],
-      }).then(mergeSyncDataTask),
-      Cadenza.createCadenzaDBQueryTask("service_instance", {
-        filter: {
-          deleted: false,
-          is_active: true,
-          is_non_responsive: false,
-          is_blocked: false,
-        },
-        fields: [
-          "uuid",
-          "address",
-          "port",
-          "service_name",
-          "is_active",
-          "is_non_responsive",
-          "is_blocked",
-          "health",
-          "exposed",
-          "created",
-          "is_frontend",
-        ],
-      }).then(mergeSyncDataTask),
-    ]).doOn("meta.sync_requested");
 
     this.getInstanceById = Cadenza.createMetaTask(
       "Get instance by id",
