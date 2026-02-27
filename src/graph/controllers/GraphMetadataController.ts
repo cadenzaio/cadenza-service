@@ -1,5 +1,6 @@
 import Cadenza from "../../Cadenza";
 import { formatTimestamp } from "../../utils/tools";
+import { isMetaIntentName } from "../../utils/inquiry";
 
 export default class GraphMetadataController {
   private static _instance: GraphMetadataController;
@@ -14,28 +15,7 @@ export default class GraphMetadataController {
         data: {
           ...ctx.data,
           serviceName: Cadenza.serviceRegistry.serviceName,
-          inputContextSchemaId: ctx.data.inputContextSchemaId
-            ? {
-                subOperation: "insert",
-                table: "context_schema",
-                data: {
-                  ...ctx.data.inputContextSchemaId,
-                },
-                return: "uuid",
-              }
-            : null,
-          outputContextSchemaId: ctx.data.outputContextSchemaId
-            ? {
-                subOperation: "insert",
-                table: "context_schema",
-                data: {
-                  ...ctx.data.outputContextSchemaId,
-                },
-                return: "uuid",
-              }
-            : null,
         },
-        transaction: true,
       };
     })
       .doOn("meta.task.created")
@@ -300,9 +280,11 @@ export default class GraphMetadataController {
       .emits("global.meta.graph_metadata.relationship_executed");
 
     Cadenza.createMetaTask("Handle Intent Creation", (ctx) => {
+      const intentName = ctx.data?.name;
       return {
         data: {
           ...ctx.data,
+          isMeta: intentName ? isMetaIntentName(intentName) : false,
         },
       };
     })

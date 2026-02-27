@@ -8,12 +8,91 @@ import {
 import Cadenza, { DatabaseOptions, ServerOptions } from "../Cadenza";
 import { Pool, PoolClient } from "pg";
 import { camelCase, snakeCase } from "lodash-es";
-import type { AnyObject, SchemaDefinition } from "@cadenza.io/core";
+import type { AnyObject, Schema, SchemaDefinition } from "@cadenza.io/core";
 import {
   DbOperationPayload,
   JoinDefinition,
   SubOperation,
 } from "../types/queryData";
+
+export interface QueryIntentDefinition {
+  name: string;
+  description: string;
+  input: SchemaDefinition;
+}
+
+export interface QueryIntentResolution {
+  intents: QueryIntentDefinition[];
+  warnings: string[];
+}
+
+export function resolveTableQueryIntents(
+  serviceName: string | null | undefined,
+  tableName: string,
+  table: TableDefinition,
+  defaultInputSchema: SchemaDefinition,
+): QueryIntentResolution {
+  const resolvedServiceName = serviceName ?? "unknown-service";
+  const defaultIntentName = `query-${resolvedServiceName}-${tableName}`;
+  const defaultDescription = `Perform a query operation on the ${tableName} table`;
+  const intents: QueryIntentDefinition[] = [
+    {
+      name: defaultIntentName,
+      description: defaultDescription,
+      input: defaultInputSchema,
+    },
+  ];
+  const warnings: string[] = [];
+  const names = new Set<string>([defaultIntentName]);
+
+  for (const customIntent of table.customIntents?.query ?? []) {
+    const name =
+      typeof customIntent === "string"
+        ? customIntent.trim()
+        : customIntent.intent?.trim();
+
+    if (!name) {
+      warnings.push(`Skipped empty custom query intent for table '${tableName}'.`);
+      continue;
+    }
+
+    if (name.length > 100) {
+      warnings.push(
+        `Skipped custom query intent '${name}' for table '${tableName}': name must be <= 100 characters.`,
+      );
+      continue;
+    }
+
+    if (name.includes(" ") || name.includes(".") || name.includes("\\")) {
+      warnings.push(
+        `Skipped custom query intent '${name}' for table '${tableName}': name cannot contain spaces, dots or backslashes.`,
+      );
+      continue;
+    }
+
+    if (names.has(name)) {
+      warnings.push(
+        `Skipped duplicate custom query intent '${name}' for table '${tableName}'.`,
+      );
+      continue;
+    }
+
+    names.add(name);
+    intents.push({
+      name,
+      description:
+        typeof customIntent === "string"
+          ? `Perform a query operation on the ${tableName} table`
+          : customIntent.description ?? defaultDescription,
+      input:
+        typeof customIntent === "string"
+          ? defaultInputSchema
+          : customIntent.input ?? defaultInputSchema,
+    });
+  }
+
+  return { intents, warnings };
+}
 
 /**
  * DatabaseController is a singleton class that manages database connections,
@@ -196,6 +275,27 @@ export default class DatabaseController {
                         );
                         throw new Error(
                           `Invalid emissions for ${tableName}.${op}`,
+                        );
+                      }
+                    }
+                  }
+
+                  if (table.customIntents?.query) {
+                    if (!Array.isArray(table.customIntents.query)) {
+                      throw new Error(
+                        `Invalid customIntents.query for ${tableName}: expected array`,
+                      );
+                    }
+
+                    for (const customIntent of table.customIntents.query) {
+                      if (
+                        typeof customIntent !== "string" &&
+                        (typeof customIntent !== "object" ||
+                          !customIntent ||
+                          typeof customIntent.intent !== "string")
+                      ) {
+                        throw new Error(
+                          `Invalid custom query intent on ${tableName}: expected string or object with intent`,
                         );
                       }
                     }
@@ -1425,13 +1525,33 @@ export default class DatabaseController {
       );
 
     if (op === "query") {
-      const intentName = `query-${Cadenza.serviceRegistry.serviceName}-${tableName}`;
-      Cadenza.defineIntent({
-        name: intentName,
-        description: `Perform a query operation on the ${tableName} table`,
-        input: schema,
-      });
-      task.respondsTo(intentName);
+      const { intents, warnings } = resolveTableQueryIntents(
+        Cadenza.serviceRegistry?.serviceName,
+        tableName,
+        table,
+        schema,
+      );
+
+      for (const warning of warnings) {
+        Cadenza.log(
+          "Skipped custom query intent registration.",
+          {
+            tableName,
+            warning,
+          },
+          "warning",
+        );
+      }
+
+      for (const intent of intents) {
+        Cadenza.defineIntent({
+          name: intent.name,
+          description: intent.description,
+          input: intent.input,
+        });
+      }
+
+      task.respondsTo(...intents.map((intent) => intent.name));
     }
   }
 
@@ -1563,10 +1683,10 @@ export default class DatabaseController {
   }
 }
 
-function getInsertDataSchemaFromTable(
+export function getInsertDataSchemaFromTable(
   table: TableDefinition,
   tableName: string,
-): SchemaDefinition[] {
+): Schema {
   const dataSchema: any = {
     type: "object",
     properties: {
@@ -1574,18 +1694,18 @@ function getInsertDataSchemaFromTable(
         Object.entries(table.fields).map((field) => {
           return [
             field[0],
-            [
-              {
+            {
+              value: {
                 type: tableFieldTypeToSchemaType(field[1].type),
                 description: `Inferred from field '${field[0]}' of type [${field[1].type}] on table ${tableName}.`,
               },
-              {
+              effect: {
                 type: "string",
                 constraints: {
                   oneOf: ["increment", "decrement", "set"],
                 },
               },
-              {
+              subOperation: {
                 type: "object",
                 properties: {
                   subOperation: {
@@ -1595,17 +1715,17 @@ function getInsertDataSchemaFromTable(
                   table: {
                     type: "string",
                   },
-                  data: [
-                    {
+                  data: {
+                    single: {
                       type: "object",
                     },
-                    {
+                    batch: {
                       type: "array",
                       items: {
                         type: "object",
                       },
                     },
-                  ],
+                  },
                   filter: {
                     type: "object",
                   },
@@ -1621,7 +1741,7 @@ function getInsertDataSchemaFromTable(
                 },
                 required: ["subOperation", "table"],
               },
-            ],
+            },
           ];
         }),
       ),
@@ -1632,16 +1752,16 @@ function getInsertDataSchemaFromTable(
     strict: true,
   };
 
-  return [
-    dataSchema,
-    {
+  return {
+    single: dataSchema,
+    batch: {
       type: "array",
       items: dataSchema,
     },
-  ];
+  };
 }
 
-function getQueryFilterSchemaFromTable(
+export function getQueryFilterSchemaFromTable(
   table: TableDefinition,
   tableName: string,
 ): SchemaDefinition {
@@ -1652,24 +1772,24 @@ function getQueryFilterSchemaFromTable(
         Object.entries(table.fields).map((field) => {
           return [
             field[0],
-            [
-              {
+            {
+              value: {
                 type: tableFieldTypeToSchemaType(field[1].type),
                 description: `Inferred from field '${field[0]}' of type [${field[1].type}] on table ${tableName}.`,
               },
-              {
+              in: {
                 type: "array",
                 items: {
                   type: tableFieldTypeToSchemaType(field[1].type),
                 },
               },
-            ],
+            },
           ];
         }),
       ),
     },
     strict: true,
-    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry.serviceName}.`,
+    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry?.serviceName ?? "unknown-service"}.`,
   };
 }
 
@@ -1685,7 +1805,7 @@ function getQueryFieldsSchemaFromTable(
         oneOf: Object.keys(table.fields),
       },
     },
-    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry.serviceName}.`,
+    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry?.serviceName ?? "unknown-service"}.`,
   };
 }
 
@@ -1736,7 +1856,7 @@ function getQueryJoinsSchemaFromTable(
       ),
     },
     strict: true,
-    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry.serviceName}.`,
+    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry?.serviceName ?? "unknown-service"}.`,
   };
 }
 
@@ -1762,7 +1882,7 @@ function getQuerySortSchemaFromTable(
       ),
     },
     strict: true,
-    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry.serviceName}.`,
+    description: `Inferred from table '${tableName}' on database service ${Cadenza.serviceRegistry?.serviceName ?? "unknown-service"}.`,
   };
 }
 
@@ -1832,12 +1952,10 @@ function getQueryOnConflictSchemaFromTable(
                 Object.entries(table.fields).map((field) => {
                   return [
                     field[0],
-                    [
-                      {
-                        type: tableFieldTypeToSchemaType(field[1].type),
-                        description: `Inferred from field '${field[0]}' of type [${field[1].type}] on table ${tableName}.`,
-                      },
-                    ],
+                    {
+                      type: tableFieldTypeToSchemaType(field[1].type),
+                      description: `Inferred from field '${field[0]}' of type [${field[1].type}] on table ${tableName}.`,
+                    },
                   ];
                 }),
               ),

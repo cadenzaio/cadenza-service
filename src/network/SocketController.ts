@@ -6,6 +6,37 @@ import type { AnyObject, Task } from "@cadenza.io/core";
 import { io, Socket } from "socket.io-client";
 import { isBrowser } from "../utils/environment";
 import { waitForSocketConnection } from "./socketClientUtils";
+import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
+
+type TransportDetailLevel = "summary" | "full";
+
+interface TransportDiagnosticErrorEntry {
+  at: string;
+  message: string;
+}
+
+interface SocketClientDiagnosticsState {
+  fetchId: string;
+  serviceName: string;
+  url: string;
+  socketId: string | null;
+  connected: boolean;
+  handshake: boolean;
+  reconnectAttempts: number;
+  connectErrors: number;
+  reconnectErrors: number;
+  socketErrors: number;
+  pendingDelegations: number;
+  pendingTimers: number;
+  destroyed: boolean;
+  lastHandshakeAt: string | null;
+  lastHandshakeError: string | null;
+  lastDisconnectAt: string | null;
+  lastError: string | null;
+  lastErrorAt: number;
+  errorHistory: TransportDiagnosticErrorEntry[];
+  updatedAt: number;
+}
 
 /**
  * The `SocketController` class handles the setup and management of a WebSocket server,
@@ -19,6 +50,194 @@ export default class SocketController {
   public static get instance(): SocketController {
     if (!this._instance) this._instance = new SocketController();
     return this._instance;
+  }
+
+  private socketClientDiagnostics: Map<string, SocketClientDiagnosticsState> =
+    new Map();
+  private readonly diagnosticsErrorHistoryLimit = 100;
+
+  private resolveTransportDiagnosticsOptions(ctx: AnyObject): {
+    detailLevel: TransportDetailLevel;
+    includeErrorHistory: boolean;
+    errorHistoryLimit: number;
+  } {
+    const detailLevel: TransportDetailLevel =
+      ctx.detailLevel === "full" ? "full" : "summary";
+    const includeErrorHistory = Boolean(ctx.includeErrorHistory);
+
+    const requestedLimit = Number(ctx.errorHistoryLimit);
+    const errorHistoryLimit = Number.isFinite(requestedLimit)
+      ? Math.max(1, Math.min(200, Math.trunc(requestedLimit)))
+      : 10;
+
+    return {
+      detailLevel,
+      includeErrorHistory,
+      errorHistoryLimit,
+    };
+  }
+
+  private ensureSocketClientDiagnostics(
+    fetchId: string,
+    serviceName: string,
+    url: string,
+  ): SocketClientDiagnosticsState {
+    let state = this.socketClientDiagnostics.get(fetchId);
+    if (!state) {
+      state = {
+        fetchId,
+        serviceName,
+        url,
+        socketId: null,
+        connected: false,
+        handshake: false,
+        reconnectAttempts: 0,
+        connectErrors: 0,
+        reconnectErrors: 0,
+        socketErrors: 0,
+        pendingDelegations: 0,
+        pendingTimers: 0,
+        destroyed: false,
+        lastHandshakeAt: null,
+        lastHandshakeError: null,
+        lastDisconnectAt: null,
+        lastError: null,
+        lastErrorAt: 0,
+        errorHistory: [],
+        updatedAt: Date.now(),
+      };
+      this.socketClientDiagnostics.set(fetchId, state);
+    } else {
+      state.serviceName = serviceName;
+      state.url = url;
+    }
+
+    return state;
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    if (typeof error === "string") {
+      return error;
+    }
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+
+  private recordSocketClientError(
+    fetchId: string,
+    serviceName: string,
+    url: string,
+    error: unknown,
+  ): void {
+    const state = this.ensureSocketClientDiagnostics(fetchId, serviceName, url);
+    const message = this.getErrorMessage(error);
+    const now = Date.now();
+
+    state.lastError = message;
+    state.lastErrorAt = now;
+    state.updatedAt = now;
+    state.errorHistory.push({
+      at: new Date(now).toISOString(),
+      message,
+    });
+
+    if (state.errorHistory.length > this.diagnosticsErrorHistoryLimit) {
+      state.errorHistory.splice(
+        0,
+        state.errorHistory.length - this.diagnosticsErrorHistoryLimit,
+      );
+    }
+  }
+
+  private collectSocketTransportDiagnostics(ctx: AnyObject): AnyObject {
+    const { detailLevel, includeErrorHistory, errorHistoryLimit } =
+      this.resolveTransportDiagnosticsOptions(ctx);
+    const serviceName = Cadenza.serviceRegistry.serviceName ?? "UnknownService";
+    const states = Array.from(this.socketClientDiagnostics.values()).sort(
+      (a, b) => a.fetchId.localeCompare(b.fetchId),
+    );
+
+    const summary = {
+      detailLevel,
+      totalClients: states.length,
+      connectedClients: states.filter((state) => state.connected).length,
+      activeHandshakes: states.filter((state) => state.handshake).length,
+      pendingDelegations: states.reduce(
+        (acc, state) => acc + state.pendingDelegations,
+        0,
+      ),
+      pendingTimers: states.reduce((acc, state) => acc + state.pendingTimers, 0),
+      reconnectAttempts: states.reduce(
+        (acc, state) => acc + state.reconnectAttempts,
+        0,
+      ),
+      connectErrors: states.reduce((acc, state) => acc + state.connectErrors, 0),
+      reconnectErrors: states.reduce(
+        (acc, state) => acc + state.reconnectErrors,
+        0,
+      ),
+      socketErrors: states.reduce((acc, state) => acc + state.socketErrors, 0),
+      latestError:
+        states
+          .slice()
+          .sort((a, b) => b.lastErrorAt - a.lastErrorAt)
+          .find((state) => state.lastError)?.lastError ?? null,
+    };
+
+    if (detailLevel === "summary") {
+      return {
+        transportDiagnostics: {
+          [serviceName]: {
+            socketClient: summary,
+          },
+        },
+      };
+    }
+
+    const clients = states.map((state) => {
+      const details: AnyObject = {
+        fetchId: state.fetchId,
+        serviceName: state.serviceName,
+        url: state.url,
+        socketId: state.socketId,
+        connected: state.connected,
+        handshake: state.handshake,
+        reconnectAttempts: state.reconnectAttempts,
+        connectErrors: state.connectErrors,
+        reconnectErrors: state.reconnectErrors,
+        socketErrors: state.socketErrors,
+        pendingDelegations: state.pendingDelegations,
+        pendingTimers: state.pendingTimers,
+        destroyed: state.destroyed,
+        lastHandshakeAt: state.lastHandshakeAt,
+        lastHandshakeError: state.lastHandshakeError,
+        lastDisconnectAt: state.lastDisconnectAt,
+        latestError: state.lastError,
+      };
+
+      if (includeErrorHistory) {
+        details.errorHistory = state.errorHistory.slice(-errorHistoryLimit);
+      }
+
+      return details;
+    });
+
+    return {
+      transportDiagnostics: {
+        [serviceName]: {
+          socketClient: {
+            ...summary,
+            clients,
+          },
+        },
+      },
+    };
   }
 
   /**
@@ -39,6 +258,12 @@ export default class SocketController {
    * Initializes the `SocketServer` to be ready for WebSocket communication.
    */
   constructor() {
+    Cadenza.createMetaTask(
+      "Collect socket transport diagnostics",
+      (ctx) => this.collectSocketTransportDiagnostics(ctx),
+      "Responds to distributed transport diagnostics inquiries with socket client data.",
+    ).respondsTo(META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT);
+
     Cadenza.createMetaRoutine(
       "SocketServer",
       [
@@ -334,6 +559,13 @@ export default class SocketController {
         const port = protocol === "https" ? 443 : servicePort;
         const URL = `${socketProtocol}://${serviceAddress}:${port}`;
         const fetchId = `${serviceAddress}_${port}`;
+        const socketDiagnostics = this.ensureSocketClientDiagnostics(
+          fetchId,
+          serviceName,
+          URL,
+        );
+        socketDiagnostics.destroyed = false;
+        socketDiagnostics.updatedAt = Date.now();
         let handshake = false;
         let errorCount = 0;
         const ERROR_LIMIT = 5;
@@ -345,6 +577,11 @@ export default class SocketController {
 
         const pendingDelegationIds = new Set<string>();
         const pendingTimers = new Set<NodeJS.Timeout>();
+        const syncPendingCounts = () => {
+          socketDiagnostics.pendingDelegations = pendingDelegationIds.size;
+          socketDiagnostics.pendingTimers = pendingTimers.size;
+          socketDiagnostics.updatedAt = Date.now();
+        };
 
         let handshakeTask: Task | null = null;
         let emitWhenReady:
@@ -418,6 +655,12 @@ export default class SocketController {
                   { socketId: socket?.id, serviceName, URL, event },
                   "error",
                 );
+                this.recordSocketClientError(
+                  fetchId,
+                  serviceName,
+                  URL,
+                  waitResult.error,
+                );
                 resolveWithError(waitResult.error);
                 return;
               }
@@ -427,6 +670,7 @@ export default class SocketController {
                 timer = setTimeout(() => {
                   if (timer) {
                     pendingTimers.delete(timer);
+                    syncPendingCounts();
                     timer = null;
                   }
                   Cadenza.log(
@@ -434,9 +678,16 @@ export default class SocketController {
                     { socketId: socket?.id, serviceName, URL },
                     "error",
                   );
+                  this.recordSocketClientError(
+                    fetchId,
+                    serviceName,
+                    URL,
+                    `Socket event '${event}' timed out`,
+                  );
                   resolveWithError(`Socket event '${event}' timed out`);
                 }, timeoutMs + 10);
                 pendingTimers.add(timer);
+                syncPendingCounts();
               }
 
               const connectedSocket = socket;
@@ -453,6 +704,7 @@ export default class SocketController {
                   if (timer) {
                     clearTimeout(timer);
                     pendingTimers.delete(timer);
+                    syncPendingCounts();
                     timer = null;
                   }
                   if (err) {
@@ -465,6 +717,12 @@ export default class SocketController {
                         serviceName,
                       },
                       "warning",
+                    );
+                    this.recordSocketClientError(
+                      fetchId,
+                      serviceName,
+                      URL,
+                      err,
                     );
                     response = {
                       __error: `Timeout error: ${err}`,
@@ -484,6 +742,10 @@ export default class SocketController {
 
         socket.on("connect", () => {
           if (handshake) return;
+          socketDiagnostics.connected = true;
+          socketDiagnostics.destroyed = false;
+          socketDiagnostics.socketId = socket?.id ?? null;
+          socketDiagnostics.updatedAt = Date.now();
           Cadenza.emit(`meta.socket_client.connected:${fetchId}`, ctx);
         });
 
@@ -510,6 +772,12 @@ export default class SocketController {
 
         socket.on("connect_error", (err) => {
           handshake = false;
+          socketDiagnostics.connected = false;
+          socketDiagnostics.handshake = false;
+          socketDiagnostics.connectErrors++;
+          socketDiagnostics.lastHandshakeError = err.message;
+          socketDiagnostics.updatedAt = Date.now();
+          this.recordSocketClientError(fetchId, serviceName, URL, err);
           Cadenza.log(
             "Socket connect error",
             { error: err.message, serviceName, socketId: socket?.id, URL },
@@ -519,10 +787,17 @@ export default class SocketController {
         });
 
         socket.on("reconnect_attempt", (attempt) => {
+          socketDiagnostics.reconnectAttempts = Math.max(
+            socketDiagnostics.reconnectAttempts,
+            attempt,
+          );
+          socketDiagnostics.updatedAt = Date.now();
           Cadenza.log(`Reconnect attempt: ${attempt}`);
         });
 
         socket.on("reconnect", (attempt) => {
+          socketDiagnostics.connected = true;
+          socketDiagnostics.updatedAt = Date.now();
           Cadenza.log(`Socket reconnected after ${attempt} tries`, {
             socketId: socket?.id,
             URL,
@@ -532,6 +807,12 @@ export default class SocketController {
 
         socket.on("reconnect_error", (err) => {
           handshake = false;
+          socketDiagnostics.connected = false;
+          socketDiagnostics.handshake = false;
+          socketDiagnostics.reconnectErrors++;
+          socketDiagnostics.lastHandshakeError = err.message;
+          socketDiagnostics.updatedAt = Date.now();
+          this.recordSocketClientError(fetchId, serviceName, URL, err);
           Cadenza.log(
             "Socket reconnect failed.",
             { error: err.message, serviceName, URL, socketId: socket?.id },
@@ -542,6 +823,9 @@ export default class SocketController {
         socket.on("error", (err) => {
           // TODO: Retry on rate limit error
           errorCount++;
+          socketDiagnostics.socketErrors++;
+          socketDiagnostics.updatedAt = Date.now();
+          this.recordSocketClientError(fetchId, serviceName, URL, err);
 
           Cadenza.log(
             "Socket error",
@@ -552,6 +836,11 @@ export default class SocketController {
         });
 
         socket.on("disconnect", () => {
+          const disconnectedAt = new Date().toISOString();
+          socketDiagnostics.connected = false;
+          socketDiagnostics.handshake = false;
+          socketDiagnostics.lastDisconnectAt = disconnectedAt;
+          socketDiagnostics.updatedAt = Date.now();
           Cadenza.log(
             "Socket disconnected.",
             { URL, serviceName, socketId: socket?.id },
@@ -572,6 +861,8 @@ export default class SocketController {
           async (ctx, emit) => {
             if (handshake) return;
             handshake = true;
+            socketDiagnostics.handshake = true;
+            socketDiagnostics.updatedAt = Date.now();
 
             await emitWhenReady?.(
               "handshake",
@@ -584,6 +875,11 @@ export default class SocketController {
               10_000,
               (result: any) => {
                 if (result.status === "success") {
+                  socketDiagnostics.connected = true;
+                  socketDiagnostics.handshake = true;
+                  socketDiagnostics.lastHandshakeAt = new Date().toISOString();
+                  socketDiagnostics.lastHandshakeError = null;
+                  socketDiagnostics.updatedAt = Date.now();
                   Cadenza.log("Socket client connected", {
                     result,
                     serviceName,
@@ -591,6 +887,17 @@ export default class SocketController {
                     URL,
                   });
                 } else {
+                  socketDiagnostics.connected = false;
+                  socketDiagnostics.handshake = false;
+                  socketDiagnostics.lastHandshakeError =
+                    result?.__error ?? result?.error ?? "Socket handshake failed";
+                  socketDiagnostics.updatedAt = Date.now();
+                  this.recordSocketClientError(
+                    fetchId,
+                    serviceName,
+                    URL,
+                    socketDiagnostics.lastHandshakeError,
+                  );
                   Cadenza.log(
                     "Socket handshake failed",
                     { result, serviceName, socketId: socket?.id, URL },
@@ -623,6 +930,7 @@ export default class SocketController {
               delete ctx.__broadcast;
               const requestSentAt = Date.now();
               pendingDelegationIds.add(ctx.__metadata.__deputyExecId);
+              syncPendingCounts();
               emitWhenReady?.(
                 "delegation",
                 ctx,
@@ -641,6 +949,18 @@ export default class SocketController {
                   );
 
                   pendingDelegationIds.delete(ctx.__metadata.__deputyExecId);
+                  syncPendingCounts();
+
+                  if (resultContext?.errored || resultContext?.failed) {
+                    this.recordSocketClientError(
+                      fetchId,
+                      serviceName,
+                      URL,
+                      resultContext?.__error ??
+                        resultContext?.error ??
+                        "Socket delegation failed",
+                    );
+                  }
 
                   // if (resultContext.errored) {
                   //   errorCount++;
@@ -699,6 +1019,10 @@ export default class SocketController {
           `Shutdown SocketClient ${URL}`,
           (ctx, emit) => {
             handshake = false;
+            socketDiagnostics.connected = false;
+            socketDiagnostics.handshake = false;
+            socketDiagnostics.destroyed = true;
+            socketDiagnostics.updatedAt = Date.now();
             Cadenza.log("Shutting down socket client", { URL, serviceName });
             socket?.close();
             handshakeTask?.destroy();
@@ -730,12 +1054,14 @@ export default class SocketController {
             }
 
             pendingDelegationIds.clear();
+            syncPendingCounts();
 
             for (const timer of pendingTimers) {
               clearTimeout(timer);
             }
 
             pendingTimers.clear();
+            syncPendingCounts();
           },
           "Shuts down the socket client",
         )

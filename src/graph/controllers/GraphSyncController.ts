@@ -2,6 +2,7 @@ import Cadenza from "../../Cadenza";
 import { Task } from "@cadenza.io/core";
 import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 import { DeputyTask } from "../../index";
+import { isMetaIntentName } from "../../utils/inquiry";
 
 export default class GraphSyncController {
   private static _instance: GraphSyncController;
@@ -13,6 +14,7 @@ export default class GraphSyncController {
   splitSignalsTask: Task | undefined;
   splitTasksForRegistration: Task | undefined;
   registerSignalToTaskMapTask: Task | undefined;
+  registerIntentToTaskMapTask: Task | undefined;
   registerTaskMapTask: Task | undefined;
   registerDeputyRelationshipTask: Task | undefined;
   splitRoutinesTask: Task | undefined;
@@ -371,6 +373,87 @@ export default class GraphSyncController {
       )?.then(registerSignalTask),
     );
 
+    const registerIntentTask = Cadenza.createMetaTask(
+      "Record intent registration",
+      (ctx) => {
+        if (!ctx.__syncing) {
+          return;
+        }
+
+        Cadenza.debounce("meta.sync_controller.synced_resource", {
+          delayMs: 3000,
+        });
+
+        const task = Cadenza.get(ctx.__taskName) as any;
+        task.__registeredIntents = task.__registeredIntents ?? new Set<string>();
+        task.__registeredIntents.add(ctx.__intent);
+      },
+    );
+
+    this.registerIntentToTaskMapTask = Cadenza.createMetaTask(
+      "Split intents of task",
+      function* (ctx) {
+        const task = ctx.task as any;
+        if (task.hidden || !task.register) return;
+
+        task.__registeredIntents = task.__registeredIntents ?? new Set<string>();
+        task.__invalidMetaIntentWarnings =
+          task.__invalidMetaIntentWarnings ?? new Set<string>();
+
+        for (const intent of task.handlesIntents as Set<string>) {
+          if (task.__registeredIntents.has(intent)) continue;
+
+          if (isMetaIntentName(intent) && !task.isMeta) {
+            if (!task.__invalidMetaIntentWarnings.has(intent)) {
+              task.__invalidMetaIntentWarnings.add(intent);
+              Cadenza.log(
+                "Skipping intent-to-task registration: non-meta task cannot handle meta intent.",
+                {
+                  intent,
+                  taskName: task.name,
+                  taskVersion: task.version,
+                },
+                "warning",
+              );
+            }
+            continue;
+          }
+
+          yield {
+            data: {
+              intentName: intent,
+              taskName: task.name,
+              taskVersion: task.version,
+              serviceName: Cadenza.serviceRegistry.serviceName,
+            },
+            __taskName: task.name,
+            __intent: intent,
+          };
+        }
+      },
+    ).then(
+      (this.isCadenzaDBReady
+        ? Cadenza.createCadenzaDBInsertTask(
+            "intent_to_task_map",
+            {
+              onConflict: {
+                target: [
+                  "intent_name",
+                  "task_name",
+                  "task_version",
+                  "service_name",
+                ],
+                action: {
+                  do: "nothing",
+                },
+              },
+            },
+            { concurrency: 30 },
+          )
+        : Cadenza.get("dbInsertIntentToTaskMap")
+      )?.then(registerIntentTask),
+    );
+
     this.registerTaskMapTask = Cadenza.createMetaTask(
       "Register task map to DB",
       function* (ctx) {
@@ -525,6 +608,7 @@ export default class GraphSyncController {
       .then(
         this.registerTaskMapTask,
         this.registerSignalToTaskMapTask,
+        this.registerIntentToTaskMapTask,
         this.registerDeputyRelationshipTask,
       );
 

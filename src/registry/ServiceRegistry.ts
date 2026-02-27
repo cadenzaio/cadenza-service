@@ -2,6 +2,11 @@ import { GraphRoutine, Task } from "@cadenza.io/core";
 import type { AnyObject } from "@cadenza.io/core";
 import Cadenza from "../Cadenza";
 import { isBrowser } from "../utils/environment";
+import { InquiryResponderDescriptor } from "../types/inquiry";
+import {
+  isMetaIntentName,
+  META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT,
+} from "../utils/inquiry";
 
 export interface ServiceInstanceDescriptor {
   uuid: string;
@@ -27,6 +32,16 @@ export interface DeputyDescriptor {
   communicationType: string;
 }
 
+interface RemoteIntentDeputyDescriptor {
+  key: string;
+  intentName: string;
+  serviceName: string;
+  remoteTaskName: string;
+  remoteTaskVersion: number;
+  localTaskName: string;
+  localTask: Task;
+}
+
 /**
  * The ServiceRegistry class is a singleton that manages the registration and lifecycle of
  * service instances, deputies, and remote signals in a distributed service architecture.
@@ -43,6 +58,11 @@ export default class ServiceRegistry {
   private instances: Map<string, ServiceInstanceDescriptor[]> = new Map();
   private deputies: Map<string, DeputyDescriptor[]> = new Map();
   private remoteSignals: Map<string, Set<string>> = new Map();
+  private remoteIntents: Map<string, Set<string>> = new Map();
+  private remoteIntentDeputiesByKey: Map<string, RemoteIntentDeputyDescriptor> =
+    new Map();
+  private remoteIntentDeputiesByTask: Map<Task, RemoteIntentDeputyDescriptor> =
+    new Map();
   serviceName: string | null = null;
   serviceInstanceId: string | null = null;
   numberOfRunningGraphs: number = 0;
@@ -51,6 +71,7 @@ export default class ServiceRegistry {
 
   handleInstanceUpdateTask: Task;
   handleGlobalSignalRegistrationTask: Task;
+  handleGlobalIntentRegistrationTask: Task;
   handleSocketStatusUpdateTask: Task;
   fullSyncTask: GraphRoutine;
   getAllInstances: Task;
@@ -65,6 +86,171 @@ export default class ServiceRegistry {
   insertServiceInstanceTask: Task;
   handleServiceNotRespondingTask: Task;
   handleServiceHandshakeTask: Task;
+  collectTransportDiagnosticsTask: Task;
+
+  private buildRemoteIntentDeputyKey(map: {
+    intentName: string;
+    serviceName: string;
+    taskName: string;
+    taskVersion?: number;
+  }): string {
+    return `${map.intentName}|${map.serviceName}|${map.taskName}|${map.taskVersion ?? 1}`;
+  }
+
+  private normalizeIntentMaps(ctx: AnyObject): Array<{
+    intentName: string;
+    serviceName: string;
+    taskName: string;
+    taskVersion: number;
+    deleted?: boolean;
+  }> {
+    if (Array.isArray((ctx as any).intentToTaskMaps)) {
+      return (ctx as any).intentToTaskMaps
+        .map((m: any) => ({
+          intentName: m.intentName ?? m.intent_name,
+          serviceName: m.serviceName ?? m.service_name,
+          taskName: m.taskName ?? m.task_name,
+          taskVersion: m.taskVersion ?? m.task_version ?? 1,
+          deleted: !!m.deleted,
+        }))
+        .filter((m: any) => m.intentName && m.serviceName && m.taskName);
+    }
+
+    const single =
+      (ctx as any).intentToTaskMap ??
+      (ctx as any).data ??
+      ((ctx as any).intentName ? ctx : undefined);
+
+    if (!single) return [];
+
+    const normalized = {
+      intentName: single.intentName ?? single.intent_name,
+      serviceName: single.serviceName ?? single.service_name,
+      taskName: single.taskName ?? single.task_name,
+      taskVersion: single.taskVersion ?? single.task_version ?? 1,
+      deleted: !!single.deleted,
+    };
+
+    if (!normalized.intentName || !normalized.serviceName || !normalized.taskName)
+      return [];
+
+    return [normalized];
+  }
+
+  private registerRemoteIntentDeputy(map: {
+    intentName: string;
+    serviceName: string;
+    taskName: string;
+    taskVersion: number;
+  }) {
+    if (!this.serviceName || map.serviceName === this.serviceName) {
+      return;
+    }
+
+    const key = this.buildRemoteIntentDeputyKey(map);
+    if (this.remoteIntentDeputiesByKey.has(key)) {
+      return;
+    }
+
+    const deputyTaskName = `Inquire ${map.intentName} via ${map.serviceName} (${map.taskName} v${map.taskVersion})`;
+
+    const deputyTask = isMetaIntentName(map.intentName)
+      ? Cadenza.createMetaDeputyTask(map.taskName, map.serviceName, {
+          register: false,
+          isHidden: true,
+          retryCount: 1,
+          retryDelay: 50,
+          retryDelayFactor: 1.2,
+        })
+      : Cadenza.createDeputyTask(map.taskName, map.serviceName, {
+          register: false,
+          isHidden: true,
+          retryCount: 1,
+          retryDelay: 50,
+          retryDelayFactor: 1.2,
+        });
+
+    deputyTask.respondsTo(map.intentName);
+
+    if (!this.remoteIntents.has(map.serviceName)) {
+      this.remoteIntents.set(map.serviceName, new Set());
+    }
+    this.remoteIntents.get(map.serviceName)!.add(map.intentName);
+
+    const descriptor: RemoteIntentDeputyDescriptor = {
+      key,
+      intentName: map.intentName,
+      serviceName: map.serviceName,
+      remoteTaskName: map.taskName,
+      remoteTaskVersion: map.taskVersion,
+      localTaskName: deputyTask.name || deputyTaskName,
+      localTask: deputyTask,
+    };
+
+    this.remoteIntentDeputiesByKey.set(key, descriptor);
+    this.remoteIntentDeputiesByTask.set(deputyTask, descriptor);
+  }
+
+  private unregisterRemoteIntentDeputy(map: {
+    intentName: string;
+    serviceName: string;
+    taskName: string;
+    taskVersion?: number;
+  }) {
+    const key = this.buildRemoteIntentDeputyKey(map);
+    const descriptor = this.remoteIntentDeputiesByKey.get(key);
+    if (!descriptor) {
+      return;
+    }
+
+    const task = descriptor.localTask;
+    if (task) {
+      Cadenza.inquiryBroker.unsubscribe(descriptor.intentName, task);
+      task.destroy();
+    }
+
+    this.remoteIntentDeputiesByTask.delete(descriptor.localTask);
+    this.remoteIntentDeputiesByKey.delete(key);
+
+    this.remoteIntents.get(descriptor.serviceName)?.delete(descriptor.intentName);
+    if (!this.remoteIntents.get(descriptor.serviceName)?.size) {
+      this.remoteIntents.delete(descriptor.serviceName);
+    }
+
+    const deputies = this.deputies.get(descriptor.serviceName);
+    if (deputies) {
+      this.deputies.set(
+        descriptor.serviceName,
+        deputies.filter((d) => d.localTaskName !== descriptor.localTaskName),
+      );
+
+      if (this.deputies.get(descriptor.serviceName)?.length === 0) {
+        this.deputies.delete(descriptor.serviceName);
+      }
+    }
+  }
+
+  public getInquiryResponderDescriptor(task: Task): InquiryResponderDescriptor {
+    const remote = this.remoteIntentDeputiesByTask.get(task);
+
+    if (remote) {
+      return {
+        isRemote: true,
+        serviceName: remote.serviceName,
+        taskName: remote.remoteTaskName,
+        taskVersion: remote.remoteTaskVersion,
+        localTaskName: remote.localTaskName,
+      };
+    }
+
+    return {
+      isRemote: false,
+      serviceName: this.serviceName ?? "UnknownService",
+      taskName: task.name,
+      taskVersion: task.version,
+      localTaskName: task.name,
+    };
+  }
 
   /**
    * Initializes a private constructor for managing service instances, remote signals,
@@ -76,6 +262,41 @@ export default class ServiceRegistry {
    *                  and state management necessary to process service-related events.
    */
   private constructor() {
+    Cadenza.defineIntent({
+      name: META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT,
+      description:
+        "Gather transport diagnostics across all services and communication clients.",
+      input: {
+        type: "object",
+        properties: {
+          detailLevel: {
+            type: "string",
+            constraints: {
+              oneOf: ["summary", "full"],
+            },
+          },
+          includeErrorHistory: {
+            type: "boolean",
+          },
+          errorHistoryLimit: {
+            type: "number",
+            constraints: {
+              min: 1,
+              max: 200,
+            },
+          },
+        },
+      },
+      output: {
+        type: "object",
+        properties: {
+          transportDiagnostics: {
+            type: "object",
+          },
+        },
+      },
+    });
+
     this.handleInstanceUpdateTask = Cadenza.createMetaTask(
       "Handle Instance Update",
       (ctx, emit) => {
@@ -130,7 +351,9 @@ export default class ServiceRegistry {
         }
 
         if (
-          (!isFrontend && this.deputies.has(serviceName)) ||
+          (!isFrontend &&
+            (this.deputies.has(serviceName) ||
+              this.remoteIntents.has(serviceName))) ||
           this.remoteSignals.has(serviceName)
         ) {
           const clientCreated = instances?.some(
@@ -207,7 +430,10 @@ export default class ServiceRegistry {
         yield { serviceInstance };
       }
     })
-      .doOn("meta.service_registry.registered_global_signals")
+      .doOn(
+        "meta.service_registry.registered_global_signals",
+        "meta.service_registry.registered_global_intents",
+      )
       .then(this.handleInstanceUpdateTask);
 
     this.handleGlobalSignalRegistrationTask = Cadenza.createMetaTask(
@@ -262,6 +488,39 @@ export default class ServiceRegistry {
     )
       .emits("meta.service_registry.registered_global_signals")
       .doOn("global.meta.cadenza_db.gathered_sync_data");
+
+    this.handleGlobalIntentRegistrationTask = Cadenza.createMetaTask(
+      "Handle global intent registration",
+      (ctx) => {
+        const intentToTaskMaps = this.normalizeIntentMaps(ctx);
+        const sorted = intentToTaskMaps.sort((a, b) => {
+          if (a.deleted && !b.deleted) return -1;
+          if (!a.deleted && b.deleted) return 1;
+          return 0;
+        });
+
+        for (const map of sorted) {
+          if (map.deleted) {
+            this.unregisterRemoteIntentDeputy(map);
+            continue;
+          }
+
+          Cadenza.inquiryBroker.addIntent({
+            name: map.intentName,
+          });
+
+          this.registerRemoteIntentDeputy(map);
+        }
+
+        return true;
+      },
+      "Handles registration of remote inquiry intent responders",
+    )
+      .emits("meta.service_registry.registered_global_intents")
+      .doOn(
+        "global.meta.cadenza_db.gathered_sync_data",
+        "global.meta.graph_metadata.task_intent_associated",
+      );
 
     this.handleServiceNotRespondingTask = Cadenza.createMetaTask(
       "Handle service not responding",
@@ -397,7 +656,10 @@ export default class ServiceRegistry {
       },
     )
       .emits("meta.service_registry.initial_sync_complete")
-      .then(this.handleGlobalSignalRegistrationTask);
+      .then(
+        this.handleGlobalSignalRegistrationTask,
+        this.handleGlobalIntentRegistrationTask,
+      );
 
     this.fullSyncTask = Cadenza.createMetaRoutine("Full sync", [
       Cadenza.createCadenzaDBQueryTask("signal_to_task_map", {
@@ -405,6 +667,15 @@ export default class ServiceRegistry {
           isGlobal: true,
         },
         fields: ["signal_name", "service_name", "deleted"],
+      }).then(mergeSyncDataTask),
+      Cadenza.createCadenzaDBQueryTask("intent_to_task_map", {
+        fields: [
+          "intent_name",
+          "task_name",
+          "task_version",
+          "service_name",
+          "deleted",
+        ],
       }).then(mergeSyncDataTask),
       Cadenza.createCadenzaDBQueryTask("service_instance", {
         filter: {
@@ -632,6 +903,30 @@ export default class ServiceRegistry {
         __active: self?.isActive ?? false,
       };
     }).doOn("meta.socket.status_check_requested");
+
+    this.collectTransportDiagnosticsTask = Cadenza.createMetaTask(
+      "Collect transport diagnostics",
+      async (ctx) => {
+        const inquiryResult = await Cadenza.inquire(
+          META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT,
+          {
+            detailLevel: ctx.detailLevel,
+            includeErrorHistory: ctx.includeErrorHistory,
+            errorHistoryLimit: ctx.errorHistoryLimit,
+          },
+          ctx.inquiryOptions ?? ctx.__inquiryOptions ?? {},
+        );
+
+        return {
+          ...ctx,
+          ...inquiryResult,
+        };
+      },
+      "Collects distributed transport diagnostics using inquiry responders.",
+    )
+      .doOn("meta.service_registry.transport_diagnostics_requested")
+      .emits("meta.service_registry.transport_diagnostics_collected")
+      .emitsOnFail("meta.service_registry.transport_diagnostics_failed");
 
     this.insertServiceTask = Cadenza.createCadenzaDBInsertTask(
       "service",
@@ -862,5 +1157,10 @@ export default class ServiceRegistry {
 
   reset() {
     this.instances.clear();
+    this.deputies.clear();
+    this.remoteSignals.clear();
+    this.remoteIntents.clear();
+    this.remoteIntentDeputiesByKey.clear();
+    this.remoteIntentDeputiesByTask.clear();
   }
 }

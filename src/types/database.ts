@@ -1,4 +1,4 @@
-import type { AnyObject } from "@cadenza.io/core";
+import type { AnyObject, SchemaDefinition } from "@cadenza.io/core";
 import { DbOperationPayload } from "./queryData";
 
 export type SchemaType =
@@ -117,6 +117,16 @@ export interface TableDefinition {
         | { signal: string; condition?: (ctx: AnyObject) => boolean }
       )[];
     }; // Signals to emit after action
+  };
+  customIntents?: {
+    query?: (
+      | string
+      | {
+          intent: string;
+          description?: string;
+          input?: SchemaDefinition;
+        }
+    )[];
   };
   initialData?: { fields: string[]; data: any[][] };
 }

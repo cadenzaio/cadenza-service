@@ -10,7 +10,6 @@ import Cadenza, {
   GraphRoutine,
   GraphRunner,
   InquiryBroker,
-  InquiryOptions,
   Intent,
   SignalBroker,
   Task,
@@ -34,6 +33,19 @@ import { v4 as uuid } from "uuid";
 import GraphSyncController from "./graph/controllers/GraphSyncController";
 import { isBrowser } from "./utils/environment";
 import { formatTimestamp } from "./utils/tools";
+import {
+  DistributedInquiryMeta,
+  DistributedInquiryOptions,
+  InquiryResponderDescriptor,
+  InquiryResponderStatus,
+} from "./types/inquiry";
+import {
+  compareResponderDescriptors,
+  isMetaIntentName,
+  mergeInquiryContexts,
+  shouldExecuteInquiryResponder,
+  summarizeResponderStatuses,
+} from "./utils/inquiry";
 
 export type SecurityProfile = "low" | "medium" | "high";
 export type NetworkMode =
@@ -79,6 +91,7 @@ export default class CadenzaService {
   public static serviceRegistry: ServiceRegistry;
   protected static isBootstrapped = false;
   protected static serviceCreated = false;
+  protected static warnedInvalidMetaIntentResponderKeys: Set<string> = new Set();
 
   /**
    * Initializes the application by setting up necessary components and configurations.
@@ -212,16 +225,251 @@ export default class CadenzaService {
   }
 
   public static defineIntent(intent: Intent): Intent {
-    this.inquiryBroker?.intents.set(intent.name, intent);
+    this.inquiryBroker?.addIntent(intent);
     return intent;
+  }
+
+  private static getInquiryResponderDescriptor(task: Task): InquiryResponderDescriptor {
+    return this.serviceRegistry.getInquiryResponderDescriptor(task);
+  }
+
+  private static compareInquiryResponders(
+    left: { task: Task; descriptor: InquiryResponderDescriptor },
+    right: { task: Task; descriptor: InquiryResponderDescriptor },
+  ) {
+    return compareResponderDescriptors(left.descriptor, right.descriptor);
+  }
+
+  private static buildInquirySummary(
+    inquiry: string,
+    startedAt: number,
+    statuses: InquiryResponderStatus[],
+    totalResponders: number,
+  ): DistributedInquiryMeta {
+    const counts = summarizeResponderStatuses(statuses);
+    const isMetaInquiry = isMetaIntentName(inquiry);
+    const eligibleResponders = statuses.length;
+    return {
+      inquiry,
+      isMetaInquiry,
+      totalResponders,
+      eligibleResponders,
+      filteredOutResponders: Math.max(0, totalResponders - eligibleResponders),
+      responded: counts.responded,
+      failed: counts.failed,
+      timedOut: counts.timedOut,
+      pending: counts.pending,
+      durationMs: Date.now() - startedAt,
+      responders: statuses,
+    };
   }
 
   public static async inquire(
     inquiry: string,
     context: AnyObject,
-    options?: InquiryOptions,
+    options: DistributedInquiryOptions = {},
   ): Promise<AnyObject> {
-    return this.inquiryBroker?.inquire(inquiry, context, options);
+    this.bootstrap();
+
+    const observer = this.inquiryBroker?.inquiryObservers.get(inquiry);
+    const allResponders = observer
+      ? Array.from(observer.tasks).map((task) => ({
+          task,
+          descriptor: this.getInquiryResponderDescriptor(task),
+        }))
+      : [];
+    const isMetaInquiry = isMetaIntentName(inquiry);
+    const responders = allResponders.filter(({ task, descriptor }) => {
+      const shouldExecute = shouldExecuteInquiryResponder(inquiry, task.isMeta);
+
+      if (shouldExecute) {
+        return true;
+      }
+
+      const warningKey = `${inquiry}|${descriptor.serviceName}|${descriptor.taskName}|${descriptor.taskVersion}|${descriptor.localTaskName}`;
+      if (!this.warnedInvalidMetaIntentResponderKeys.has(warningKey)) {
+        this.warnedInvalidMetaIntentResponderKeys.add(warningKey);
+        this.log(
+          "Skipping non-meta task for meta intent inquiry.",
+          {
+            inquiry,
+            responder: descriptor,
+          },
+          "warning",
+          descriptor.serviceName,
+        );
+      }
+
+      return false;
+    });
+
+    if (responders.length === 0) {
+      return {
+        __inquiryMeta: {
+          inquiry,
+          isMetaInquiry,
+          totalResponders: allResponders.length,
+          eligibleResponders: 0,
+          filteredOutResponders: allResponders.length,
+          responded: 0,
+          failed: 0,
+          timedOut: 0,
+          pending: 0,
+          durationMs: 0,
+          responders: [],
+        } as DistributedInquiryMeta,
+      };
+    }
+
+    responders.sort(this.compareInquiryResponders.bind(this));
+
+    const overallTimeoutMs = options.overallTimeoutMs ?? options.timeout ?? 0;
+    const requireComplete = options.requireComplete ?? false;
+    const perResponderTimeoutMs = options.perResponderTimeoutMs;
+
+    const startedAt = Date.now();
+    const statuses: InquiryResponderStatus[] = [];
+    const statusByTask = new Map<Task, InquiryResponderStatus>();
+    for (const responder of responders) {
+      const status: InquiryResponderStatus = {
+        ...responder.descriptor,
+        status: "timed_out",
+        durationMs: 0,
+      };
+      statuses.push(status);
+      statusByTask.set(responder.task, status);
+    }
+
+    const resultsByTask = new Map<Task, AnyObject>();
+    const resolverTasks: Task[] = [];
+    const pending = new Set(responders.map((r) => r.task));
+    const startTimeByTask = new Map<Task, number>();
+
+    this.emit("meta.inquiry_broker.inquire", { inquiry, context });
+
+    return new Promise((resolve, reject) => {
+      let finalized = false;
+      let timeoutId: NodeJS.Timeout | undefined;
+
+      const finalize = (timedOut: boolean) => {
+        if (finalized) return;
+        finalized = true;
+
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = undefined;
+        }
+
+        for (const resolverTask of resolverTasks) {
+          resolverTask.destroy();
+        }
+
+        if (timedOut && pending.size > 0) {
+          for (const task of pending) {
+            const status = statusByTask.get(task);
+            if (!status) continue;
+            status.status = "timed_out";
+            status.durationMs = Date.now() - (startTimeByTask.get(task) ?? startedAt);
+          }
+        }
+
+        const fulfilledContexts = responders
+          .filter((responder) => resultsByTask.has(responder.task))
+          .map((responder) => resultsByTask.get(responder.task)!);
+
+        const mergedContext = mergeInquiryContexts(fulfilledContexts);
+        const inquiryMeta = this.buildInquirySummary(
+          inquiry,
+          startedAt,
+          statuses,
+          allResponders.length,
+        );
+        const responseContext = {
+          ...mergedContext,
+          __inquiryMeta: inquiryMeta,
+        };
+
+        if (
+          requireComplete &&
+          (timedOut ||
+            inquiryMeta.failed > 0 ||
+            inquiryMeta.timedOut > 0 ||
+            inquiryMeta.pending > 0)
+        ) {
+          reject({
+            ...responseContext,
+            __error: `Inquiry '${inquiry}' did not complete successfully`,
+            errored: true,
+          });
+          return;
+        }
+
+        resolve(responseContext);
+      };
+
+      if (overallTimeoutMs > 0) {
+        timeoutId = setTimeout(() => finalize(true), overallTimeoutMs);
+      }
+
+      for (const responder of responders) {
+        const { task, descriptor } = responder;
+        const inquiryId = uuid();
+        startTimeByTask.set(task, Date.now());
+
+        const resolverTask = this.createEphemeralMetaTask(
+          `Resolve inquiry ${inquiry} for ${descriptor.localTaskName}`,
+          (resultCtx) => {
+            if (finalized) {
+              return;
+            }
+
+            pending.delete(task);
+
+            const status = statusByTask.get(task);
+
+            if (status) {
+              status.durationMs =
+                Date.now() -
+                (startTimeByTask.get(task) ?? startedAt);
+
+              if (resultCtx?.errored || resultCtx?.failed) {
+                status.status = "failed";
+                status.error = String(
+                  resultCtx?.__error ?? resultCtx?.error ?? "Inquiry responder failed",
+                );
+              } else {
+                status.status = "fulfilled";
+                resultsByTask.set(task, resultCtx);
+              }
+            }
+
+            if (pending.size === 0) {
+              finalize(false);
+            }
+          },
+          "Resolves distributed inquiry responder result",
+          { register: false },
+        ).doOn(`meta.node.graph_completed:${inquiryId}`);
+
+        resolverTasks.push(resolverTask);
+
+        const executionContext: AnyObject = {
+          ...context,
+          __routineExecId: inquiryId,
+          __isInquiry: true,
+        };
+
+        if (perResponderTimeoutMs !== undefined) {
+          executionContext.__timeout = perResponderTimeoutMs;
+        }
+
+        if (task.isMeta) {
+          this.metaRunner?.run(task, executionContext);
+        } else {
+          this.runner?.run(task, executionContext);
+        }
+      }
+    });
   }
 
   /**

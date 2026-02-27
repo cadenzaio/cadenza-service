@@ -38,6 +38,12 @@ import {
   SubOperationType,
   ValueOrSubOp,
 } from "./types/queryData";
+import type {
+  DistributedInquiryMeta,
+  DistributedInquiryOptions,
+  InquiryResponderDescriptor,
+  InquiryResponderStatus,
+} from "./types/inquiry";
 
 export default CadenzaService;
 export type {
@@ -54,6 +60,10 @@ export type {
   SecurityProfile,
   NetworkMode,
   ServerOptions,
+  DistributedInquiryOptions,
+  DistributedInquiryMeta,
+  InquiryResponderDescriptor,
+  InquiryResponderStatus,
   AnyObject,
   TaskOptions,
   ThrottleTagGetter,
