@@ -1,3 +1,10 @@
+# [2.5.0](https://github.com/cadenzaio/cadenza-service/compare/v2.4.0...v2.5.0) (2026-02-27)
+
+
+### Features
+
+* Added tests for database schema/intents and inquiry utilities, updated intent handling, and integrated transport diagnostics logic. ([e475d8b](https://github.com/cadenzaio/cadenza-service/commit/e475d8bdd27a60d546e9a33643048c11473befae))
+
 # [2.4.0](https://github.com/cadenzaio/cadenza-service/compare/v2.3.17...v2.4.0) (2026-02-25)
 
 
