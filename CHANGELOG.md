@@ -1,3 +1,10 @@
+## [2.6.1](https://github.com/cadenzaio/cadenza-service/compare/v2.6.0...v2.6.1) (2026-02-27)
+
+
+### Bug Fixes
+
+* Fixed database query schema being too strict. ([b36c8bc](https://github.com/cadenzaio/cadenza-service/commit/b36c8bc15763a8c2052331264ac62505c82c3499))
+
 # [2.6.0](https://github.com/cadenzaio/cadenza-service/compare/v2.5.0...v2.6.0) (2026-02-27)
 
 
