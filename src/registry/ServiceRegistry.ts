@@ -5,9 +5,17 @@ import { isBrowser } from "../utils/environment";
 import { InquiryResponderDescriptor } from "../types/inquiry";
 import {
   isMetaIntentName,
+  META_READINESS_INTENT,
   META_RUNTIME_STATUS_INTENT,
   META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT,
 } from "../utils/inquiry";
+import {
+  evaluateDependencyReadiness,
+  resolveServiceReadinessState,
+  summarizeDependencyReadiness,
+  type DependencyReadinessState,
+  type ReadinessState,
+} from "../utils/readiness";
 import {
   hasSignificantRuntimeStatusChange,
   resolveRuntimeStatus,
@@ -30,6 +38,8 @@ const INTERNAL_RUNTIME_STATUS_TASK_NAMES = new Set([
   "Monitor dependee heartbeat freshness",
   "Resolve runtime status fallback inquiry",
   "Respond runtime status inquiry",
+  "Respond readiness inquiry",
+  "Collect distributed readiness",
   "Get status",
 ]);
 
@@ -106,6 +116,45 @@ interface RuntimeStatusReport {
   health?: AnyObject;
 }
 
+interface DependencyReadinessDetail {
+  serviceName: string;
+  serviceInstanceId: string;
+  dependencyState: DependencyReadinessState;
+  runtimeState: RuntimeStatusState;
+  acceptingWork: boolean;
+  missedHeartbeats: number;
+  stale: boolean;
+  blocked: boolean;
+  reason:
+    | "missing"
+    | "heartbeat-timeout"
+    | "heartbeat-stale"
+    | "runtime-unavailable"
+    | "runtime-overloaded"
+    | "runtime-degraded"
+    | "runtime-healthy";
+  lastHeartbeatAt: string | null;
+  reportedAt: string | null;
+}
+
+interface ReadinessReport {
+  serviceName: string;
+  serviceInstanceId: string;
+  reportedAt: string;
+  readinessState: ReadinessState;
+  runtimeState: RuntimeStatusState;
+  acceptingWork: boolean;
+  dependencySummary: {
+    total: number;
+    ready: number;
+    degraded: number;
+    overloaded: number;
+    unavailable: number;
+    stale: number;
+  };
+  dependencies?: DependencyReadinessDetail[];
+}
+
 /**
  * The ServiceRegistry class is a singleton that manages the registration and lifecycle of
  * service instances, deputies, and remote signals in a distributed service architecture.
@@ -129,6 +178,8 @@ export default class ServiceRegistry {
     new Map();
   private dependeesByService: Map<string, Set<string>> = new Map();
   private dependeeByInstance: Map<string, string> = new Map();
+  private readinessDependeesByService: Map<string, Set<string>> = new Map();
+  private readinessDependeeByInstance: Map<string, string> = new Map();
   private lastHeartbeatAtByInstance: Map<string, number> = new Map();
   private missedHeartbeatsByInstance: Map<string, number> = new Map();
   private runtimeStatusFallbackInFlightByInstance: Set<string> = new Set();
@@ -179,6 +230,7 @@ export default class ServiceRegistry {
   handleServiceNotRespondingTask: Task;
   handleServiceHandshakeTask: Task;
   collectTransportDiagnosticsTask: Task;
+  collectReadinessTask: Task;
 
   private buildRemoteIntentDeputyKey(map: {
     intentName: string;
@@ -358,7 +410,13 @@ export default class ServiceRegistry {
     return this.getInstance(this.serviceName, this.serviceInstanceId);
   }
 
-  private registerDependee(serviceName: string, serviceInstanceId: string) {
+  private registerDependee(
+    serviceName: string,
+    serviceInstanceId: string,
+    options: {
+      requiredForReadiness?: boolean;
+    } = {},
+  ) {
     if (!serviceName || !serviceInstanceId) {
       return;
     }
@@ -369,6 +427,15 @@ export default class ServiceRegistry {
 
     this.dependeesByService.get(serviceName)!.add(serviceInstanceId);
     this.dependeeByInstance.set(serviceInstanceId, serviceName);
+
+    if (options.requiredForReadiness) {
+      if (!this.readinessDependeesByService.has(serviceName)) {
+        this.readinessDependeesByService.set(serviceName, new Set());
+      }
+      this.readinessDependeesByService.get(serviceName)!.add(serviceInstanceId);
+      this.readinessDependeeByInstance.set(serviceInstanceId, serviceName);
+    }
+
     this.lastHeartbeatAtByInstance.set(serviceInstanceId, Date.now());
     this.missedHeartbeatsByInstance.set(serviceInstanceId, 0);
   }
@@ -384,9 +451,49 @@ export default class ServiceRegistry {
     }
 
     this.dependeeByInstance.delete(serviceInstanceId);
+    const readinessDependeeServiceName =
+      serviceName ?? this.readinessDependeeByInstance.get(serviceInstanceId);
+    if (readinessDependeeServiceName) {
+      this.readinessDependeesByService
+        .get(readinessDependeeServiceName)
+        ?.delete(serviceInstanceId);
+      if (!this.readinessDependeesByService.get(readinessDependeeServiceName)?.size) {
+        this.readinessDependeesByService.delete(readinessDependeeServiceName);
+      }
+    }
+
+    this.readinessDependeeByInstance.delete(serviceInstanceId);
     this.lastHeartbeatAtByInstance.delete(serviceInstanceId);
     this.missedHeartbeatsByInstance.delete(serviceInstanceId);
     this.runtimeStatusFallbackInFlightByInstance.delete(serviceInstanceId);
+  }
+
+  private getHeartbeatMisses(serviceInstanceId: string, now = Date.now()): number {
+    const observedMisses = this.missedHeartbeatsByInstance.get(serviceInstanceId) ?? 0;
+    const lastHeartbeatAt = this.lastHeartbeatAtByInstance.get(serviceInstanceId) ?? 0;
+    if (lastHeartbeatAt <= 0) {
+      return Math.max(observedMisses, this.runtimeStatusMissThreshold);
+    }
+
+    const estimatedMisses = Math.max(
+      0,
+      Math.floor((now - lastHeartbeatAt) / this.runtimeStatusHeartbeatIntervalMs),
+    );
+
+    return Math.max(observedMisses, estimatedMisses);
+  }
+
+  private shouldRequireReadinessFromCommunicationTypes(
+    communicationTypes: unknown,
+  ): boolean {
+    if (!Array.isArray(communicationTypes)) {
+      return false;
+    }
+
+    return communicationTypes.some((type) => {
+      const normalized = String(type).toLowerCase();
+      return normalized === "delegation" || normalized === "inquiry";
+    });
   }
 
   private resolveRuntimeStatusSnapshot(
@@ -599,6 +706,218 @@ export default class ServiceRegistry {
     return null;
   }
 
+  private async resolveRuntimeStatusFallbackInquiry(
+    serviceName: string,
+    serviceInstanceId: string,
+    options: {
+      detailLevel?: "minimal" | "full";
+      overallTimeoutMs?: number;
+      perResponderTimeoutMs?: number;
+      requireComplete?: boolean;
+    } = {},
+  ): Promise<{ report: RuntimeStatusReport; inquiryMeta: AnyObject }> {
+    const inquiryResult = await Cadenza.inquire(
+      META_RUNTIME_STATUS_INTENT,
+      {
+        targetServiceName: serviceName,
+        targetServiceInstanceId: serviceInstanceId,
+        detailLevel: options.detailLevel ?? "minimal",
+      },
+      {
+        overallTimeoutMs:
+          options.overallTimeoutMs ?? this.runtimeStatusFallbackTimeoutMs,
+        perResponderTimeoutMs:
+          options.perResponderTimeoutMs ??
+          Math.max(250, Math.floor(this.runtimeStatusFallbackTimeoutMs * 0.75)),
+        requireComplete: options.requireComplete ?? false,
+      },
+    );
+
+    const report = this.selectRuntimeStatusReportForTarget(
+      inquiryResult,
+      serviceName,
+      serviceInstanceId,
+    );
+
+    if (!report) {
+      throw new Error(
+        `No runtime status report for ${serviceName}/${serviceInstanceId}`,
+      );
+    }
+
+    if (!this.applyRuntimeStatusReport(report)) {
+      throw new Error(
+        `No tracked instance for runtime fallback ${serviceName}/${serviceInstanceId}`,
+      );
+    }
+
+    this.lastHeartbeatAtByInstance.set(serviceInstanceId, Date.now());
+    this.missedHeartbeatsByInstance.set(serviceInstanceId, 0);
+
+    return {
+      report,
+      inquiryMeta: inquiryResult.__inquiryMeta ?? {},
+    };
+  }
+
+  private evaluateDependencyReadinessDetail(
+    serviceName: string,
+    serviceInstanceId: string,
+    now = Date.now(),
+  ): DependencyReadinessDetail {
+    const instance = this.getInstance(serviceName, serviceInstanceId);
+    const missedHeartbeats = this.getHeartbeatMisses(serviceInstanceId, now);
+    const runtimeState = instance
+      ? (instance.runtimeState ??
+        this.resolveRuntimeStatusSnapshot(
+          instance.numberOfRunningGraphs ?? 0,
+          instance.isActive,
+          instance.isNonResponsive,
+          instance.isBlocked,
+        ).state)
+      : "unavailable";
+    const acceptingWork = instance
+      ? (typeof instance.acceptingWork === "boolean"
+        ? instance.acceptingWork
+        : this.resolveRuntimeStatusSnapshot(
+            instance.numberOfRunningGraphs ?? 0,
+            instance.isActive,
+            instance.isNonResponsive,
+            instance.isBlocked,
+          ).acceptingWork)
+      : false;
+
+    const evaluation = evaluateDependencyReadiness({
+      exists: Boolean(instance),
+      runtimeState,
+      acceptingWork,
+      missedHeartbeats,
+      missThreshold: this.runtimeStatusMissThreshold,
+    });
+
+    const lastHeartbeat = this.lastHeartbeatAtByInstance.get(serviceInstanceId);
+    return {
+      serviceName,
+      serviceInstanceId,
+      dependencyState: evaluation.state,
+      runtimeState,
+      acceptingWork,
+      missedHeartbeats,
+      stale: evaluation.stale,
+      blocked: evaluation.blocked,
+      reason: evaluation.reason,
+      lastHeartbeatAt: lastHeartbeat
+        ? new Date(lastHeartbeat).toISOString()
+        : null,
+      reportedAt: instance?.reportedAt ?? null,
+    };
+  }
+
+  private async buildLocalReadinessReport(
+    options: {
+      detailLevel?: "minimal" | "full";
+      includeDependencies?: boolean;
+      refreshStaleDependencies?: boolean;
+    } = {},
+  ): Promise<ReadinessReport | null> {
+    const localRuntime = this.buildLocalRuntimeStatusReport("minimal");
+    if (!localRuntime) {
+      return null;
+    }
+
+    const detailLevel = options.detailLevel ?? "minimal";
+    const includeDependencies =
+      options.includeDependencies ?? detailLevel === "full";
+    const refreshStaleDependencies = options.refreshStaleDependencies ?? true;
+    const dependencyPairs = Array.from(this.readinessDependeesByService.entries())
+      .flatMap(([serviceName, instanceIds]) =>
+        Array.from(instanceIds).map((serviceInstanceId) => ({
+          serviceName,
+          serviceInstanceId,
+        })),
+      )
+      .sort((left, right) => {
+        if (left.serviceName !== right.serviceName) {
+          return left.serviceName.localeCompare(right.serviceName);
+        }
+        return left.serviceInstanceId.localeCompare(right.serviceInstanceId);
+      });
+
+    if (refreshStaleDependencies) {
+      for (const dependency of dependencyPairs) {
+        const misses = this.getHeartbeatMisses(dependency.serviceInstanceId);
+        if (misses < this.runtimeStatusMissThreshold) {
+          continue;
+        }
+
+        if (
+          this.runtimeStatusFallbackInFlightByInstance.has(
+            dependency.serviceInstanceId,
+          )
+        ) {
+          continue;
+        }
+
+        this.runtimeStatusFallbackInFlightByInstance.add(
+          dependency.serviceInstanceId,
+        );
+        try {
+          await this.resolveRuntimeStatusFallbackInquiry(
+            dependency.serviceName,
+            dependency.serviceInstanceId,
+          );
+        } catch (error) {
+          Cadenza.log(
+            "Readiness dependency fallback failed.",
+            {
+              serviceName: dependency.serviceName,
+              serviceInstanceId: dependency.serviceInstanceId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            "warning",
+          );
+        } finally {
+          this.runtimeStatusFallbackInFlightByInstance.delete(
+            dependency.serviceInstanceId,
+          );
+        }
+      }
+    }
+
+    const now = Date.now();
+    const dependencyDetails = dependencyPairs.map((dependency) =>
+      this.evaluateDependencyReadinessDetail(
+        dependency.serviceName,
+        dependency.serviceInstanceId,
+        now,
+      ),
+    );
+    const dependencySummary = summarizeDependencyReadiness(
+      dependencyDetails.map((detail) => ({
+        state: detail.dependencyState,
+        stale: detail.stale,
+        blocked: detail.blocked,
+        reason: detail.reason,
+      })),
+    );
+    const readinessState = resolveServiceReadinessState(
+      localRuntime.state,
+      localRuntime.acceptingWork,
+      dependencySummary,
+    );
+
+    return {
+      serviceName: localRuntime.serviceName,
+      serviceInstanceId: localRuntime.serviceInstanceId,
+      reportedAt: new Date(now).toISOString(),
+      readinessState,
+      runtimeState: localRuntime.state,
+      acceptingWork: localRuntime.acceptingWork,
+      dependencySummary,
+      ...(includeDependencies ? { dependencies: dependencyDetails } : {}),
+    };
+  }
+
   /**
    * Initializes a private constructor for managing service instances, remote signals,
    * service health, and handling updates or synchronization tasks. The constructor
@@ -707,6 +1026,75 @@ export default class ServiceRegistry {
       },
       "Responds to runtime-status inquiries with local service instance status.",
     ).respondsTo(META_RUNTIME_STATUS_INTENT);
+
+    Cadenza.defineIntent({
+      name: META_READINESS_INTENT,
+      description:
+        "Gather service readiness reports derived from local runtime status and required dependees.",
+      input: {
+        type: "object",
+        properties: {
+          detailLevel: {
+            type: "string",
+            constraints: {
+              oneOf: ["minimal", "full"],
+            },
+          },
+          includeDependencies: {
+            type: "boolean",
+          },
+          refreshStaleDependencies: {
+            type: "boolean",
+          },
+          targetServiceName: {
+            type: "string",
+          },
+          targetServiceInstanceId: {
+            type: "string",
+          },
+        },
+      },
+      output: {
+        type: "object",
+        properties: {
+          readinessReports: {
+            type: "array",
+          },
+        },
+      },
+    });
+
+    Cadenza.createMetaTask(
+      "Respond readiness inquiry",
+      async (ctx) => {
+        const targetServiceName = ctx.targetServiceName;
+        const targetServiceInstanceId = ctx.targetServiceInstanceId;
+        const report = await this.buildLocalReadinessReport({
+          detailLevel: ctx.detailLevel === "full" ? "full" : "minimal",
+          includeDependencies: ctx.includeDependencies,
+          refreshStaleDependencies: ctx.refreshStaleDependencies,
+        });
+        if (!report) {
+          return {};
+        }
+
+        if (targetServiceName && targetServiceName !== report.serviceName) {
+          return {};
+        }
+
+        if (
+          targetServiceInstanceId &&
+          targetServiceInstanceId !== report.serviceInstanceId
+        ) {
+          return {};
+        }
+
+        return {
+          readinessReports: [report],
+        };
+      },
+      "Responds to distributed readiness inquiries using required dependee health.",
+    ).respondsTo(META_READINESS_INTENT);
 
     this.handleInstanceUpdateTask = Cadenza.createMetaTask(
       "Handle Instance Update",
@@ -881,7 +1269,11 @@ export default class ServiceRegistry {
           return false;
         }
 
-        this.registerDependee(ctx.serviceName, ctx.serviceInstanceId);
+        this.registerDependee(ctx.serviceName, ctx.serviceInstanceId, {
+          requiredForReadiness: this.shouldRequireReadinessFromCommunicationTypes(
+            ctx.communicationTypes,
+          ),
+        });
         return true;
       },
       "Tracks remote dependency instances for runtime heartbeat monitoring.",
@@ -1716,43 +2108,22 @@ export default class ServiceRegistry {
         }
 
         try {
-          const inquiryResult = await Cadenza.inquire(
-            META_RUNTIME_STATUS_INTENT,
-            {
-              targetServiceName: serviceName,
-              targetServiceInstanceId: serviceInstanceId,
-              detailLevel: ctx.detailLevel === "full" ? "full" : "minimal",
-            },
-            {
-              overallTimeoutMs:
-                ctx.overallTimeoutMs ?? this.runtimeStatusFallbackTimeoutMs,
-              perResponderTimeoutMs:
-                ctx.perResponderTimeoutMs ??
-                Math.max(250, Math.floor(this.runtimeStatusFallbackTimeoutMs * 0.75)),
-              requireComplete: ctx.requireComplete ?? false,
-            },
-          );
-
-          const report = this.selectRuntimeStatusReportForTarget(
-            inquiryResult,
-            serviceName,
-            serviceInstanceId,
-          );
-
-          if (!report) {
-            throw new Error(
-              `No runtime status report for ${serviceName}/${serviceInstanceId}`,
+          const { report, inquiryMeta } =
+            await this.resolveRuntimeStatusFallbackInquiry(
+              serviceName,
+              serviceInstanceId,
+              {
+                detailLevel: ctx.detailLevel === "full" ? "full" : "minimal",
+                overallTimeoutMs: ctx.overallTimeoutMs,
+                perResponderTimeoutMs: ctx.perResponderTimeoutMs,
+                requireComplete: ctx.requireComplete,
+              },
             );
-          }
-
-          this.applyRuntimeStatusReport(report);
-          this.lastHeartbeatAtByInstance.set(serviceInstanceId, Date.now());
-          this.missedHeartbeatsByInstance.set(serviceInstanceId, 0);
 
           return {
             ...ctx,
             runtimeStatusReport: report,
-            __inquiryMeta: inquiryResult.__inquiryMeta,
+            __inquiryMeta: inquiryMeta,
           };
         } catch (error) {
           const instance = this.getInstance(serviceName, serviceInstanceId);
@@ -1793,6 +2164,32 @@ export default class ServiceRegistry {
       .doOn("meta.service_registry.runtime_status_fallback_requested")
       .emits("meta.service_registry.runtime_status_fallback_resolved")
       .emitsOnFail("meta.service_registry.runtime_status_fallback_failed");
+
+    this.collectReadinessTask = Cadenza.createMetaTask(
+      "Collect distributed readiness",
+      async (ctx) => {
+        const inquiryResult = await Cadenza.inquire(
+          META_READINESS_INTENT,
+          {
+            detailLevel: ctx.detailLevel === "full" ? "full" : "minimal",
+            includeDependencies: ctx.includeDependencies,
+            refreshStaleDependencies: ctx.refreshStaleDependencies,
+            targetServiceName: ctx.targetServiceName,
+            targetServiceInstanceId: ctx.targetServiceInstanceId,
+          },
+          ctx.inquiryOptions ?? ctx.__inquiryOptions ?? {},
+        );
+
+        return {
+          ...ctx,
+          ...inquiryResult,
+        };
+      },
+      "Collects distributed readiness reports from services.",
+    )
+      .doOn("meta.service_registry.readiness_requested")
+      .emits("meta.service_registry.readiness_collected")
+      .emitsOnFail("meta.service_registry.readiness_failed");
 
     this.collectTransportDiagnosticsTask = Cadenza.createMetaTask(
       "Collect transport diagnostics",
@@ -2054,6 +2451,8 @@ export default class ServiceRegistry {
     this.remoteIntentDeputiesByTask.clear();
     this.dependeesByService.clear();
     this.dependeeByInstance.clear();
+    this.readinessDependeesByService.clear();
+    this.readinessDependeeByInstance.clear();
     this.lastHeartbeatAtByInstance.clear();
     this.missedHeartbeatsByInstance.clear();
     this.runtimeStatusFallbackInFlightByInstance.clear();
