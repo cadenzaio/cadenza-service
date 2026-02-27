@@ -7,6 +7,7 @@ import type {
 export const META_INTENT_PREFIX = "meta-";
 export const META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT =
   "meta-runtime-transport-diagnostics";
+export const META_RUNTIME_STATUS_INTENT = "meta-runtime-status";
 
 function isPlainObject(value: unknown): value is Record<string, any> {
   return (

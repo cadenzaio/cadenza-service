@@ -5,11 +5,52 @@ import { isBrowser } from "../utils/environment";
 import { InquiryResponderDescriptor } from "../types/inquiry";
 import {
   isMetaIntentName,
+  META_RUNTIME_STATUS_INTENT,
   META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT,
 } from "../utils/inquiry";
+import {
+  hasSignificantRuntimeStatusChange,
+  resolveRuntimeStatus,
+  runtimeStatusPriority,
+  type RuntimeStatusSnapshot,
+  type RuntimeStatusState,
+} from "../utils/runtimeStatus";
 
 const META_SERVICE_REGISTRY_FULL_SYNC_INTENT =
   "meta-service-registry-full-sync";
+const META_RUNTIME_STATUS_HEARTBEAT_TICK_SIGNAL =
+  "meta.service_registry.runtime_status.heartbeat_tick";
+const META_RUNTIME_STATUS_MONITOR_TICK_SIGNAL =
+  "meta.service_registry.runtime_status.monitor_tick";
+const INTERNAL_RUNTIME_STATUS_TASK_NAMES = new Set([
+  "Track local routine start",
+  "Track local routine end",
+  "Start runtime status sharing intervals",
+  "Broadcast runtime status",
+  "Monitor dependee heartbeat freshness",
+  "Resolve runtime status fallback inquiry",
+  "Respond runtime status inquiry",
+  "Get status",
+]);
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  if (typeof process === "undefined") {
+    return fallback;
+  }
+
+  const raw = process.env?.[name];
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const normalized = Math.trunc(parsed);
+  if (normalized <= 0) {
+    return fallback;
+  }
+
+  return normalized;
+}
 
 export interface ServiceInstanceDescriptor {
   uuid: string;
@@ -21,6 +62,9 @@ export interface ServiceInstanceDescriptor {
   isActive: boolean;
   isNonResponsive: boolean;
   isBlocked: boolean;
+  runtimeState?: RuntimeStatusState;
+  acceptingWork?: boolean;
+  reportedAt?: string;
   health: AnyObject;
   exposed: boolean;
   clientCreated?: boolean;
@@ -45,6 +89,23 @@ interface RemoteIntentDeputyDescriptor {
   localTask: Task;
 }
 
+interface RuntimeStatusReport {
+  serviceName: string;
+  serviceInstanceId: string;
+  serviceAddress?: string;
+  servicePort?: number;
+  exposed?: boolean;
+  isFrontend?: boolean;
+  reportedAt: string;
+  state: RuntimeStatusState;
+  acceptingWork: boolean;
+  numberOfRunningGraphs: number;
+  isActive: boolean;
+  isNonResponsive: boolean;
+  isBlocked: boolean;
+  health?: AnyObject;
+}
+
 /**
  * The ServiceRegistry class is a singleton that manages the registration and lifecycle of
  * service instances, deputies, and remote signals in a distributed service architecture.
@@ -66,6 +127,34 @@ export default class ServiceRegistry {
     new Map();
   private remoteIntentDeputiesByTask: Map<Task, RemoteIntentDeputyDescriptor> =
     new Map();
+  private dependeesByService: Map<string, Set<string>> = new Map();
+  private dependeeByInstance: Map<string, string> = new Map();
+  private lastHeartbeatAtByInstance: Map<string, number> = new Map();
+  private missedHeartbeatsByInstance: Map<string, number> = new Map();
+  private runtimeStatusFallbackInFlightByInstance: Set<string> = new Set();
+  private activeRoutineExecutionIds: Set<string> = new Set();
+  private runtimeStatusHeartbeatStarted = false;
+  private lastRuntimeStatusSnapshot: RuntimeStatusSnapshot | null = null;
+  private readonly runtimeStatusHeartbeatIntervalMs = readPositiveIntegerEnv(
+    "CADENZA_RUNTIME_STATUS_HEARTBEAT_MS",
+    30_000,
+  );
+  private readonly runtimeStatusMissThreshold = readPositiveIntegerEnv(
+    "CADENZA_RUNTIME_STATUS_MISSED_HEARTBEATS",
+    3,
+  );
+  private readonly runtimeStatusFallbackTimeoutMs = readPositiveIntegerEnv(
+    "CADENZA_RUNTIME_STATUS_FALLBACK_TIMEOUT_MS",
+    1_500,
+  );
+  private readonly degradedGraphThreshold = readPositiveIntegerEnv(
+    "CADENZA_RUNTIME_STATUS_DEGRADED_GRAPH_THRESHOLD",
+    10,
+  );
+  private readonly overloadedGraphThreshold = readPositiveIntegerEnv(
+    "CADENZA_RUNTIME_STATUS_OVERLOADED_GRAPH_THRESHOLD",
+    20,
+  );
   serviceName: string | null = null;
   serviceInstanceId: string | null = null;
   numberOfRunningGraphs: number = 0;
@@ -255,6 +344,261 @@ export default class ServiceRegistry {
     };
   }
 
+  private getInstance(serviceName: string, instanceId: string) {
+    return this.instances
+      .get(serviceName)
+      ?.find((instance) => instance.uuid === instanceId);
+  }
+
+  private getLocalInstance() {
+    if (!this.serviceName || !this.serviceInstanceId) {
+      return undefined;
+    }
+
+    return this.getInstance(this.serviceName, this.serviceInstanceId);
+  }
+
+  private registerDependee(serviceName: string, serviceInstanceId: string) {
+    if (!serviceName || !serviceInstanceId) {
+      return;
+    }
+
+    if (!this.dependeesByService.has(serviceName)) {
+      this.dependeesByService.set(serviceName, new Set());
+    }
+
+    this.dependeesByService.get(serviceName)!.add(serviceInstanceId);
+    this.dependeeByInstance.set(serviceInstanceId, serviceName);
+    this.lastHeartbeatAtByInstance.set(serviceInstanceId, Date.now());
+    this.missedHeartbeatsByInstance.set(serviceInstanceId, 0);
+  }
+
+  private unregisterDependee(serviceInstanceId: string, serviceName?: string) {
+    const dependeeServiceName =
+      serviceName ?? this.dependeeByInstance.get(serviceInstanceId);
+    if (dependeeServiceName) {
+      this.dependeesByService.get(dependeeServiceName)?.delete(serviceInstanceId);
+      if (!this.dependeesByService.get(dependeeServiceName)?.size) {
+        this.dependeesByService.delete(dependeeServiceName);
+      }
+    }
+
+    this.dependeeByInstance.delete(serviceInstanceId);
+    this.lastHeartbeatAtByInstance.delete(serviceInstanceId);
+    this.missedHeartbeatsByInstance.delete(serviceInstanceId);
+    this.runtimeStatusFallbackInFlightByInstance.delete(serviceInstanceId);
+  }
+
+  private resolveRuntimeStatusSnapshot(
+    numberOfRunningGraphs: number,
+    isActive: boolean,
+    isNonResponsive: boolean,
+    isBlocked: boolean,
+  ): RuntimeStatusSnapshot {
+    return resolveRuntimeStatus({
+      numberOfRunningGraphs,
+      isActive,
+      isNonResponsive,
+      isBlocked,
+      degradedGraphThreshold: this.degradedGraphThreshold,
+      overloadedGraphThreshold: this.overloadedGraphThreshold,
+    });
+  }
+
+  private normalizeRuntimeStatusReport(ctx: AnyObject): RuntimeStatusReport | null {
+    const serviceName =
+      ctx.serviceName ?? ctx.__serviceName ?? ctx.serviceInstance?.serviceName;
+    const serviceInstanceId =
+      ctx.serviceInstanceId ??
+      ctx.__serviceInstanceId ??
+      ctx.serviceInstance?.uuid;
+    if (!serviceName || !serviceInstanceId) {
+      return null;
+    }
+    const servicePort = ctx.servicePort ?? ctx.port ?? ctx.serviceInstance?.port;
+
+    const numberOfRunningGraphs = Math.max(
+      0,
+      Math.trunc(
+        Number(ctx.numberOfRunningGraphs ?? ctx.__numberOfRunningGraphs ?? 0),
+      ),
+    );
+    const isActive = Boolean(ctx.isActive ?? ctx.__active ?? true);
+    const isNonResponsive = Boolean(ctx.isNonResponsive ?? false);
+    const isBlocked = Boolean(ctx.isBlocked ?? false);
+
+    const resolved = this.resolveRuntimeStatusSnapshot(
+      numberOfRunningGraphs,
+      isActive,
+      isNonResponsive,
+      isBlocked,
+    );
+
+    return {
+      serviceName,
+      serviceInstanceId,
+      serviceAddress:
+        ctx.serviceAddress ?? ctx.address ?? ctx.serviceInstance?.address,
+      servicePort: typeof servicePort === "number" ? servicePort : undefined,
+      exposed:
+        typeof ctx.exposed === "boolean"
+          ? ctx.exposed
+          : typeof ctx.serviceInstance?.exposed === "boolean"
+            ? ctx.serviceInstance.exposed
+            : undefined,
+      isFrontend:
+        typeof ctx.isFrontend === "boolean"
+          ? ctx.isFrontend
+          : typeof ctx.serviceInstance?.isFrontend === "boolean"
+            ? ctx.serviceInstance.isFrontend
+          : undefined,
+      reportedAt:
+        ctx.reportedAt ??
+        (typeof ctx.__reportedAt === "string" ? ctx.__reportedAt : undefined) ??
+        new Date().toISOString(),
+      state:
+        ctx.state === "healthy" ||
+        ctx.state === "degraded" ||
+        ctx.state === "overloaded" ||
+        ctx.state === "unavailable"
+          ? ctx.state
+          : resolved.state,
+      acceptingWork:
+        typeof ctx.acceptingWork === "boolean"
+          ? ctx.acceptingWork
+          : resolved.acceptingWork,
+      numberOfRunningGraphs,
+      isActive,
+      isNonResponsive,
+      isBlocked,
+      health: (ctx.health ?? ctx.__health ?? {}) as AnyObject,
+    };
+  }
+
+  private applyRuntimeStatusReport(report: RuntimeStatusReport): boolean {
+    const instance = this.getInstance(report.serviceName, report.serviceInstanceId);
+    if (!instance) {
+      return false;
+    }
+
+    if (report.serviceAddress) {
+      instance.address = report.serviceAddress;
+    }
+
+    if (typeof report.servicePort === "number") {
+      instance.port = report.servicePort;
+    }
+
+    if (typeof report.exposed === "boolean") {
+      instance.exposed = report.exposed;
+    }
+
+    if (typeof report.isFrontend === "boolean") {
+      instance.isFrontend = report.isFrontend;
+    }
+
+    instance.numberOfRunningGraphs = report.numberOfRunningGraphs;
+    instance.isActive = report.isActive;
+    instance.isNonResponsive = report.isNonResponsive;
+    instance.isBlocked = report.isBlocked;
+    instance.runtimeState = report.state;
+    instance.acceptingWork = report.acceptingWork;
+    instance.reportedAt = report.reportedAt;
+    instance.health = {
+      ...(instance.health ?? {}),
+      ...(report.health ?? {}),
+      runtimeStatus: {
+        state: report.state,
+        acceptingWork: report.acceptingWork,
+        reportedAt: report.reportedAt,
+      },
+    };
+
+    return true;
+  }
+
+  private buildLocalRuntimeStatusReport(
+    detailLevel: "minimal" | "full" = "minimal",
+  ): RuntimeStatusReport | null {
+    if (!this.serviceName || !this.serviceInstanceId) {
+      return null;
+    }
+
+    const localInstance = this.getLocalInstance();
+    if (!localInstance) {
+      return null;
+    }
+
+    const numberOfRunningGraphs =
+      this.activeRoutineExecutionIds.size || this.numberOfRunningGraphs || 0;
+    this.numberOfRunningGraphs = numberOfRunningGraphs;
+
+    const snapshot = this.resolveRuntimeStatusSnapshot(
+      numberOfRunningGraphs,
+      localInstance.isActive,
+      localInstance.isNonResponsive,
+      localInstance.isBlocked,
+    );
+    const reportedAt = new Date().toISOString();
+
+    const report: RuntimeStatusReport = {
+      serviceName: this.serviceName,
+      serviceInstanceId: this.serviceInstanceId,
+      serviceAddress: localInstance.address,
+      servicePort: localInstance.port,
+      exposed: localInstance.exposed,
+      isFrontend: localInstance.isFrontend,
+      reportedAt,
+      state: snapshot.state,
+      acceptingWork: snapshot.acceptingWork,
+      numberOfRunningGraphs: snapshot.numberOfRunningGraphs,
+      isActive: snapshot.isActive,
+      isNonResponsive: snapshot.isNonResponsive,
+      isBlocked: snapshot.isBlocked,
+      health: {
+        ...(localInstance.health ?? {}),
+        runtimeStatus: {
+          state: snapshot.state,
+          acceptingWork: snapshot.acceptingWork,
+          reportedAt,
+        },
+      },
+    };
+
+    this.applyRuntimeStatusReport(report);
+    if (detailLevel !== "full") {
+      delete report.health;
+    }
+
+    return report;
+  }
+
+  private selectRuntimeStatusReportForTarget(
+    inquiryResult: AnyObject,
+    targetServiceName: string,
+    targetServiceInstanceId: string,
+  ): RuntimeStatusReport | null {
+    const reports = Array.isArray(inquiryResult.runtimeStatusReports)
+      ? inquiryResult.runtimeStatusReports
+      : [];
+
+    for (const candidate of reports) {
+      const report = this.normalizeRuntimeStatusReport(candidate);
+      if (!report) {
+        continue;
+      }
+
+      if (
+        report.serviceName === targetServiceName &&
+        report.serviceInstanceId === targetServiceInstanceId
+      ) {
+        return report;
+      }
+    }
+
+    return null;
+  }
+
   /**
    * Initializes a private constructor for managing service instances, remote signals,
    * service health, and handling updates or synchronization tasks. The constructor
@@ -300,10 +644,100 @@ export default class ServiceRegistry {
       },
     });
 
+    Cadenza.defineIntent({
+      name: META_RUNTIME_STATUS_INTENT,
+      description:
+        "Gather lightweight runtime status reports from services in the distributed runtime.",
+      input: {
+        type: "object",
+        properties: {
+          detailLevel: {
+            type: "string",
+            constraints: {
+              oneOf: ["minimal", "full"],
+            },
+          },
+          targetServiceName: {
+            type: "string",
+          },
+          targetServiceInstanceId: {
+            type: "string",
+          },
+        },
+      },
+      output: {
+        type: "object",
+        properties: {
+          runtimeStatusReports: {
+            type: "array",
+          },
+        },
+      },
+    });
+
+    Cadenza.createMetaTask(
+      "Respond runtime status inquiry",
+      (ctx) => {
+        const targetServiceName = ctx.targetServiceName;
+        const targetServiceInstanceId = ctx.targetServiceInstanceId;
+        const detailLevel: "minimal" | "full" =
+          ctx.detailLevel === "full" ? "full" : "minimal";
+        const report = this.buildLocalRuntimeStatusReport(detailLevel);
+        if (!report) {
+          return {};
+        }
+
+        if (
+          targetServiceName &&
+          targetServiceName !== report.serviceName
+        ) {
+          return {};
+        }
+
+        if (
+          targetServiceInstanceId &&
+          targetServiceInstanceId !== report.serviceInstanceId
+        ) {
+          return {};
+        }
+
+        return {
+          runtimeStatusReports: [report],
+        };
+      },
+      "Responds to runtime-status inquiries with local service instance status.",
+    ).respondsTo(META_RUNTIME_STATUS_INTENT);
+
     this.handleInstanceUpdateTask = Cadenza.createMetaTask(
       "Handle Instance Update",
       (ctx, emit) => {
-        const { serviceInstance } = ctx;
+        const serviceInstance =
+          ctx.serviceInstance ??
+          (ctx.__serviceInstanceId || ctx.serviceInstanceId
+            ? {
+                uuid: ctx.__serviceInstanceId ?? ctx.serviceInstanceId,
+                serviceName: ctx.__serviceName ?? ctx.serviceName,
+                address: ctx.serviceAddress ?? "",
+                port: ctx.servicePort ?? 0,
+                exposed: !!ctx.exposed,
+                isFrontend: !!ctx.isFrontend,
+                isActive:
+                  typeof ctx.isActive === "boolean"
+                    ? ctx.isActive
+                    : typeof ctx.__active === "boolean"
+                      ? ctx.__active
+                      : true,
+                isNonResponsive: !!ctx.isNonResponsive,
+                isBlocked: !!ctx.isBlocked,
+                health: (ctx.health ?? ctx.__health ?? {}) as AnyObject,
+                numberOfRunningGraphs:
+                  ctx.numberOfRunningGraphs ?? ctx.__numberOfRunningGraphs ?? 0,
+                isPrimary: false,
+              }
+            : undefined);
+        if (!serviceInstance?.uuid || !serviceInstance?.serviceName) {
+          return false;
+        }
         const {
           uuid,
           serviceName,
@@ -335,6 +769,8 @@ export default class ServiceRegistry {
             emit(`meta.fetch.destroy_requested:${address}_${port}`, {});
           }
 
+          this.unregisterDependee(uuid, serviceName);
+
           return;
         }
 
@@ -347,6 +783,21 @@ export default class ServiceRegistry {
           Object.assign(existing, serviceInstance); // Update
         } else {
           instances.push(serviceInstance);
+        }
+
+        const trackedInstance =
+          existing ?? instances.find((instance) => instance.uuid === uuid);
+        if (trackedInstance) {
+          const snapshot = this.resolveRuntimeStatusSnapshot(
+            trackedInstance.numberOfRunningGraphs ?? 0,
+            trackedInstance.isActive,
+            trackedInstance.isNonResponsive,
+            trackedInstance.isBlocked,
+          );
+          trackedInstance.runtimeState = snapshot.state;
+          trackedInstance.acceptingWork = snapshot.acceptingWork;
+          trackedInstance.reportedAt =
+            trackedInstance.reportedAt ?? new Date().toISOString();
         }
 
         if (this.serviceName === serviceName) {
@@ -416,13 +867,25 @@ export default class ServiceRegistry {
         "global.meta.service_instance.updated",
         "meta.service_instance.inserted",
         "meta.service_instance.updated",
-        "meta.socket_client.status_received",
       )
       .attachSignal(
         "meta.service_registry.dependee_registered",
         "meta.socket_shutdown_requested",
         "meta.fetch.destroy_requested",
       );
+
+    Cadenza.createMetaTask(
+      "Track dependee registration",
+      (ctx) => {
+        if (!ctx.serviceName || !ctx.serviceInstanceId) {
+          return false;
+        }
+
+        this.registerDependee(ctx.serviceName, ctx.serviceInstanceId);
+        return true;
+      },
+      "Tracks remote dependency instances for runtime heartbeat monitoring.",
+    ).doOn("meta.service_registry.dependee_registered");
 
     Cadenza.createMetaTask("Split service instances", function* (ctx: any) {
       if (!ctx.serviceInstances) {
@@ -549,6 +1012,15 @@ export default class ServiceRegistry {
         for (const instance of instances ?? []) {
           instance.isActive = false;
           instance.isNonResponsive = true;
+          const snapshot = this.resolveRuntimeStatusSnapshot(
+            instance.numberOfRunningGraphs ?? 0,
+            instance.isActive,
+            instance.isNonResponsive,
+            instance.isBlocked,
+          );
+          instance.runtimeState = snapshot.state;
+          instance.acceptingWork = snapshot.acceptingWork;
+          instance.reportedAt = new Date().toISOString();
           emit("global.meta.service_registry.service_not_responding", {
             data: {
               isActive: false,
@@ -569,6 +1041,7 @@ export default class ServiceRegistry {
         "meta.fetch.handshake_failed.*",
         "meta.socket_client.disconnected",
         "meta.socket_client.disconnected.*",
+        "meta.service_registry.runtime_status_unreachable",
       )
       .attachSignal("global.meta.service_registry.service_not_responding");
 
@@ -588,6 +1061,15 @@ export default class ServiceRegistry {
 
         instance.isActive = true;
         instance.isNonResponsive = false;
+        const snapshot = this.resolveRuntimeStatusSnapshot(
+          instance.numberOfRunningGraphs ?? 0,
+          instance.isActive,
+          instance.isNonResponsive,
+          instance.isBlocked,
+        );
+        instance.runtimeState = snapshot.state;
+        instance.acceptingWork = snapshot.acceptingWork;
+        instance.reportedAt = new Date().toISOString();
         emit("global.meta.service_registry.service_handshake", {
           data: {
             isActive: instance.isActive,
@@ -610,6 +1092,7 @@ export default class ServiceRegistry {
           if (indexToDelete >= 0) {
             this.instances.get(serviceName)?.splice(indexToDelete, 1);
           }
+          this.unregisterDependee(i.uuid, serviceName);
           emit("global.meta.service_registry.deleted", {
             data: {
               isActive: false,
@@ -635,14 +1118,58 @@ export default class ServiceRegistry {
     this.handleSocketStatusUpdateTask = Cadenza.createMetaTask(
       "Handle Socket Status Update",
       (ctx) => {
-        const instanceId = ctx.__serviceInstanceId;
-        const serviceName = ctx.__serviceName;
-        const instances = this.instances.get(serviceName);
-        const instance = instances?.find((i) => i.uuid === instanceId);
-        if (instance) {
-          instance.health = ctx.health;
-          instance.numberOfRunningGraphs = ctx.numberOfRunningGraphs;
+        const report = this.normalizeRuntimeStatusReport(ctx);
+        if (!report) {
+          return false;
         }
+
+        if (
+          report.serviceName === this.serviceName &&
+          report.serviceInstanceId === this.serviceInstanceId
+        ) {
+          return false;
+        }
+
+        let applied = this.applyRuntimeStatusReport(report);
+        if (
+          !applied &&
+          report.serviceAddress &&
+          typeof report.servicePort === "number"
+        ) {
+          if (!this.instances.has(report.serviceName)) {
+            this.instances.set(report.serviceName, []);
+          }
+
+          this.instances.get(report.serviceName)!.push({
+            uuid: report.serviceInstanceId,
+            serviceName: report.serviceName,
+            address: report.serviceAddress,
+            port: report.servicePort,
+            exposed: !!report.exposed,
+            isFrontend: !!report.isFrontend,
+            isActive: report.isActive,
+            isNonResponsive: report.isNonResponsive,
+            isBlocked: report.isBlocked,
+            numberOfRunningGraphs: report.numberOfRunningGraphs,
+            runtimeState: report.state,
+            acceptingWork: report.acceptingWork,
+            reportedAt: report.reportedAt,
+            health: report.health ?? {},
+            isPrimary: false,
+          });
+          applied = true;
+        }
+
+        if (!applied) {
+          return false;
+        }
+
+        this.registerDependee(report.serviceName, report.serviceInstanceId);
+        this.lastHeartbeatAtByInstance.set(report.serviceInstanceId, Date.now());
+        this.missedHeartbeatsByInstance.set(report.serviceInstanceId, 0);
+        this.runtimeStatusFallbackInFlightByInstance.delete(
+          report.serviceInstanceId,
+        );
         return true;
       },
       "Handles status update from socket broadcast",
@@ -804,7 +1331,31 @@ export default class ServiceRegistry {
         const instances = this.instances
           .get(__serviceName)
           ?.filter((i) => i.isActive && !i.isNonResponsive && !i.isBlocked)
-          .sort((a, b) => a.numberOfRunningGraphs! - b.numberOfRunningGraphs!);
+          .sort((a, b) => {
+            const leftStatus = this.resolveRuntimeStatusSnapshot(
+              a.numberOfRunningGraphs ?? 0,
+              a.isActive,
+              a.isNonResponsive,
+              a.isBlocked,
+            );
+            const rightStatus = this.resolveRuntimeStatusSnapshot(
+              b.numberOfRunningGraphs ?? 0,
+              b.isActive,
+              b.isNonResponsive,
+              b.isBlocked,
+            );
+
+            const priorityDelta =
+              runtimeStatusPriority(leftStatus.state) -
+              runtimeStatusPriority(rightStatus.state);
+            if (priorityDelta !== 0) {
+              return priorityDelta;
+            }
+
+            return (
+              (a.numberOfRunningGraphs ?? 0) - (b.numberOfRunningGraphs ?? 0)
+            );
+          });
 
         if (!instances || instances.length === 0 || retries > this.retryCount) {
           context.errored = true;
@@ -907,18 +1458,341 @@ export default class ServiceRegistry {
         };
       }
 
-      const self = this.instances
-        .get(this.serviceName)
-        ?.find((i) => i.uuid === this.serviceInstanceId);
+      const report = this.buildLocalRuntimeStatusReport("full");
+      if (!report) {
+        return {
+          ...ctx,
+          __status: "error",
+          __error: "No local service instance available for status check",
+          errored: true,
+        };
+      }
 
       return {
         ...ctx,
         __status: "ok",
-        __numberOfRunningGraphs: self?.numberOfRunningGraphs ?? 0,
-        __health: self?.health ?? {},
-        __active: self?.isActive ?? false,
+        __serviceName: report.serviceName,
+        __serviceInstanceId: report.serviceInstanceId,
+        __numberOfRunningGraphs: report.numberOfRunningGraphs,
+        __health: report.health ?? {},
+        __active: report.isActive,
+        reportedAt: report.reportedAt,
+        serviceName: report.serviceName,
+        serviceInstanceId: report.serviceInstanceId,
+        numberOfRunningGraphs: report.numberOfRunningGraphs,
+        health: report.health ?? {},
+        isActive: report.isActive,
+        isNonResponsive: report.isNonResponsive,
+        isBlocked: report.isBlocked,
+        state: report.state,
+        acceptingWork: report.acceptingWork,
       };
-    }).doOn("meta.socket.status_check_requested");
+    }).doOn(
+      "meta.socket.status_check_requested",
+      "meta.rest.status_check_requested",
+    );
+
+    Cadenza.createMetaTask(
+      "Track local routine start",
+      (ctx, emit) => {
+        const sourceTaskName = String(ctx.__signalEmission?.taskName ?? "");
+        if (INTERNAL_RUNTIME_STATUS_TASK_NAMES.has(sourceTaskName)) {
+          return false;
+        }
+
+        const routineId = String(
+          ctx.filter?.uuid ?? ctx.__routineExecId ?? "",
+        );
+        if (!routineId) {
+          return false;
+        }
+
+        this.activeRoutineExecutionIds.add(routineId);
+        this.numberOfRunningGraphs = this.activeRoutineExecutionIds.size;
+        const localInstance = this.getLocalInstance();
+        if (!localInstance) {
+          return true;
+        }
+
+        const snapshot = this.resolveRuntimeStatusSnapshot(
+          this.numberOfRunningGraphs,
+          localInstance.isActive,
+          localInstance.isNonResponsive,
+          localInstance.isBlocked,
+        );
+        if (
+          hasSignificantRuntimeStatusChange(this.lastRuntimeStatusSnapshot, snapshot)
+        ) {
+          emit("meta.service_registry.runtime_status_broadcast_requested", {
+            reason: "runtime-state-change",
+          });
+        }
+        return true;
+      },
+      "Tracks local routine starts for runtime load status.",
+    ).doOn("meta.node.started_routine_execution");
+
+    Cadenza.createMetaTask(
+      "Track local routine end",
+      (ctx, emit) => {
+        const sourceTaskName = String(ctx.__signalEmission?.taskName ?? "");
+        if (INTERNAL_RUNTIME_STATUS_TASK_NAMES.has(sourceTaskName)) {
+          return false;
+        }
+
+        const routineId = String(
+          ctx.filter?.uuid ?? ctx.__routineExecId ?? "",
+        );
+        if (!routineId) {
+          return false;
+        }
+
+        this.activeRoutineExecutionIds.delete(routineId);
+        this.numberOfRunningGraphs = this.activeRoutineExecutionIds.size;
+        const localInstance = this.getLocalInstance();
+        if (!localInstance) {
+          return true;
+        }
+
+        const snapshot = this.resolveRuntimeStatusSnapshot(
+          this.numberOfRunningGraphs,
+          localInstance.isActive,
+          localInstance.isNonResponsive,
+          localInstance.isBlocked,
+        );
+        if (
+          hasSignificantRuntimeStatusChange(this.lastRuntimeStatusSnapshot, snapshot)
+        ) {
+          emit("meta.service_registry.runtime_status_broadcast_requested", {
+            reason: "runtime-state-change",
+          });
+        }
+        return true;
+      },
+      "Tracks local routine completion for runtime load status.",
+    ).doOn("meta.node.ended_routine_execution");
+
+    Cadenza.createMetaTask(
+      "Start runtime status sharing intervals",
+      () => {
+        if (this.runtimeStatusHeartbeatStarted) {
+          return false;
+        }
+
+        this.runtimeStatusHeartbeatStarted = true;
+        Cadenza.interval(
+          META_RUNTIME_STATUS_HEARTBEAT_TICK_SIGNAL,
+          { reason: "heartbeat" },
+          this.runtimeStatusHeartbeatIntervalMs,
+          true,
+        );
+        Cadenza.interval(
+          META_RUNTIME_STATUS_MONITOR_TICK_SIGNAL,
+          {},
+          this.runtimeStatusHeartbeatIntervalMs,
+        );
+        return true;
+      },
+      "Starts runtime status heartbeat and heartbeat-monitor loops once per service instance.",
+    ).doOn("meta.service_registry.instance_inserted");
+
+    Cadenza.createMetaTask(
+      "Broadcast runtime status",
+      (ctx, emit) => {
+        const report = this.buildLocalRuntimeStatusReport(
+          ctx.detailLevel === "full" ? "full" : "minimal",
+        );
+        if (!report) {
+          return false;
+        }
+
+        const snapshot = this.resolveRuntimeStatusSnapshot(
+          report.numberOfRunningGraphs,
+          report.isActive,
+          report.isNonResponsive,
+          report.isBlocked,
+        );
+        const force =
+          ctx.reason === "heartbeat" ||
+          ctx.force === true ||
+          this.lastRuntimeStatusSnapshot === null;
+
+        if (
+          !force &&
+          !hasSignificantRuntimeStatusChange(this.lastRuntimeStatusSnapshot, snapshot)
+        ) {
+          return false;
+        }
+
+        this.lastRuntimeStatusSnapshot = snapshot;
+        emit("meta.service.updated", {
+          __serviceName: report.serviceName,
+          __serviceInstanceId: report.serviceInstanceId,
+          __reportedAt: report.reportedAt,
+          __numberOfRunningGraphs: report.numberOfRunningGraphs,
+          __health: report.health ?? {},
+          __active: report.isActive,
+          serviceName: report.serviceName,
+          serviceInstanceId: report.serviceInstanceId,
+          serviceAddress: report.serviceAddress,
+          servicePort: report.servicePort,
+          exposed: report.exposed,
+          isFrontend: report.isFrontend,
+          reportedAt: report.reportedAt,
+          numberOfRunningGraphs: report.numberOfRunningGraphs,
+          health: report.health ?? {},
+          isActive: report.isActive,
+          isNonResponsive: report.isNonResponsive,
+          isBlocked: report.isBlocked,
+          state: report.state,
+          acceptingWork: report.acceptingWork,
+        });
+        return true;
+      },
+      "Broadcasts local runtime status to connected dependees.",
+    ).doOn(
+      META_RUNTIME_STATUS_HEARTBEAT_TICK_SIGNAL,
+      "meta.service_registry.runtime_status_broadcast_requested",
+    );
+
+    Cadenza.createMetaTask(
+      "Monitor dependee heartbeat freshness",
+      (ctx, emit) => {
+        if (!this.useSocket) {
+          return false;
+        }
+
+        const now = Date.now();
+        for (const [serviceName, instanceIds] of this.dependeesByService) {
+          for (const serviceInstanceId of instanceIds) {
+            const instance = this.getInstance(serviceName, serviceInstanceId);
+            if (!instance || !instance.isActive || instance.isBlocked) {
+              continue;
+            }
+
+            const lastHeartbeat =
+              this.lastHeartbeatAtByInstance.get(serviceInstanceId) ?? 0;
+            const misses = this.missedHeartbeatsByInstance.get(serviceInstanceId) ?? 0;
+            const heartbeatBudget =
+              this.runtimeStatusHeartbeatIntervalMs * (misses + 1);
+
+            if (lastHeartbeat > 0 && now - lastHeartbeat < heartbeatBudget) {
+              continue;
+            }
+
+            const nextMisses = misses + 1;
+            this.missedHeartbeatsByInstance.set(serviceInstanceId, nextMisses);
+
+            if (
+              nextMisses < this.runtimeStatusMissThreshold ||
+              this.runtimeStatusFallbackInFlightByInstance.has(serviceInstanceId)
+            ) {
+              continue;
+            }
+
+            this.runtimeStatusFallbackInFlightByInstance.add(serviceInstanceId);
+            emit("meta.service_registry.runtime_status_fallback_requested", {
+              ...ctx,
+              serviceName,
+              serviceInstanceId,
+              serviceAddress: instance.address,
+              servicePort: instance.port,
+            });
+          }
+        }
+
+        return true;
+      },
+      "Monitors dependee heartbeat freshness and requests inquiry fallback after repeated misses.",
+    ).doOn(META_RUNTIME_STATUS_MONITOR_TICK_SIGNAL);
+
+    Cadenza.createMetaTask(
+      "Resolve runtime status fallback inquiry",
+      async (ctx, emit) => {
+        const serviceName = ctx.serviceName;
+        const serviceInstanceId = ctx.serviceInstanceId;
+        if (!serviceName || !serviceInstanceId) {
+          return false;
+        }
+
+        try {
+          const inquiryResult = await Cadenza.inquire(
+            META_RUNTIME_STATUS_INTENT,
+            {
+              targetServiceName: serviceName,
+              targetServiceInstanceId: serviceInstanceId,
+              detailLevel: ctx.detailLevel === "full" ? "full" : "minimal",
+            },
+            {
+              overallTimeoutMs:
+                ctx.overallTimeoutMs ?? this.runtimeStatusFallbackTimeoutMs,
+              perResponderTimeoutMs:
+                ctx.perResponderTimeoutMs ??
+                Math.max(250, Math.floor(this.runtimeStatusFallbackTimeoutMs * 0.75)),
+              requireComplete: ctx.requireComplete ?? false,
+            },
+          );
+
+          const report = this.selectRuntimeStatusReportForTarget(
+            inquiryResult,
+            serviceName,
+            serviceInstanceId,
+          );
+
+          if (!report) {
+            throw new Error(
+              `No runtime status report for ${serviceName}/${serviceInstanceId}`,
+            );
+          }
+
+          this.applyRuntimeStatusReport(report);
+          this.lastHeartbeatAtByInstance.set(serviceInstanceId, Date.now());
+          this.missedHeartbeatsByInstance.set(serviceInstanceId, 0);
+
+          return {
+            ...ctx,
+            runtimeStatusReport: report,
+            __inquiryMeta: inquiryResult.__inquiryMeta,
+          };
+        } catch (error) {
+          const instance = this.getInstance(serviceName, serviceInstanceId);
+          const message =
+            error instanceof Error ? error.message : String(error);
+
+          Cadenza.log(
+            "Runtime status fallback inquiry failed.",
+            {
+              serviceName,
+              serviceInstanceId,
+              error: message,
+            },
+            "warning",
+          );
+
+          emit("meta.service_registry.runtime_status_unreachable", {
+            ...ctx,
+            serviceName,
+            serviceInstanceId,
+            serviceAddress: instance?.address ?? ctx.serviceAddress,
+            servicePort: instance?.port ?? ctx.servicePort,
+            __error: message,
+            errored: true,
+          });
+
+          return {
+            ...ctx,
+            __error: message,
+            errored: true,
+          };
+        } finally {
+          this.runtimeStatusFallbackInFlightByInstance.delete(serviceInstanceId);
+        }
+      },
+      "Runs runtime-status inquiry fallback for a dependee instance after missed heartbeats.",
+    )
+      .doOn("meta.service_registry.runtime_status_fallback_requested")
+      .emits("meta.service_registry.runtime_status_fallback_resolved")
+      .emitsOnFail("meta.service_registry.runtime_status_fallback_failed");
 
     this.collectTransportDiagnosticsTask = Cadenza.createMetaTask(
       "Collect transport diagnostics",
@@ -1178,5 +2052,14 @@ export default class ServiceRegistry {
     this.remoteIntents.clear();
     this.remoteIntentDeputiesByKey.clear();
     this.remoteIntentDeputiesByTask.clear();
+    this.dependeesByService.clear();
+    this.dependeeByInstance.clear();
+    this.lastHeartbeatAtByInstance.clear();
+    this.missedHeartbeatsByInstance.clear();
+    this.runtimeStatusFallbackInFlightByInstance.clear();
+    this.activeRoutineExecutionIds.clear();
+    this.numberOfRunningGraphs = 0;
+    this.runtimeStatusHeartbeatStarted = false;
+    this.lastRuntimeStatusSnapshot = null;
   }
 }
