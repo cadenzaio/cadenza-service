@@ -1,3 +1,10 @@
+# [2.8.0](https://github.com/cadenzaio/cadenza-service/compare/v2.7.0...v2.8.0) (2026-02-27)
+
+
+### Features
+
+* **readiness:** add distributed readiness intent and dependency evaluation ([8142cde](https://github.com/cadenzaio/cadenza-service/commit/8142cde191901890dac01076f130c61c9eaac373))
+
 # [2.7.0](https://github.com/cadenzaio/cadenza-service/compare/v2.6.1...v2.7.0) (2026-02-27)
 
 
