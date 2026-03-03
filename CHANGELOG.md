@@ -1,3 +1,15 @@
+# [2.9.0](https://github.com/cadenzaio/cadenza-service/compare/v2.8.0...v2.9.0) (2026-03-03)
+
+
+### Bug Fixes
+
+* **service:** prevent socket retry hangs and bound transport diagnostics ([e6a4810](https://github.com/cadenzaio/cadenza-service/commit/e6a4810bcd3669e8fb6437e005b549f944cc7393))
+
+
+### Features
+
+* **socket:** refactor socket diagnostics, client-server actors, and transport orchestration ([0672f14](https://github.com/cadenzaio/cadenza-service/commit/0672f14cdf7c9c0ed543c28e47b5d30815472bc0))
+
 # [2.8.0](https://github.com/cadenzaio/cadenza-service/compare/v2.7.0...v2.8.0) (2026-02-27)
 
 
