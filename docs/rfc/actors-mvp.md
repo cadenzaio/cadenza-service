@@ -141,60 +141,128 @@ Distributed concerns remain outside the core MVP primitive.
 - Sync/reconciliation/ownership/failover meta tasks are extension behavior.
 - DB-native definition materialization/auto-instantiation is deferred to `cadenza/engine`.
 
-## 10. cadenza-db Minimal Schema Direction
+## 10. cadenza-db Minimal Schema (Implemented)
 
-### 10.1 `actors`
+### 10.1 `actor`
 
-Definition registry.
+Actor definition registry.
 
-- `id` (uuid, pk)
-- `service_name` (text, indexed)
-- `actor_name` (text, indexed)
-- `version` (int)
-- `is_meta` (boolean, default false)
-- `config` (jsonb)
-- `created_at`, `updated_at` (timestamptz)
+Core identity:
 
-Unique key: `(service_name, actor_name, version)`
+- `name`
+- `service_name`
+- `version`
 
-Note: `kind` column is unnecessary in MVP; use `is_meta`.
+Primary key: `(name, service_name, version)`
 
-### 10.2 `actor_task_mappings`
+Core metadata:
+
+- `description`
+- `is_meta`
+- `default_key`
+- `load_policy`
+- `write_contract`
+- `runtime_read_guard`
+- `consistency_profile`
+- `key_definition`
+- `state_definition`
+- `retry_policy`
+- `idempotency_policy`
+- `session_policy`
+
+System fields:
+
+- `generated_by`
+- `created`
+- `deleted`
+
+Notes:
+
+- `kind` is intentionally removed; actor classification is `is_meta: boolean`.
+- `lifecycle_definition` is intentionally removed in MVP.
+
+### 10.2 `actor_task_map`
 
 Task-to-actor binding metadata.
 
-- `id` (uuid, pk)
-- `actor_id` (uuid, fk -> actors.id)
-- `task_name` (text)
-- `task_version` (int)
-- `mode` (text: `read|write|meta`)
-- `touch_session` (boolean default true)
-- `is_meta` (boolean default false)
-- `created_at` (timestamptz)
+Fields:
 
-Unique key: `(actor_id, task_name, task_version)`
+- `actor_name`
+- `actor_version`
+- `task_name`
+- `task_version`
+- `service_name`
+- `mode` (`read|write|meta`)
+- `description`
+- `is_meta`
+- `created`
+- `deleted`
 
-### 10.3 `actor_instances`
+Primary key:
+
+- `(actor_name, actor_version, task_name, task_version, service_name)`
+
+Foreign keys:
+
+- `(actor_name, service_name, actor_version)` -> `actor(name, service_name, version)`
+- `(task_name, task_version, service_name)` -> `task(name, version, service_name)`
+
+### 10.3 `actor_session_state`
 
 Durable actor state per resolved key.
 
-- `id` (uuid, pk)
-- `actor_id` (uuid, fk -> actors.id)
-- `actor_key` (text, indexed)
-- `state` (jsonb)
-- `state_version` (bigint default 0)
-- `last_read_at` (timestamptz)
-- `last_write_at` (timestamptz)
-- `created_at`, `updated_at` (timestamptz)
+Fields:
 
-Unique key: `(actor_id, actor_key)`
+- `id`
+- `actor_name`
+- `actor_version`
+- `actor_key`
+- `service_name`
+- `durable_state`
+- `durable_version`
+- `expires_at`
+- `updated`
+- `created`
+- `deleted`
 
-### 10.4 Optional extension tables
+Unique constraint:
 
-- `actor_sessions`
-- `actor_idempotency_keys`
+- `(actor_name, actor_version, actor_key, service_name)`
 
-Distributed sync metadata table(s) are deferred until distributed extension scope is finalized.
+### 10.4 Metadata Signal Contracts for DB Sync
+
+The DB sync path requires **field identity match** with DB schemas. Case style may differ during transport/normalization, but the logical field names must match.
+
+`global.meta.graph_metadata.actor_created` data must map to `actor` fields:
+
+- `name`
+- `description`
+- `service_name`
+- `default_key`
+- `load_policy`
+- `write_contract`
+- `runtime_read_guard`
+- `consistency_profile`
+- `key_definition`
+- `state_definition`
+- `retry_policy`
+- `idempotency_policy`
+- `session_policy`
+- `is_meta`
+- `version`
+
+`global.meta.graph_metadata.actor_task_associated` data must map to `actor_task_map` fields:
+
+- `actor_name`
+- `actor_version`
+- `task_name`
+- `task_version`
+- `service_name`
+- `mode`
+- `description`
+- `is_meta`
+
+Distributed sync ownership/failover tables remain out of MVP scope and are deferred.
 
 ## 11. Example (Task-Driven Runtime Init)
 
@@ -236,7 +304,8 @@ const readTask = Cadenza.createTask(
 - Durable bootstrap uses `initState`.
 - Runtime bootstrap is done by signal-triggered write tasks.
 - Keep actor behavior inside primitives to support DB-native generation later.
-- DB `actors` table uses `is_meta` instead of `kind`.
+- DB `actor` table uses `is_meta` instead of `kind`.
+- DB sync contracts are validated by field identity, not naming style.
 
 ## 13. MVP Acceptance Criteria
 
@@ -262,6 +331,10 @@ const readTask = Cadenza.createTask(
 
 ### 13.3 DB (`cadenza-db`)
 
-- Minimal actor definition/state mapping tables are in place.
+- Minimal actor tables are in place:
+  - `actor`
+  - `actor_task_map`
+  - `actor_session_state`
 - `is_meta` is used for actor type classification.
-- Unique constraints for actor definitions and actor instances are enforced.
+- Required actor metadata signal fields match DB schema contracts.
+- Unique constraints for actor definitions and actor durable state keys are enforced.

@@ -4,6 +4,92 @@ import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 import { DeputyTask } from "../../index";
 import { isMetaIntentName } from "../../utils/inquiry";
 
+type ActorTaskRuntimeMetadata = {
+  actorName: string;
+  actorDescription?: string;
+  actorKind: "standard" | "meta";
+  mode: "read" | "write" | "meta";
+  forceMeta: boolean;
+};
+
+const ACTOR_TASK_METADATA = Symbol.for("@cadenza.io/core/actor-task-meta");
+
+function getActorTaskRuntimeMetadata(
+  taskFunction: unknown,
+): ActorTaskRuntimeMetadata | undefined {
+  if (typeof taskFunction !== "function") {
+    return undefined;
+  }
+
+  return (taskFunction as { [ACTOR_TASK_METADATA]?: ActorTaskRuntimeMetadata })[
+    ACTOR_TASK_METADATA
+  ];
+}
+
+function sanitizeActorMetadataValue(value: unknown): unknown {
+  if (value === null) {
+    return null;
+  }
+  if (value === undefined || typeof value === "function") {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    const items: unknown[] = [];
+    for (const item of value) {
+      const sanitizedItem = sanitizeActorMetadataValue(item);
+      if (sanitizedItem !== undefined) {
+        items.push(sanitizedItem);
+      }
+    }
+    return items;
+  }
+  if (typeof value === "object") {
+    const output: Record<string, unknown> = {};
+    for (const [key, nestedValue] of Object.entries(value)) {
+      const sanitizedNestedValue = sanitizeActorMetadataValue(nestedValue);
+      if (sanitizedNestedValue !== undefined) {
+        output[key] = sanitizedNestedValue;
+      }
+    }
+    return output;
+  }
+
+  return value;
+}
+
+function buildActorRegistrationData(actor: any): Record<string, unknown> {
+  const definition = sanitizeActorMetadataValue(
+    typeof actor?.toDefinition === "function" ? actor.toDefinition() : {},
+  ) as Record<string, unknown>;
+  const stateDefinition =
+    definition?.state && typeof definition.state === "object"
+      ? definition.state
+      : {};
+  const actorKind =
+    typeof definition?.kind === "string" ? definition.kind : actor?.kind;
+
+  return {
+    name: definition?.name ?? actor?.spec?.name ?? "",
+    description: definition?.description ?? actor?.spec?.description ?? "",
+    default_key:
+      definition?.defaultKey ?? actor?.spec?.defaultKey ?? "default",
+    load_policy: definition?.loadPolicy ?? actor?.spec?.loadPolicy ?? "eager",
+    write_contract:
+      definition?.writeContract ?? actor?.spec?.writeContract ?? "overwrite",
+    runtime_read_guard:
+      definition?.runtimeReadGuard ?? actor?.spec?.runtimeReadGuard ?? "none",
+    consistency_profile:
+      definition?.consistencyProfile ?? actor?.spec?.consistencyProfile ?? null,
+    key_definition: definition?.key ?? null,
+    state_definition: stateDefinition,
+    retry_policy: definition?.retry ?? {},
+    idempotency_policy: definition?.idempotency ?? {},
+    session_policy: definition?.session ?? {},
+    is_meta: actorKind === "meta",
+    version: 1,
+  };
+}
+
 export default class GraphSyncController {
   private static _instance: GraphSyncController;
   public static get instance(): GraphSyncController {
@@ -19,6 +105,11 @@ export default class GraphSyncController {
   registerDeputyRelationshipTask: Task | undefined;
   splitRoutinesTask: Task | undefined;
   splitTasksInRoutines: Task | undefined;
+  splitActorsForRegistration: Task | undefined;
+  registerActorTaskMapTask: Task | undefined;
+
+  registeredActors: Set<string> = new Set();
+  registeredActorTaskMaps: Set<string> = new Set();
 
   isCadenzaDBReady: boolean = false;
 
@@ -307,6 +398,135 @@ export default class GraphSyncController {
             () => true,
           ).emits("meta.sync_controller.synced_tasks"),
         ),
+      ),
+    );
+
+    this.splitActorsForRegistration = Cadenza.createMetaTask(
+      "Split actors for registration",
+      function* (ctx) {
+        Cadenza.debounce("meta.sync_controller.synced_resource", {
+          delayMs: 3000,
+        });
+
+        const actors = ctx.actors ?? [];
+        for (const actor of actors) {
+          const data = {
+            ...buildActorRegistrationData(actor),
+            service_name: Cadenza.serviceRegistry.serviceName,
+          };
+          if (!data.name) {
+            continue;
+          }
+
+          const registrationKey = `${data.name}|${data.version}|${data.service_name}`;
+          if (this.registeredActors.has(registrationKey)) {
+            continue;
+          }
+
+          yield {
+            data,
+            __actorRegistrationKey: registrationKey,
+          };
+        }
+      }.bind(this),
+    ).then(
+      (this.isCadenzaDBReady
+        ? Cadenza.createCadenzaDBInsertTask(
+            "actor",
+            {
+              onConflict: {
+                target: ["name", "service_name", "version"],
+                action: {
+                  do: "nothing",
+                },
+              },
+            },
+            { concurrency: 30 },
+          )
+        : Cadenza.get("dbInsertActor")
+      )?.then(
+        Cadenza.createMetaTask("Record actor registration", (ctx) => {
+          if (!ctx.__syncing) {
+            return;
+          }
+
+          Cadenza.debounce("meta.sync_controller.synced_resource", {
+            delayMs: 3000,
+          });
+          this.registeredActors.add(ctx.__actorRegistrationKey);
+          return true;
+        }).then(
+          Cadenza.createUniqueMetaTask(
+            "Gather actor registration",
+            () => true,
+          ).emits("meta.sync_controller.synced_actors"),
+        ),
+      ),
+    );
+
+    this.registerActorTaskMapTask = Cadenza.createMetaTask(
+      "Split actor task maps",
+      function* (ctx) {
+        const task = ctx.task;
+        if (task.hidden || !task.register) {
+          return;
+        }
+
+        const metadata = getActorTaskRuntimeMetadata(task.taskFunction);
+        if (!metadata?.actorName) {
+          return;
+        }
+
+        const registrationKey = `${metadata.actorName}|${task.name}|${task.version}|${Cadenza.serviceRegistry.serviceName}`;
+        if (this.registeredActorTaskMaps.has(registrationKey)) {
+          return;
+        }
+
+        yield {
+          data: {
+            actor_name: metadata.actorName,
+            actor_version: 1,
+            task_name: task.name,
+            task_version: task.version,
+            service_name: Cadenza.serviceRegistry.serviceName,
+            mode: metadata.mode,
+            description: task.description ?? metadata.actorDescription ?? "",
+            is_meta: metadata.actorKind === "meta" || task.isMeta === true,
+          },
+          __actorTaskMapRegistrationKey: registrationKey,
+        };
+      }.bind(this),
+    ).then(
+      (this.isCadenzaDBReady
+        ? Cadenza.createCadenzaDBInsertTask(
+            "actor_task_map",
+            {
+              onConflict: {
+                target: [
+                  "actor_name",
+                  "actor_version",
+                  "task_name",
+                  "task_version",
+                  "service_name",
+                ],
+                action: {
+                  do: "nothing",
+                },
+              },
+            },
+            { concurrency: 30 },
+          )
+        : Cadenza.get("dbInsertActorTaskMap")
+      )?.then(
+        Cadenza.createMetaTask("Record actor task map registration", (ctx) => {
+          if (!ctx.__syncing) {
+            return;
+          }
+          Cadenza.debounce("meta.sync_controller.synced_resource", {
+            delayMs: 3000,
+          });
+          this.registeredActorTaskMaps.add(ctx.__actorTaskMapRegistrationKey);
+        }),
       ),
     );
 
@@ -602,6 +822,15 @@ export default class GraphSyncController {
       .doOn("meta.sync_controller.synced_tasks")
       .then(this.splitRoutinesTask);
 
+    Cadenza.createMetaTask("Get all actors", (ctx) => {
+      return {
+        ...ctx,
+        actors: Cadenza.getAllActors(),
+      };
+    })
+      .doOn("meta.sync_controller.synced_tasks")
+      .then(this.splitActorsForRegistration);
+
     Cadenza.registry
       .doForEachTask!.clone()
       .doOn("meta.sync_controller.synced_tasks")
@@ -611,6 +840,11 @@ export default class GraphSyncController {
         this.registerIntentToTaskMapTask,
         this.registerDeputyRelationshipTask,
       );
+
+    Cadenza.registry
+      .doForEachTask!.clone()
+      .doOn("meta.sync_controller.synced_tasks", "meta.sync_controller.synced_actors")
+      .then(this.registerActorTaskMapTask);
 
     Cadenza.registry
       .getAllRoutines!.clone()

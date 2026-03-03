@@ -131,6 +131,44 @@ export default class SocketController {
   private readonly diagnosticsMaxClientEntries = 500;
   private readonly destroyedDiagnosticsTtlMs = 15 * 60_000;
   private readonly socketServerDefaultKey = "socket-server-default";
+  private readonly socketServerInitialSessionState: SocketServerSessionState = {
+    serverKey: this.socketServerDefaultKey,
+    useSocket: false,
+    status: "inactive",
+    securityProfile: "medium",
+    networkType: "internal",
+    connectionCount: 0,
+    lastStartedAt: null,
+    lastConnectedAt: null,
+    lastDisconnectedAt: null,
+    lastShutdownAt: null,
+    updatedAt: 0,
+  };
+  private readonly socketClientInitialSessionState: SocketClientSessionState = {
+    fetchId: "",
+    serviceInstanceId: "",
+    communicationTypes: [],
+    serviceName: "",
+    serviceAddress: "",
+    servicePort: 0,
+    protocol: "http",
+    url: "",
+    socketId: null,
+    connected: false,
+    handshake: false,
+    pendingDelegations: 0,
+    pendingTimers: 0,
+    reconnectAttempts: 0,
+    connectErrors: 0,
+    reconnectErrors: 0,
+    socketErrors: 0,
+    errorCount: 0,
+    destroyed: false,
+    lastHandshakeAt: null,
+    lastHandshakeError: null,
+    lastDisconnectAt: null,
+    updatedAt: 0,
+  };
 
   private readonly socketServerActor = Cadenza.createActor<
     SocketServerSessionState,
@@ -144,9 +182,7 @@ export default class SocketController {
       keyResolver: (input) => this.resolveSocketServerKey(input),
       loadPolicy: "lazy",
       writeContract: "overwrite",
-      initState: this.createInitialSocketServerSessionState(
-        this.socketServerDefaultKey,
-      ),
+      initState: this.socketServerInitialSessionState,
     },
     { isMeta: true },
   );
@@ -163,7 +199,7 @@ export default class SocketController {
       keyResolver: (input) => this.resolveSocketClientFetchId(input),
       loadPolicy: "lazy",
       writeContract: "overwrite",
-      initState: this.createInitialSocketClientSessionState(),
+      initState: this.socketClientInitialSessionState,
     },
     { isMeta: true },
   );
@@ -1440,52 +1476,6 @@ export default class SocketController {
     )
       .doOn("meta.fetch.handshake_complete")
       .emitsOnFail("meta.socket_client.connect_failed");
-  }
-
-  private createInitialSocketServerSessionState(
-    serverKey: string,
-  ): SocketServerSessionState {
-    return {
-      serverKey,
-      useSocket: false,
-      status: "inactive",
-      securityProfile: "medium",
-      networkType: "internal",
-      connectionCount: 0,
-      lastStartedAt: null,
-      lastConnectedAt: null,
-      lastDisconnectedAt: null,
-      lastShutdownAt: null,
-      updatedAt: 0,
-    };
-  }
-
-  private createInitialSocketClientSessionState(): SocketClientSessionState {
-    return {
-      fetchId: "",
-      serviceInstanceId: "",
-      communicationTypes: [],
-      serviceName: "",
-      serviceAddress: "",
-      servicePort: 0,
-      protocol: "http",
-      url: "",
-      socketId: null,
-      connected: false,
-      handshake: false,
-      pendingDelegations: 0,
-      pendingTimers: 0,
-      reconnectAttempts: 0,
-      connectErrors: 0,
-      reconnectErrors: 0,
-      socketErrors: 0,
-      errorCount: 0,
-      destroyed: false,
-      lastHandshakeAt: null,
-      lastHandshakeError: null,
-      lastDisconnectAt: null,
-      updatedAt: 0,
-    };
   }
 
   private resolveSocketServerKey(input: AnyObject): string {

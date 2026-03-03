@@ -87,6 +87,22 @@ describe("SocketController delegation cleanup", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it("keeps socket setup as signal-driven actor tasks", () => {
+    const setupSocketServerTask = Cadenza.get("Setup SocketServer");
+    const connectSocketClientTask = Cadenza.get("Connect to socket server");
+
+    expect(setupSocketServerTask).toBeDefined();
+    expect(connectSocketClientTask).toBeDefined();
+    expect(
+      setupSocketServerTask?.observedSignals.has(
+        "global.meta.rest.network_configured",
+      ),
+    ).toBe(true);
+    expect(
+      connectSocketClientTask?.observedSignals.has("meta.fetch.handshake_complete"),
+    ).toBe(true);
+  });
+
   it("does not accumulate pending delegation/timer counters across failed retries", async () => {
     const controller = SocketController.instance as any;
 

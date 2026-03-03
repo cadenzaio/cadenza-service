@@ -279,6 +279,28 @@ export default class GraphMetadataController {
       .doOn("meta.node.mapped", "meta.node.detected_previous_task_execution")
       .emits("global.meta.graph_metadata.relationship_executed");
 
+    Cadenza.createMetaTask("Handle actor creation", (ctx) => {
+      return {
+        data: {
+          ...ctx.data,
+          service_name: Cadenza.serviceRegistry.serviceName,
+        },
+      };
+    })
+      .doOn("meta.actor.created")
+      .emits("global.meta.graph_metadata.actor_created");
+
+    Cadenza.createMetaTask("Handle actor task association", (ctx) => {
+      return {
+        data: {
+          ...ctx.data,
+          service_name: Cadenza.serviceRegistry.serviceName,
+        },
+      };
+    })
+      .doOn("meta.actor.task_associated")
+      .emits("global.meta.graph_metadata.actor_task_associated");
+
     Cadenza.createMetaTask("Handle Intent Creation", (ctx) => {
       const intentName = ctx.data?.name;
       return {

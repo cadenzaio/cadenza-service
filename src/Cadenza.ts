@@ -545,6 +545,31 @@ export default class CadenzaService {
     return Cadenza.get(taskName);
   }
 
+  public static getActor<
+    D extends Record<string, any> = AnyObject,
+    R = AnyObject,
+  >(actorName: string): Actor<D, R> | undefined {
+    const cadenzaWithActors = Cadenza as unknown as {
+      getActor?: <D extends Record<string, any>, R = AnyObject>(
+        actorName: string,
+      ) => Actor<D, R> | undefined;
+    };
+    return cadenzaWithActors.getActor?.<D, R>(actorName);
+  }
+
+  public static getAllActors<
+    D extends Record<string, any> = AnyObject,
+    R = AnyObject,
+  >(): Actor<D, R>[] {
+    const cadenzaWithActors = Cadenza as unknown as {
+      getAllActors?: <D extends Record<string, any>, R = AnyObject>() => Actor<
+        D,
+        R
+      >[];
+    };
+    return cadenzaWithActors.getAllActors?.<D, R>() ?? [];
+  }
+
   public static getRoutine(routineName: string): GraphRoutine | undefined {
     return Cadenza.getRoutine(routineName);
   }
@@ -1230,7 +1255,7 @@ export default class CadenzaService {
     options: ActorFactoryOptions = {},
   ): Actor<D, R> {
     this.bootstrap();
-    return new Actor<D, R>(spec, options as ActorFactoryOptions<D, R>);
+    return Cadenza.createActor(spec, options as ActorFactoryOptions<D, R>);
   }
 
   static createActorFromDefinition<
