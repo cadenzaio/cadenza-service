@@ -1,7 +1,6 @@
 import Cadenza from "../Cadenza";
 import { Server } from "socket.io";
 import { IRateLimiterOptions, RateLimiterMemory } from "rate-limiter-flexible";
-import xss from "xss";
 import type { AnyObject, Task } from "@cadenza.io/core";
 import { io, Socket } from "socket.io-client";
 import { isBrowser } from "../utils/environment";
@@ -38,12 +37,88 @@ interface SocketClientDiagnosticsState {
   updatedAt: number;
 }
 
+type SocketClientSessionOperation =
+  | "connect"
+  | "handshake"
+  | "delegate"
+  | "transmit"
+  | "shutdown";
+
+interface SocketClientSessionState {
+  fetchId: string;
+  serviceInstanceId: string;
+  communicationTypes: string[];
+  serviceName: string;
+  serviceAddress: string;
+  servicePort: number;
+  protocol: string;
+  url: string;
+  socketId: string | null;
+  connected: boolean;
+  handshake: boolean;
+  pendingDelegations: number;
+  pendingTimers: number;
+  reconnectAttempts: number;
+  connectErrors: number;
+  reconnectErrors: number;
+  socketErrors: number;
+  errorCount: number;
+  destroyed: boolean;
+  lastHandshakeAt: string | null;
+  lastHandshakeError: string | null;
+  lastDisconnectAt: string | null;
+  updatedAt: number;
+}
+
+type SocketEmitWhenReady = <T>(
+  event: string,
+  data: AnyObject,
+  timeoutMs: number,
+  ack?: (response: T) => void,
+) => Promise<T>;
+
+interface SocketClientRuntimeHandle {
+  url: string;
+  socket: Socket;
+  initialized: boolean;
+  handshake: boolean;
+  errorCount: number;
+  pendingDelegationIds: Set<string>;
+  pendingTimers: Set<NodeJS.Timeout>;
+  emitWhenReady: SocketEmitWhenReady | null;
+  handshakeTask: Task | null;
+  delegateTask: Task | null;
+  transmitTask: Task | null;
+}
+
+interface SocketServerSessionState {
+  serverKey: string;
+  useSocket: boolean;
+  status: "inactive" | "active" | "shutdown";
+  securityProfile: string;
+  networkType: string;
+  connectionCount: number;
+  lastStartedAt: string | null;
+  lastConnectedAt: string | null;
+  lastDisconnectedAt: string | null;
+  lastShutdownAt: string | null;
+  updatedAt: number;
+}
+
+interface SocketServerRuntimeHandle {
+  server: Server;
+  initialized: boolean;
+  connectedSocketIds: Set<string>;
+  broadcastStatusTask: Task | null;
+  shutdownTask: Task | null;
+}
+
 /**
- * The `SocketController` class handles the setup and management of a WebSocket server,
- * ensuring secure connections, message handling, and rate-limiting.
- * This class is designed to function as a singleton, providing a unified interface
- * for WebSocket interactions in the application by standardizing the server setup
- * and integrating task-based processing through the `Cadenza` framework.
+ * Socket transport orchestration in the Cadenza primitive ecosystem.
+ *
+ * - setup is signal-triggered
+ * - state/runtime ownership is actor-backed
+ * - dynamic runtime tasks are still allowed for advanced orchestration (ephemeral resolvers etc.)
  */
 export default class SocketController {
   private static _instance: SocketController;
@@ -52,26 +127,1548 @@ export default class SocketController {
     return this._instance;
   }
 
-  private socketClientDiagnostics: Map<string, SocketClientDiagnosticsState> =
-    new Map();
   private readonly diagnosticsErrorHistoryLimit = 100;
   private readonly diagnosticsMaxClientEntries = 500;
   private readonly destroyedDiagnosticsTtlMs = 15 * 60_000;
+  private readonly socketServerDefaultKey = "socket-server-default";
 
-  private pruneSocketClientDiagnostics(now = Date.now()): void {
-    for (const [fetchId, state] of this.socketClientDiagnostics.entries()) {
-      if (state.destroyed && now - state.updatedAt > this.destroyedDiagnosticsTtlMs) {
-        this.socketClientDiagnostics.delete(fetchId);
-      }
+  private readonly socketServerActor = Cadenza.createActor<
+    SocketServerSessionState,
+    SocketServerRuntimeHandle | null
+  >(
+    {
+      name: "SocketServerActor",
+      description:
+        "Holds durable socket server session state and runtime socket server handle",
+      defaultKey: this.socketServerDefaultKey,
+      keyResolver: (input) => this.resolveSocketServerKey(input),
+      loadPolicy: "lazy",
+      writeContract: "overwrite",
+      initState: this.createInitialSocketServerSessionState(
+        this.socketServerDefaultKey,
+      ),
+    },
+    { isMeta: true },
+  );
+
+  private readonly socketClientActor = Cadenza.createActor<
+    SocketClientSessionState,
+    SocketClientRuntimeHandle | null
+  >(
+    {
+      name: "SocketClientActor",
+      description:
+        "Holds durable socket client session state and runtime socket connection handles",
+      defaultKey: "socket-client-default",
+      keyResolver: (input) => this.resolveSocketClientFetchId(input),
+      loadPolicy: "lazy",
+      writeContract: "overwrite",
+      initState: this.createInitialSocketClientSessionState(),
+    },
+    { isMeta: true },
+  );
+
+  private readonly socketClientDiagnosticsActor = Cadenza.createActor<{
+    entries: Record<string, SocketClientDiagnosticsState>;
+  }>(
+    {
+      name: "SocketClientDiagnosticsActor",
+      description:
+        "Tracks socket client diagnostics snapshots per fetchId for transport observability",
+      defaultKey: "socket-client-diagnostics",
+      loadPolicy: "eager",
+      writeContract: "overwrite",
+      initState: {
+        entries: {},
+      },
+    },
+    { isMeta: true },
+  );
+
+  constructor() {
+    this.registerDiagnosticsTasks();
+    this.registerSocketServerTasks();
+    this.registerSocketClientTasks();
+
+    Cadenza.createMetaTask(
+      "Collect socket transport diagnostics",
+      this.socketClientDiagnosticsActor.task(
+        ({ state, input }) =>
+          this.collectSocketTransportDiagnostics(input, state.entries),
+        { mode: "read" },
+      ),
+      "Responds to distributed transport diagnostics inquiries with socket client data.",
+    ).respondsTo(META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT);
+  }
+
+  private registerDiagnosticsTasks(): void {
+    Cadenza.createThrottledMetaTask(
+      "SocketClientDiagnosticsActor.Upsert",
+      this.socketClientDiagnosticsActor.task(
+        ({ state, input, setState }) => {
+          const fetchId = String(input.fetchId ?? "").trim();
+          if (!fetchId) {
+            return;
+          }
+
+          const now = Date.now();
+          const entries = { ...state.entries };
+          const existing = entries[fetchId];
+
+          const base: SocketClientDiagnosticsState = existing
+            ? {
+                ...existing,
+                errorHistory: [...existing.errorHistory],
+              }
+            : {
+                fetchId,
+                serviceName: String(input.serviceName ?? ""),
+                url: String(input.url ?? ""),
+                socketId: null,
+                connected: false,
+                handshake: false,
+                reconnectAttempts: 0,
+                connectErrors: 0,
+                reconnectErrors: 0,
+                socketErrors: 0,
+                pendingDelegations: 0,
+                pendingTimers: 0,
+                destroyed: false,
+                lastHandshakeAt: null,
+                lastHandshakeError: null,
+                lastDisconnectAt: null,
+                lastError: null,
+                lastErrorAt: 0,
+                errorHistory: [],
+                updatedAt: now,
+              };
+
+          if (input.serviceName !== undefined) {
+            base.serviceName = String(input.serviceName);
+          }
+          if (input.url !== undefined) {
+            base.url = String(input.url);
+          }
+
+          const patch =
+            input.patch && typeof input.patch === "object"
+              ? (input.patch as Partial<SocketClientDiagnosticsState>)
+              : {};
+
+          Object.assign(base, patch);
+          base.fetchId = fetchId;
+          base.updatedAt = now;
+
+          const errorMessage =
+            input.error !== undefined ? this.getErrorMessage(input.error) : undefined;
+          if (errorMessage) {
+            base.lastError = errorMessage;
+            base.lastErrorAt = now;
+            base.errorHistory.push({
+              at: new Date(now).toISOString(),
+              message: errorMessage,
+            });
+            if (base.errorHistory.length > this.diagnosticsErrorHistoryLimit) {
+              base.errorHistory.splice(
+                0,
+                base.errorHistory.length - this.diagnosticsErrorHistoryLimit,
+              );
+            }
+          }
+
+          entries[fetchId] = base;
+
+          this.pruneDiagnosticsEntries(entries, now);
+
+          setState({ entries });
+        },
+        { mode: "write" },
+      ),
+      (context) => String(context?.fetchId ?? "default"),
+      "Upserts socket client diagnostics in actor state.",
+    ).doOn("meta.socket_client.diagnostics_upsert_requested");
+  }
+
+  private registerSocketServerTasks(): void {
+    Cadenza.createThrottledMetaTask(
+      "SocketServerActor.PatchSession",
+      this.socketServerActor.task(
+        ({ state, input, setState }) => {
+          const patch =
+            input.patch && typeof input.patch === "object"
+              ? (input.patch as Partial<SocketServerSessionState>)
+              : {};
+          setState({
+            ...state,
+            ...patch,
+            updatedAt: Date.now(),
+          });
+        },
+        { mode: "write" },
+      ),
+      (context) => String(context?.serverKey ?? this.socketServerDefaultKey),
+      "Applies partial durable session updates for socket server actor.",
+    ).doOn("meta.socket_server.session_patch_requested");
+
+    Cadenza.createMetaTask(
+      "SocketServerActor.ClearRuntime",
+      this.socketServerActor.task(
+        ({ setRuntimeState }) => {
+          setRuntimeState(null);
+        },
+        { mode: "write" },
+      ),
+      "Clears socket server runtime handle after shutdown.",
+    ).doOn("meta.socket_server.runtime_clear_requested");
+
+    const setupSocketServerTask = Cadenza.createMetaTask(
+      "Setup SocketServer",
+      this.socketServerActor.task(
+        ({ state, runtimeState, input, actor, setState, setRuntimeState, emit }) => {
+          const serverKey =
+            this.resolveSocketServerKey(input) ?? actor.key ?? this.socketServerDefaultKey;
+          const shouldUseSocket = Boolean(input.__useSocket);
+
+          if (!shouldUseSocket) {
+            this.destroySocketServerRuntimeHandle(runtimeState);
+            setRuntimeState(null);
+            setState({
+              ...state,
+              serverKey,
+              useSocket: false,
+              status: "inactive",
+              connectionCount: 0,
+              lastShutdownAt: new Date().toISOString(),
+              updatedAt: Date.now(),
+            });
+            return;
+          }
+
+          let runtimeHandle = runtimeState;
+          if (!runtimeHandle) {
+            runtimeHandle = this.createSocketServerRuntimeHandleFromContext(input);
+            setRuntimeState(runtimeHandle);
+          }
+
+          const profile = String(input.__securityProfile ?? state.securityProfile ?? "medium");
+          const networkType = String(input.__networkType ?? state.networkType ?? "internal");
+
+          const schedulePatch = (patch: Partial<SocketServerSessionState>) => {
+            Cadenza.emit("meta.socket_server.session_patch_requested", {
+              serverKey,
+              patch,
+            });
+          };
+
+          if (runtimeHandle.initialized) {
+            schedulePatch({
+              status: "active",
+              useSocket: true,
+              securityProfile: profile,
+              networkType,
+              connectionCount: runtimeHandle.connectedSocketIds.size,
+              lastStartedAt: state.lastStartedAt ?? new Date().toISOString(),
+            });
+            return;
+          }
+
+          const server = runtimeHandle.server;
+          runtimeHandle.initialized = true;
+
+          setState({
+            ...state,
+            serverKey,
+            useSocket: true,
+            status: "active",
+            securityProfile: profile,
+            networkType,
+            connectionCount: runtimeHandle.connectedSocketIds.size,
+            lastStartedAt: state.lastStartedAt ?? new Date().toISOString(),
+            updatedAt: Date.now(),
+          });
+
+          server.use((socket, next) => {
+            const origin = socket?.handshake?.headers?.origin;
+            const allowedOrigins = ["*"];
+            let effectiveOrigin = origin || "unknown";
+            if (networkType === "internal") effectiveOrigin = "internal";
+
+            if (
+              profile !== "low" &&
+              !allowedOrigins.includes(effectiveOrigin) &&
+              !allowedOrigins.includes("*")
+            ) {
+              return next(new Error("Unauthorized origin"));
+            }
+
+            const limiterOptions: { [key: string]: IRateLimiterOptions } = {
+              low: { points: Infinity, duration: 1 },
+              medium: { points: 10000, duration: 10 },
+              high: { points: 1000, duration: 60, blockDuration: 300 },
+            };
+
+            const limiter = new RateLimiterMemory(
+              limiterOptions[profile] ?? limiterOptions.medium,
+            );
+            const clientKey = socket?.handshake?.address || "unknown";
+
+            socket.use((packet, packetNext) => {
+              limiter
+                .consume(clientKey)
+                .then(() => packetNext())
+                .catch((rej) => {
+                  if (rej.msBeforeNext > 0) {
+                    Cadenza.log(
+                      "SocketServer: Rate limit exceeded",
+                      {
+                        retryAfter: rej.msBeforeNext / 1000,
+                        clientKey,
+                        socketId: socket.id,
+                      },
+                      "warning",
+                    );
+                    socket.emit("error", {
+                      message: "Rate limit exceeded",
+                      retryAfter: rej.msBeforeNext / 1000,
+                    });
+                    packetNext(new Error("Rate limit exceeded"));
+                  } else {
+                    Cadenza.log(
+                      "SocketServer: Rate limit exceeded, blocked",
+                      {
+                        clientKey,
+                        socketId: socket.id,
+                      },
+                      "critical",
+                    );
+                    socket.disconnect(true);
+                    packetNext(new Error("Blocked"));
+                  }
+                });
+            });
+
+            next();
+          });
+
+          server.on("connection", (ws: any) => {
+            runtimeHandle.connectedSocketIds.add(ws.id);
+            schedulePatch({
+              connectionCount: runtimeHandle.connectedSocketIds.size,
+              lastConnectedAt: new Date().toISOString(),
+              status: "active",
+            });
+
+            try {
+              ws.on("handshake", (ctx: AnyObject, callback: (result: AnyObject) => void) => {
+                Cadenza.log("SocketServer: New connection", {
+                  ...ctx,
+                  socketId: ws.id,
+                });
+
+                callback({
+                  status: "success",
+                  serviceName: Cadenza.serviceRegistry.serviceName,
+                });
+
+                if (ctx.isFrontend) {
+                  const fetchId = `browser:${ctx.serviceInstanceId}`;
+                  Cadenza.createMetaTask(
+                    `Transmit signal to ${fetchId}`,
+                    (c, emitter) => {
+                      if (c.__signalName === undefined) {
+                        return;
+                      }
+
+                      ws.emit("signal", c);
+
+                      if (c.__routineExecId) {
+                        emitter(`meta.socket_client.transmitted:${c.__routineExecId}`, {});
+                      }
+                    },
+                    "Transmit frontend bound signal through active websocket.",
+                  )
+                    .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
+                    .attachSignal("meta.socket_client.transmitted");
+                }
+
+                Cadenza.emit("meta.socket.handshake", ctx);
+              });
+
+              ws.on("delegation", (ctx: AnyObject, callback: (context: AnyObject) => void) => {
+                const deputyExecId = ctx.__metadata.__deputyExecId;
+
+                Cadenza.createEphemeralMetaTask(
+                  "Resolve delegation",
+                  (delegationCtx: AnyObject) => {
+                    callback(delegationCtx);
+                  },
+                  "Resolves a delegation request using client callback.",
+                  { register: false },
+                )
+                  .doOn(`meta.node.graph_completed:${deputyExecId}`)
+                  .emits(`meta.socket.delegation_resolved:${deputyExecId}`);
+
+                Cadenza.createEphemeralMetaTask(
+                  "Delegation progress update",
+                  (progressCtx) => {
+                    if (progressCtx.__progress !== undefined) {
+                      ws.emit("delegation_progress", progressCtx);
+                    }
+                  },
+                  "Updates delegation progress to client.",
+                  {
+                    once: false,
+                    destroyCondition: (progressCtx: AnyObject) =>
+                      progressCtx.data.progress === 1.0 ||
+                      progressCtx.data?.progress === undefined,
+                    register: false,
+                  },
+                )
+                  .doOn(
+                    `meta.node.routine_execution_progress:${deputyExecId}`,
+                    `meta.node.graph_completed:${deputyExecId}`,
+                  )
+                  .emitsOnFail(`meta.socket.progress_failed:${deputyExecId}`);
+
+                Cadenza.emit("meta.socket.delegation_requested", {
+                  ...ctx,
+                  __name: ctx.__remoteRoutineName,
+                });
+              });
+
+              ws.on("signal", (ctx: AnyObject, callback: (context: AnyObject) => void) => {
+                if (Cadenza.signalBroker.listObservedSignals().includes(ctx.__signalName)) {
+                  callback({
+                    __status: "success",
+                    __signalName: ctx.__signalName,
+                  });
+
+                  Cadenza.emit(ctx.__signalName, ctx);
+                } else {
+                  Cadenza.log(
+                    `No such signal ${ctx.__signalName} on ${ctx.__serviceName}`,
+                    "warning",
+                  );
+                  callback({
+                    ...ctx,
+                    __status: "error",
+                    __error: `No such signal: ${ctx.__signalName}`,
+                    errored: true,
+                  });
+                }
+              });
+
+              ws.on(
+                "status_check",
+                (ctx: AnyObject, callback: (context: AnyObject) => void) => {
+                  Cadenza.createEphemeralMetaTask(
+                    "Resolve status check",
+                    callback,
+                    "Resolves a status check request",
+                    { register: false },
+                  ).doAfter(Cadenza.serviceRegistry.getStatusTask);
+
+                  Cadenza.emit("meta.socket.status_check_requested", ctx);
+                },
+              );
+
+              ws.on("disconnect", () => {
+                runtimeHandle.connectedSocketIds.delete(ws.id);
+                schedulePatch({
+                  connectionCount: runtimeHandle.connectedSocketIds.size,
+                  lastDisconnectedAt: new Date().toISOString(),
+                });
+                Cadenza.log(
+                  "Socket client disconnected",
+                  { socketId: ws.id },
+                  "warning",
+                );
+                Cadenza.emit("meta.socket.disconnected", {
+                  __wsId: ws.id,
+                });
+              });
+            } catch (error) {
+              Cadenza.log(
+                "SocketServer: Error in socket event",
+                { error },
+                "error",
+              );
+            }
+
+            Cadenza.emit("meta.socket.connected", { __wsId: ws.id });
+          });
+
+          runtimeHandle.broadcastStatusTask = Cadenza.createMetaTask(
+            `Broadcast status ${serverKey}`,
+            (ctx) => server.emit("status_update", ctx),
+            "Broadcasts the status of the server to all clients",
+          ).doOn("meta.service.updated");
+
+          runtimeHandle.shutdownTask = Cadenza.createMetaTask(
+            `Shutdown SocketServer ${serverKey}`,
+            async () => {
+              this.destroySocketServerRuntimeHandle(runtimeHandle);
+
+              Cadenza.emit("meta.socket_server.runtime_clear_requested", {
+                serverKey,
+              });
+              Cadenza.emit("meta.socket_server.session_patch_requested", {
+                serverKey,
+                patch: {
+                  useSocket: false,
+                  status: "shutdown",
+                  connectionCount: 0,
+                  lastShutdownAt: new Date().toISOString(),
+                },
+              });
+            },
+            "Shuts down the socket server",
+          )
+            .doOn("meta.socket_server_shutdown_requested")
+            .emits("meta.socket.shutdown");
+
+          return true;
+        },
+        { mode: "write" },
+      ),
+      "Initializes socket server runtime through actor state.",
+    );
+
+    setupSocketServerTask.doOn("global.meta.rest.network_configured");
+  }
+
+  private registerSocketClientTasks(): void {
+    Cadenza.createThrottledMetaTask(
+      "SocketClientActor.ApplySessionOperation",
+      this.socketClientActor.task(
+        ({ state, input, setState }) => {
+          const operation = String(
+            input.operation ?? "transmit",
+          ) as SocketClientSessionOperation;
+          const patch =
+            input.patch && typeof input.patch === "object"
+              ? (input.patch as Partial<SocketClientSessionState>)
+              : {};
+
+          let next: SocketClientSessionState = {
+            ...state,
+            ...patch,
+            communicationTypes:
+              patch.communicationTypes !== undefined
+                ? this.normalizeCommunicationTypes(patch.communicationTypes)
+                : state.communicationTypes,
+            updatedAt: Date.now(),
+          };
+
+          if (input.serviceName !== undefined) {
+            next.serviceName = String(input.serviceName);
+          }
+          if (input.serviceAddress !== undefined) {
+            next.serviceAddress = String(input.serviceAddress);
+          }
+          if (input.serviceInstanceId !== undefined) {
+            next.serviceInstanceId = String(input.serviceInstanceId);
+          }
+          if (input.protocol !== undefined) {
+            next.protocol = String(input.protocol);
+          }
+          if (input.url !== undefined) {
+            next.url = String(input.url);
+          }
+          if (input.servicePort !== undefined) {
+            next.servicePort = Number(input.servicePort);
+          }
+          if (input.fetchId !== undefined) {
+            next.fetchId = String(input.fetchId);
+          }
+
+          if (operation === "connect") {
+            next.destroyed = false;
+          } else if (operation === "handshake") {
+            next.destroyed = false;
+            next.connected = patch.connected ?? true;
+            next.handshake = patch.handshake ?? true;
+          } else if (operation === "shutdown") {
+            next.connected = false;
+            next.handshake = false;
+            next.destroyed = true;
+            next.pendingDelegations = 0;
+            next.pendingTimers = 0;
+          }
+
+          setState(next);
+          return next;
+        },
+        { mode: "write" },
+      ),
+      (context) =>
+        String(this.resolveSocketClientFetchId(context ?? {}) ?? "default"),
+      "Applies socket client session operation patch in actor durable state.",
+    ).doOn("meta.socket_client.session_operation_requested");
+
+    Cadenza.createMetaTask(
+      "SocketClientActor.ClearRuntime",
+      this.socketClientActor.task(
+        ({ setRuntimeState }) => {
+          setRuntimeState(null);
+        },
+        { mode: "write" },
+      ),
+      "Clears socket client runtime handle.",
+    ).doOn("meta.socket_client.runtime_clear_requested");
+
+    Cadenza.createMetaTask(
+      "Connect to socket server",
+      this.socketClientActor.task(
+        ({ state, runtimeState, input, setState, setRuntimeState, emit }) => {
+          const serviceInstanceId = String(input.serviceInstanceId ?? "");
+          const communicationTypes = this.normalizeCommunicationTypes(
+            input.communicationTypes,
+          );
+          const serviceName = String(input.serviceName ?? "");
+          const serviceAddress = String(input.serviceAddress ?? "");
+          const protocol = String(input.protocol ?? "http");
+
+          const normalizedPort = this.resolveServicePort(protocol, input.servicePort);
+          if (!serviceAddress || !normalizedPort) {
+            Cadenza.log(
+              "Socket client setup skipped due to missing address/port",
+              {
+                serviceName,
+                serviceAddress,
+                servicePort: input.servicePort,
+                protocol,
+              },
+              "warning",
+            );
+            return false;
+          }
+
+          const socketProtocol = protocol === "https" ? "wss" : "ws";
+          const url = `${socketProtocol}://${serviceAddress}:${normalizedPort}`;
+          const fetchId = `${serviceAddress}_${normalizedPort}`;
+
+          const applySessionOperation = (
+            operation: SocketClientSessionOperation,
+            patch: Partial<SocketClientSessionState> = {},
+          ) => {
+            Cadenza.emit("meta.socket_client.session_operation_requested", {
+              fetchId,
+              operation,
+              patch,
+              serviceInstanceId,
+              communicationTypes,
+              serviceName,
+              serviceAddress,
+              servicePort: normalizedPort,
+              protocol,
+              url,
+            });
+          };
+
+          const upsertDiagnostics = (
+            patch: Partial<SocketClientDiagnosticsState>,
+            error?: unknown,
+          ) => {
+            Cadenza.emit("meta.socket_client.diagnostics_upsert_requested", {
+              fetchId,
+              serviceName,
+              url,
+              patch,
+              error,
+            });
+          };
+
+          setState({
+            ...state,
+            fetchId,
+            serviceInstanceId,
+            communicationTypes,
+            serviceName,
+            serviceAddress,
+            servicePort: normalizedPort,
+            protocol,
+            url,
+            destroyed: false,
+            updatedAt: Date.now(),
+          });
+
+          let runtimeHandle = runtimeState;
+          if (!runtimeHandle || runtimeHandle.url !== url) {
+            this.destroySocketClientRuntimeHandle(runtimeHandle);
+            runtimeHandle = this.createSocketClientRuntimeHandle(url);
+            setRuntimeState(runtimeHandle);
+          }
+
+          upsertDiagnostics({
+            destroyed: false,
+            connected: false,
+            handshake: false,
+            socketId: runtimeHandle.socket.id ?? null,
+          });
+          applySessionOperation("connect", {
+            destroyed: false,
+            connected: false,
+            handshake: false,
+            socketId: runtimeHandle.socket.id ?? null,
+            pendingDelegations: runtimeHandle.pendingDelegationIds.size,
+            pendingTimers: runtimeHandle.pendingTimers.size,
+            errorCount: runtimeHandle.errorCount,
+          });
+
+          if (runtimeHandle.initialized) {
+            return true;
+          }
+
+          runtimeHandle.initialized = true;
+          runtimeHandle.handshake = false;
+          runtimeHandle.errorCount = 0;
+
+          const syncPendingCounts = () => {
+            const pendingDelegations = runtimeHandle.pendingDelegationIds.size;
+            const pendingTimers = runtimeHandle.pendingTimers.size;
+            upsertDiagnostics({
+              pendingDelegations,
+              pendingTimers,
+            });
+            applySessionOperation("delegate", {
+              pendingDelegations,
+              pendingTimers,
+            });
+          };
+
+          runtimeHandle.emitWhenReady = <T>(
+            event: string,
+            data: AnyObject,
+            timeoutMs: number = 60_000,
+            ack?: (response: T) => void,
+          ): Promise<T> => {
+            return new Promise((resolve) => {
+              const parsedTimeout = Number(timeoutMs);
+              const normalizedTimeoutMs =
+                Number.isFinite(parsedTimeout) && parsedTimeout > 0
+                  ? Math.trunc(parsedTimeout)
+                  : 60_000;
+
+              let timer: NodeJS.Timeout | null = null;
+              let settled = false;
+
+              const clearPendingTimer = () => {
+                if (!timer) {
+                  return;
+                }
+                clearTimeout(timer);
+                runtimeHandle.pendingTimers.delete(timer);
+                syncPendingCounts();
+                timer = null;
+              };
+
+              const settle = (response: T) => {
+                if (settled) {
+                  return;
+                }
+                settled = true;
+                clearPendingTimer();
+                if (ack) ack(response);
+                resolve(response);
+              };
+
+              const resolveWithError = (errorMessage: string, fallbackError?: unknown) => {
+                settle({
+                  ...data,
+                  errored: true,
+                  __error: errorMessage,
+                  error:
+                    fallbackError instanceof Error
+                      ? fallbackError.message
+                      : errorMessage,
+                  socketId: runtimeHandle.socket.id,
+                  serviceName,
+                  url,
+                } as T);
+              };
+
+              const tryEmit = async () => {
+                const waitResult = await waitForSocketConnection(
+                  runtimeHandle.socket,
+                  normalizedTimeoutMs + 10,
+                  (reason, error) => {
+                    if (reason === "connect_timeout") {
+                      return `Socket connect timed out before '${event}'`;
+                    }
+                    if (reason === "connect_error") {
+                      const errMessage =
+                        error instanceof Error ? error.message : String(error);
+                      return `Socket connect error before '${event}': ${errMessage}`;
+                    }
+                    return `Socket disconnected before '${event}'`;
+                  },
+                );
+
+                if (!waitResult.ok) {
+                  Cadenza.log(
+                    waitResult.error,
+                    {
+                      socketId: runtimeHandle.socket.id,
+                      serviceName,
+                      url,
+                      event,
+                    },
+                    "error",
+                  );
+                  upsertDiagnostics({}, waitResult.error);
+                  resolveWithError(waitResult.error);
+                  return;
+                }
+
+                timer = setTimeout(() => {
+                  if (settled) {
+                    return;
+                  }
+                  clearPendingTimer();
+                  const message = `Socket event '${event}' timed out`;
+                  Cadenza.log(
+                    message,
+                    { socketId: runtimeHandle.socket.id, serviceName, url },
+                    "error",
+                  );
+                  upsertDiagnostics(
+                    {
+                      lastHandshakeError: message,
+                    },
+                    message,
+                  );
+                  applySessionOperation("transmit", {
+                    lastHandshakeError: message,
+                  });
+                  resolveWithError(message);
+                }, normalizedTimeoutMs + 10);
+
+                runtimeHandle.pendingTimers.add(timer);
+                syncPendingCounts();
+
+                runtimeHandle.socket
+                  .timeout(normalizedTimeoutMs)
+                  .emit(event, data, (err: any, response: T) => {
+                    if (err) {
+                      Cadenza.log(
+                        "Socket timeout.",
+                        {
+                          event,
+                          error: err.message,
+                          socketId: runtimeHandle.socket.id,
+                          serviceName,
+                        },
+                        "warning",
+                      );
+                      upsertDiagnostics(
+                        {
+                          lastHandshakeError: err.message,
+                        },
+                        err,
+                      );
+                      applySessionOperation("transmit", {
+                        lastHandshakeError: err.message,
+                      });
+                      response = {
+                        __error: `Timeout error: ${err}`,
+                        errored: true,
+                        ...data,
+                      } as T;
+                    }
+                    settle(response);
+                  });
+              };
+
+              void tryEmit().catch((error) => {
+                Cadenza.log(
+                  "Socket emit failed unexpectedly",
+                  {
+                    event,
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                    socketId: runtimeHandle.socket.id,
+                    serviceName,
+                    url,
+                  },
+                  "error",
+                );
+                const message = `Socket event '${event}' failed`;
+                upsertDiagnostics(
+                  {
+                    lastHandshakeError:
+                      error instanceof Error ? error.message : String(error),
+                  },
+                  error,
+                );
+                applySessionOperation("transmit", {
+                  lastHandshakeError:
+                    error instanceof Error ? error.message : String(error),
+                });
+                resolveWithError(message, error);
+              });
+            });
+          };
+
+          const socket = runtimeHandle.socket;
+
+          socket.on("connect", () => {
+            if (runtimeHandle.handshake) return;
+            upsertDiagnostics({
+              connected: true,
+              destroyed: false,
+              socketId: socket.id ?? null,
+            });
+            applySessionOperation("connect", {
+              connected: true,
+              destroyed: false,
+              socketId: socket.id ?? null,
+            });
+            Cadenza.emit(`meta.socket_client.connected:${fetchId}`, input);
+          });
+
+          socket.on("delegation_progress", (delegationCtx) => {
+            Cadenza.emit(
+              `meta.socket_client.delegation_progress:${delegationCtx.__metadata.__deputyExecId}`,
+              delegationCtx,
+            );
+          });
+
+          socket.on("signal", (signalCtx) => {
+            if (Cadenza.signalBroker.listObservedSignals().includes(signalCtx.__signalName)) {
+              Cadenza.emit(signalCtx.__signalName, signalCtx);
+            }
+          });
+
+          socket.on("status_update", (status) => {
+            Cadenza.emit("meta.socket_client.status_received", status);
+          });
+
+          socket.on("connect_error", (err) => {
+            runtimeHandle.handshake = false;
+            upsertDiagnostics(
+              {
+                connected: false,
+                handshake: false,
+                connectErrors: state.connectErrors + 1,
+                lastHandshakeError: err.message,
+              },
+              err,
+            );
+            applySessionOperation("connect", {
+              connected: false,
+              handshake: false,
+              connectErrors: state.connectErrors + 1,
+              lastHandshakeError: err.message,
+            });
+            Cadenza.log(
+              "Socket connect error",
+              {
+                error: err.message,
+                serviceName,
+                socketId: socket.id,
+                url,
+              },
+              "error",
+            );
+            Cadenza.emit(`meta.socket_client.connect_error:${fetchId}`, err);
+          });
+
+          socket.on("reconnect_attempt", (attempt) => {
+            upsertDiagnostics({ reconnectAttempts: attempt });
+            applySessionOperation("connect", {
+              reconnectAttempts: attempt,
+            });
+            Cadenza.log(`Reconnect attempt: ${attempt}`);
+          });
+
+          socket.on("reconnect", (attempt) => {
+            upsertDiagnostics({ connected: true });
+            applySessionOperation("connect", {
+              connected: true,
+            });
+            Cadenza.log(`Socket reconnected after ${attempt} tries`, {
+              socketId: socket.id,
+              url,
+              serviceName,
+            });
+          });
+
+          socket.on("reconnect_error", (err) => {
+            runtimeHandle.handshake = false;
+            upsertDiagnostics(
+              {
+                connected: false,
+                handshake: false,
+                reconnectErrors: state.reconnectErrors + 1,
+                lastHandshakeError: err.message,
+              },
+              err,
+            );
+            applySessionOperation("connect", {
+              connected: false,
+              handshake: false,
+              reconnectErrors: state.reconnectErrors + 1,
+              lastHandshakeError: err.message,
+            });
+            Cadenza.log(
+              "Socket reconnect failed.",
+              { error: err.message, serviceName, url, socketId: socket.id },
+              "warning",
+            );
+          });
+
+          socket.on("error", (err) => {
+            runtimeHandle.errorCount += 1;
+            upsertDiagnostics(
+              {
+                socketErrors: state.socketErrors + 1,
+                lastHandshakeError: this.getErrorMessage(err),
+              },
+              err,
+            );
+            applySessionOperation("transmit", {
+              socketErrors: state.socketErrors + 1,
+              errorCount: runtimeHandle.errorCount,
+              lastHandshakeError: this.getErrorMessage(err),
+            });
+            Cadenza.log(
+              "Socket error",
+              { error: err, socketId: socket.id, url, serviceName },
+              "error",
+            );
+            Cadenza.emit("meta.socket_client.error", err);
+          });
+
+          socket.on("disconnect", () => {
+            const disconnectedAt = new Date().toISOString();
+            upsertDiagnostics({
+              connected: false,
+              handshake: false,
+              lastDisconnectAt: disconnectedAt,
+            });
+            applySessionOperation("connect", {
+              connected: false,
+              handshake: false,
+              lastDisconnectAt: disconnectedAt,
+            });
+            Cadenza.log(
+              "Socket disconnected.",
+              { url, serviceName, socketId: socket.id },
+              "warning",
+            );
+            Cadenza.emit(`meta.socket_client.disconnected:${fetchId}`, {
+              serviceName,
+              serviceAddress,
+              servicePort: normalizedPort,
+            });
+            runtimeHandle.handshake = false;
+          });
+
+          socket.connect();
+
+          runtimeHandle.handshakeTask = Cadenza.createMetaTask(
+            `Socket handshake with ${url}`,
+            async (_ctx, emitter) => {
+              if (runtimeHandle.handshake) return;
+              runtimeHandle.handshake = true;
+
+              upsertDiagnostics({
+                handshake: true,
+              });
+              applySessionOperation("handshake", {
+                handshake: true,
+              });
+
+              await runtimeHandle.emitWhenReady?.(
+                "handshake",
+                {
+                  serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                  serviceName: Cadenza.serviceRegistry.serviceName,
+                  isFrontend: isBrowser,
+                  __status: "success",
+                },
+                10_000,
+                (result: any) => {
+                  if (result.status === "success") {
+                    const handshakeAt = new Date().toISOString();
+                    upsertDiagnostics({
+                      connected: true,
+                      handshake: true,
+                      lastHandshakeAt: handshakeAt,
+                      lastHandshakeError: null,
+                      socketId: socket.id ?? null,
+                    });
+                    applySessionOperation("handshake", {
+                      connected: true,
+                      handshake: true,
+                      lastHandshakeAt: handshakeAt,
+                      lastHandshakeError: null,
+                      socketId: socket.id ?? null,
+                    });
+                    Cadenza.log("Socket client connected", {
+                      result,
+                      serviceName,
+                      socketId: socket.id,
+                      url,
+                    });
+                  } else {
+                    const errorMessage =
+                      result?.__error ?? result?.error ?? "Socket handshake failed";
+                    upsertDiagnostics(
+                      {
+                        connected: false,
+                        handshake: false,
+                        lastHandshakeError: errorMessage,
+                      },
+                      errorMessage,
+                    );
+                    applySessionOperation("handshake", {
+                      connected: false,
+                      handshake: false,
+                      lastHandshakeError: errorMessage,
+                    });
+                    Cadenza.log(
+                      "Socket handshake failed",
+                      { result, serviceName, socketId: socket.id, url },
+                      "warning",
+                    );
+                  }
+
+                  // If needed in future:
+                  // runtimeHandle.errorCount threshold can request shutdown signal.
+                  void emitter;
+                },
+              );
+            },
+            "Handshakes with socket server",
+          ).doOn(`meta.socket_client.connected:${fetchId}`);
+
+          runtimeHandle.delegateTask = Cadenza.createMetaTask(
+            `Delegate flow to Socket service ${url}`,
+            async (delegateCtx, emitter) => {
+              if (delegateCtx.__remoteRoutineName === undefined) {
+                return;
+              }
+
+              delete delegateCtx.__isSubMeta;
+              delete delegateCtx.__broadcast;
+
+              const deputyExecId = delegateCtx.__metadata?.__deputyExecId;
+              const requestSentAt = Date.now();
+              if (deputyExecId) {
+                runtimeHandle.pendingDelegationIds.add(deputyExecId);
+                syncPendingCounts();
+              }
+
+              try {
+                const resultContext =
+                  ((await runtimeHandle.emitWhenReady?.(
+                    "delegation",
+                    delegateCtx,
+                    delegateCtx.__timeout ?? 60_000,
+                  )) as AnyObject | undefined) ??
+                  ({
+                    errored: true,
+                    __error: "Socket delegation returned no response",
+                  } as AnyObject);
+
+                const requestDuration = Date.now() - requestSentAt;
+                const metadata = resultContext.__metadata;
+                delete resultContext.__metadata;
+
+                if (deputyExecId) {
+                  emitter(`meta.socket_client.delegated:${deputyExecId}`, {
+                    ...resultContext,
+                    ...metadata,
+                    __requestDuration: requestDuration,
+                  });
+                }
+
+                if (resultContext?.errored || resultContext?.failed) {
+                  const errorMessage =
+                    resultContext?.__error ??
+                    resultContext?.error ??
+                    "Socket delegation failed";
+                  upsertDiagnostics(
+                    {
+                      lastHandshakeError: String(errorMessage),
+                    },
+                    errorMessage,
+                  );
+                  applySessionOperation("delegate", {
+                    lastHandshakeError: String(errorMessage),
+                  });
+                }
+
+                return resultContext;
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                const failedContext = {
+                  errored: true,
+                  __error: message,
+                };
+
+                if (deputyExecId) {
+                  emitter(`meta.socket_client.delegated:${deputyExecId}`, {
+                    ...failedContext,
+                    __requestDuration: Date.now() - requestSentAt,
+                  });
+                }
+
+                upsertDiagnostics(
+                  {
+                    lastHandshakeError: message,
+                  },
+                  error,
+                );
+                applySessionOperation("delegate", {
+                  lastHandshakeError: message,
+                });
+                return failedContext;
+              } finally {
+                if (deputyExecId) {
+                  runtimeHandle.pendingDelegationIds.delete(deputyExecId);
+                  syncPendingCounts();
+                }
+              }
+            },
+            `Delegate flow to service ${serviceName} with address ${url}`,
+          )
+            .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
+            .attachSignal(
+              "meta.socket_client.delegated",
+              "meta.socket_shutdown_requested",
+            );
+
+          runtimeHandle.transmitTask = Cadenza.createMetaTask(
+            `Transmit signal to socket server ${url}`,
+            async (signalCtx, emitter) => {
+              if (signalCtx.__signalName === undefined) {
+                return;
+              }
+
+              delete signalCtx.__broadcast;
+
+              const response =
+                ((await runtimeHandle.emitWhenReady?.("signal", signalCtx, 5_000)) as
+                  | AnyObject
+                  | undefined) ??
+                ({
+                  errored: true,
+                  __error: "Socket signal transmission returned no response",
+                } as AnyObject);
+
+              applySessionOperation("transmit", {});
+
+              if (signalCtx.__routineExecId) {
+                emitter(`meta.socket_client.transmitted:${signalCtx.__routineExecId}`, {
+                  ...response,
+                });
+              }
+
+              return response;
+            },
+            `Transmits signal to service ${serviceName} with address ${url}`,
+          )
+            .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
+            .attachSignal("meta.socket_client.transmitted");
+
+          Cadenza.createEphemeralMetaTask(
+            `Shutdown SocketClient ${url}`,
+            (_ctx, emitter) => {
+              runtimeHandle.handshake = false;
+
+              upsertDiagnostics({
+                connected: false,
+                handshake: false,
+                destroyed: true,
+                pendingDelegations: 0,
+                pendingTimers: 0,
+              });
+              applySessionOperation("shutdown", {
+                connected: false,
+                handshake: false,
+                destroyed: true,
+                pendingDelegations: 0,
+                pendingTimers: 0,
+              });
+
+              Cadenza.log("Shutting down socket client", { url, serviceName });
+
+              emitter(`meta.fetch.handshake_requested:${fetchId}`, {
+                serviceInstanceId,
+                serviceName,
+                communicationTypes,
+                serviceAddress,
+                servicePort: normalizedPort,
+                protocol,
+                handshakeData: {
+                  instanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                  serviceName: Cadenza.serviceRegistry.serviceName,
+                },
+              });
+
+              for (const id of runtimeHandle.pendingDelegationIds) {
+                emitter(`meta.socket_client.delegated:${id}`, {
+                  errored: true,
+                  __error: "Shutting down socket client",
+                });
+              }
+
+              this.destroySocketClientRuntimeHandle(runtimeHandle);
+              emitter("meta.socket_client.runtime_clear_requested", {
+                fetchId,
+              });
+            },
+            "Shuts down the socket client",
+          )
+            .doOn(
+              `meta.socket_shutdown_requested:${fetchId}`,
+              `meta.socket_client.disconnected:${fetchId}`,
+              `meta.fetch.handshake_failed:${fetchId}`,
+              `meta.socket_client.connect_error:${fetchId}`,
+            )
+            .attachSignal("meta.fetch.handshake_requested")
+            .emits("meta.socket_client_shutdown_complete");
+
+          return true;
+        },
+        { mode: "write" },
+      ),
+      "Connects to a specified socket server and wires runtime tasks.",
+    )
+      .doOn("meta.fetch.handshake_complete")
+      .emitsOnFail("meta.socket_client.connect_failed");
+  }
+
+  private createInitialSocketServerSessionState(
+    serverKey: string,
+  ): SocketServerSessionState {
+    return {
+      serverKey,
+      useSocket: false,
+      status: "inactive",
+      securityProfile: "medium",
+      networkType: "internal",
+      connectionCount: 0,
+      lastStartedAt: null,
+      lastConnectedAt: null,
+      lastDisconnectedAt: null,
+      lastShutdownAt: null,
+      updatedAt: 0,
+    };
+  }
+
+  private createInitialSocketClientSessionState(): SocketClientSessionState {
+    return {
+      fetchId: "",
+      serviceInstanceId: "",
+      communicationTypes: [],
+      serviceName: "",
+      serviceAddress: "",
+      servicePort: 0,
+      protocol: "http",
+      url: "",
+      socketId: null,
+      connected: false,
+      handshake: false,
+      pendingDelegations: 0,
+      pendingTimers: 0,
+      reconnectAttempts: 0,
+      connectErrors: 0,
+      reconnectErrors: 0,
+      socketErrors: 0,
+      errorCount: 0,
+      destroyed: false,
+      lastHandshakeAt: null,
+      lastHandshakeError: null,
+      lastDisconnectAt: null,
+      updatedAt: 0,
+    };
+  }
+
+  private resolveSocketServerKey(input: AnyObject): string {
+    return (
+      String(input.serverKey ?? input.__socketServerKey ?? this.socketServerDefaultKey)
+        .trim() || this.socketServerDefaultKey
+    );
+  }
+
+  private resolveSocketClientFetchId(input: AnyObject): string | undefined {
+    const explicitFetchId = String(input.fetchId ?? "").trim();
+    if (explicitFetchId) {
+      return explicitFetchId;
     }
 
-    if (this.socketClientDiagnostics.size <= this.diagnosticsMaxClientEntries) {
+    const serviceAddress = String(input.serviceAddress ?? "").trim();
+    const protocol = String(input.protocol ?? "http").trim();
+    const port = this.resolveServicePort(protocol, input.servicePort);
+
+    if (!serviceAddress || !port) {
+      return undefined;
+    }
+
+    return `${serviceAddress}_${port}`;
+  }
+
+  private resolveServicePort(
+    protocol: string,
+    rawPort: unknown,
+  ): number | undefined {
+    if (protocol === "https") {
+      return 443;
+    }
+
+    const parsed = Number(rawPort);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return undefined;
+    }
+
+    return Math.trunc(parsed);
+  }
+
+  private createSocketServerRuntimeHandleFromContext(
+    context: AnyObject,
+  ): SocketServerRuntimeHandle {
+    const baseServer = context.httpsServer ?? context.httpServer;
+    if (!baseServer) {
+      throw new Error(
+        "Socket server runtime setup requires either httpsServer or httpServer",
+      );
+    }
+
+    const server = new Server(baseServer, {
+      pingInterval: 30_000,
+      pingTimeout: 20_000,
+      maxHttpBufferSize: 1e7,
+      connectionStateRecovery: {
+        maxDisconnectionDuration: 2 * 60 * 1000,
+        skipMiddlewares: true,
+      },
+    });
+
+    return {
+      server,
+      initialized: false,
+      connectedSocketIds: new Set<string>(),
+      broadcastStatusTask: null,
+      shutdownTask: null,
+    };
+  }
+
+  private destroySocketServerRuntimeHandle(
+    runtimeHandle: SocketServerRuntimeHandle | null,
+  ): void {
+    if (!runtimeHandle) {
       return;
     }
 
-    const entriesByEvictionPriority = Array.from(
-      this.socketClientDiagnostics.entries(),
-    ).sort((left, right) => {
+    runtimeHandle.broadcastStatusTask?.destroy();
+    runtimeHandle.shutdownTask?.destroy();
+    runtimeHandle.broadcastStatusTask = null;
+    runtimeHandle.shutdownTask = null;
+    runtimeHandle.connectedSocketIds.clear();
+    runtimeHandle.initialized = false;
+    runtimeHandle.server.close();
+    runtimeHandle.server.removeAllListeners();
+  }
+
+  private createSocketClientRuntimeHandle(url: string): SocketClientRuntimeHandle {
+    return {
+      url,
+      socket: io(url, {
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 10000,
+        randomizationFactor: 0.5,
+        transports: ["websocket"],
+        autoConnect: false,
+      }),
+      initialized: false,
+      handshake: false,
+      errorCount: 0,
+      pendingDelegationIds: new Set<string>(),
+      pendingTimers: new Set<NodeJS.Timeout>(),
+      emitWhenReady: null,
+      handshakeTask: null,
+      delegateTask: null,
+      transmitTask: null,
+    };
+  }
+
+  private destroySocketClientRuntimeHandle(
+    runtimeHandle: SocketClientRuntimeHandle | null,
+  ): void {
+    if (!runtimeHandle) {
+      return;
+    }
+
+    runtimeHandle.initialized = false;
+    runtimeHandle.handshake = false;
+    runtimeHandle.emitWhenReady = null;
+
+    runtimeHandle.handshakeTask?.destroy();
+    runtimeHandle.delegateTask?.destroy();
+    runtimeHandle.transmitTask?.destroy();
+
+    runtimeHandle.handshakeTask = null;
+    runtimeHandle.delegateTask = null;
+    runtimeHandle.transmitTask = null;
+
+    for (const timer of runtimeHandle.pendingTimers) {
+      clearTimeout(timer);
+    }
+
+    runtimeHandle.pendingTimers.clear();
+    runtimeHandle.pendingDelegationIds.clear();
+
+    runtimeHandle.socket.close();
+    runtimeHandle.socket.removeAllListeners();
+  }
+
+  private normalizeCommunicationTypes(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((item) => String(item))
+      .filter((item) => item.trim().length > 0);
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    if (typeof error === "string") {
+      return error;
+    }
+
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+
+  private pruneDiagnosticsEntries(
+    entries: Record<string, SocketClientDiagnosticsState>,
+    now = Date.now(),
+  ): void {
+    for (const [fetchId, state] of Object.entries(entries)) {
+      if (state.destroyed && now - state.updatedAt > this.destroyedDiagnosticsTtlMs) {
+        delete entries[fetchId];
+      }
+    }
+
+    if (Object.keys(entries).length <= this.diagnosticsMaxClientEntries) {
+      return;
+    }
+
+    const entriesByEvictionPriority = Object.entries(entries).sort((left, right) => {
       if (left[1].destroyed !== right[1].destroyed) {
         return left[1].destroyed ? -1 : 1;
       }
@@ -80,12 +1677,26 @@ export default class SocketController {
     });
 
     while (
-      this.socketClientDiagnostics.size > this.diagnosticsMaxClientEntries &&
+      Object.keys(entries).length > this.diagnosticsMaxClientEntries &&
       entriesByEvictionPriority.length > 0
     ) {
       const [fetchId] = entriesByEvictionPriority.shift()!;
-      this.socketClientDiagnostics.delete(fetchId);
+      delete entries[fetchId];
     }
+  }
+
+  public async getSocketClientDiagnosticsEntry(
+    fetchId: string,
+  ): Promise<SocketClientDiagnosticsState | undefined> {
+    const normalized = String(fetchId ?? "").trim();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const snapshot = this.socketClientDiagnosticsActor.getState();
+    const entries = { ...snapshot.entries };
+    this.pruneDiagnosticsEntries(entries);
+    return entries[normalized];
   }
 
   private resolveTransportDiagnosticsOptions(ctx: AnyObject): {
@@ -109,95 +1720,19 @@ export default class SocketController {
     };
   }
 
-  private ensureSocketClientDiagnostics(
-    fetchId: string,
-    serviceName: string,
-    url: string,
-  ): SocketClientDiagnosticsState {
-    const now = Date.now();
-    this.pruneSocketClientDiagnostics(now);
-
-    let state = this.socketClientDiagnostics.get(fetchId);
-    if (!state) {
-      state = {
-        fetchId,
-        serviceName,
-        url,
-        socketId: null,
-        connected: false,
-        handshake: false,
-        reconnectAttempts: 0,
-        connectErrors: 0,
-        reconnectErrors: 0,
-        socketErrors: 0,
-        pendingDelegations: 0,
-        pendingTimers: 0,
-        destroyed: false,
-        lastHandshakeAt: null,
-        lastHandshakeError: null,
-        lastDisconnectAt: null,
-        lastError: null,
-        lastErrorAt: 0,
-        errorHistory: [],
-        updatedAt: now,
-      };
-      this.socketClientDiagnostics.set(fetchId, state);
-    } else {
-      state.serviceName = serviceName;
-      state.url = url;
-    }
-
-    this.pruneSocketClientDiagnostics(now);
-    return state;
-  }
-
-  private getErrorMessage(error: unknown): string {
-    if (error instanceof Error) {
-      return error.message;
-    }
-    if (typeof error === "string") {
-      return error;
-    }
-    try {
-      return JSON.stringify(error);
-    } catch {
-      return String(error);
-    }
-  }
-
-  private recordSocketClientError(
-    fetchId: string,
-    serviceName: string,
-    url: string,
-    error: unknown,
-  ): void {
-    const state = this.ensureSocketClientDiagnostics(fetchId, serviceName, url);
-    const message = this.getErrorMessage(error);
-    const now = Date.now();
-
-    state.lastError = message;
-    state.lastErrorAt = now;
-    state.updatedAt = now;
-    state.errorHistory.push({
-      at: new Date(now).toISOString(),
-      message,
-    });
-
-    if (state.errorHistory.length > this.diagnosticsErrorHistoryLimit) {
-      state.errorHistory.splice(
-        0,
-        state.errorHistory.length - this.diagnosticsErrorHistoryLimit,
-      );
-    }
-  }
-
-  private collectSocketTransportDiagnostics(ctx: AnyObject): AnyObject {
-    this.pruneSocketClientDiagnostics();
+  private collectSocketTransportDiagnostics(
+    ctx: AnyObject,
+    diagnosticsEntries: Record<string, SocketClientDiagnosticsState>,
+  ): AnyObject {
     const { detailLevel, includeErrorHistory, errorHistoryLimit } =
       this.resolveTransportDiagnosticsOptions(ctx);
     const serviceName = Cadenza.serviceRegistry.serviceName ?? "UnknownService";
-    const states = Array.from(this.socketClientDiagnostics.values()).sort(
-      (a, b) => a.fetchId.localeCompare(b.fetchId),
+
+    const entries = { ...diagnosticsEntries };
+    this.pruneDiagnosticsEntries(entries);
+
+    const states = Object.values(entries).sort((a, b) =>
+      a.fetchId.localeCompare(b.fetchId),
     );
 
     const summary = {
@@ -215,10 +1750,7 @@ export default class SocketController {
         0,
       ),
       connectErrors: states.reduce((acc, state) => acc + state.connectErrors, 0),
-      reconnectErrors: states.reduce(
-        (acc, state) => acc + state.reconnectErrors,
-        0,
-      ),
+      reconnectErrors: states.reduce((acc, state) => acc + state.reconnectErrors, 0),
       socketErrors: states.reduce((acc, state) => acc + state.socketErrors, 0),
       latestError:
         states
@@ -275,895 +1807,5 @@ export default class SocketController {
         },
       },
     };
-  }
-
-  /**
-   * Constructs the `SocketServer`, setting up a WebSocket server with specific configurations,
-   * including connection state recovery, rate limiting, CORS handling, and custom event handling.
-   * This class sets up the communication infrastructure for scalable, resilient, and secure WebSocket-based interactions
-   * using metadata-driven task execution with `Cadenza`.
-   *
-   * It provides support for:
-   * - Origin-based access control for connections.
-   * - Optional payload sanitization.
-   * - Configurable rate limiting and behavior on limit breaches (soft/hard disconnects).
-   * - Event handlers for connection, handshake, delegation, signaling, status checks, and disconnection.
-   *
-   * The server can handle both internal and external interactions depending on the provided configurations,
-   * and integrates directly with Cadenza's task workflow engine.
-   *
-   * Initializes the `SocketServer` to be ready for WebSocket communication.
-   */
-  constructor() {
-    Cadenza.createMetaTask(
-      "Collect socket transport diagnostics",
-      (ctx) => this.collectSocketTransportDiagnostics(ctx),
-      "Responds to distributed transport diagnostics inquiries with socket client data.",
-    ).respondsTo(META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT);
-
-    Cadenza.createMetaRoutine(
-      "SocketServer",
-      [
-        Cadenza.createMetaTask("Setup SocketServer", (ctx) => {
-          if (!ctx.__useSocket) {
-            return;
-          }
-
-          const server = new Server(ctx.httpsServer ?? ctx.httpServer, {
-            pingInterval: 30_000,
-            pingTimeout: 20_000,
-            maxHttpBufferSize: 1e7, // 10MB large payloads
-            connectionStateRecovery: {
-              maxDisconnectionDuration: 2 * 60 * 1000, // 2min
-              skipMiddlewares: true, // Optional: bypass rate limiter on recover
-            },
-          });
-
-          const profile = ctx.__securityProfile ?? "medium";
-
-          server.use((socket, next) => {
-            // Origin check (CORS-like)
-            const origin = socket?.handshake?.headers?.origin;
-            const allowedOrigins = ["*"]; // TODO From firewall_rule
-            const networkType = ctx.__networkType ?? "internal"; // From meta-config
-            let effectiveOrigin = origin || "unknown";
-            if (networkType === "internal") effectiveOrigin = "internal"; // Assume trusted internal
-
-            if (
-              profile !== "low" &&
-              !allowedOrigins.includes(effectiveOrigin) &&
-              !allowedOrigins.includes("*")
-            ) {
-              return next(new Error("Unauthorized origin"));
-            }
-
-            // Rate limiting per socket/IP
-            const limiterOptions: { [key: string]: IRateLimiterOptions } = {
-              low: { points: Infinity, duration: 1 },
-              medium: { points: 10000, duration: 10 },
-              high: { points: 1000, duration: 60, blockDuration: 300 },
-            };
-            const limiter = new RateLimiterMemory(limiterOptions[profile]);
-            const clientKey = socket?.handshake?.address || "unknown";
-            socket.use((packet, packetNext) => {
-              limiter
-                .consume(clientKey)
-                .then(() => packetNext())
-                .catch((rej) => {
-                  if (rej.msBeforeNext > 0) {
-                    Cadenza.log(
-                      "SocketServer: Rate limit exceeded",
-                      {
-                        retryAfter: rej.msBeforeNext / 1000,
-                        clientKey,
-                        socketId: socket.id,
-                      },
-                      "warning",
-                    );
-                    socket.emit("error", {
-                      message: "Rate limit exceeded",
-                      retryAfter: rej.msBeforeNext / 1000,
-                    });
-                    packetNext(new Error("Rate limit exceeded"));
-                  } else {
-                    Cadenza.log(
-                      "SocketServer: Rate limit exceeded, blocked",
-                      {
-                        clientKey,
-                        socketId: socket.id,
-                      },
-                      "critical",
-                    );
-                    socket.disconnect(true);
-                    packetNext(new Error("Blocked"));
-                  }
-                });
-            });
-
-            // Sanitization for payloads needed?
-            // socket.use((packet, next) => {
-            //   if (profile !== "low") {
-            //     const sanitize = (data: any) => {
-            //       if (typeof data === "string") return xss(data);
-            //       if (typeof data === "object") {
-            //         for (const key in data) {
-            //           data[key] = sanitize(data[key]);
-            //         }
-            //       }
-            //       return data;
-            //     };
-            //     try {
-            //       packet[1] = sanitize(packet[1]); // Sanitize event payload
-            //     } catch (e) {
-            //       console.error("SocketServer: Sanitization error", e);
-            //     }
-            //   }
-            //   next();
-            // });
-            next();
-          });
-
-          if (!server) {
-            Cadenza.log("Socket setup error: No server", {}, "error");
-            return { ...ctx, __error: "No server", errored: true };
-          }
-
-          server.on("connection", (ws: any) => {
-            try {
-              ws.on(
-                "handshake",
-                (ctx: AnyObject, callback: (result: any) => void) => {
-                  Cadenza.log("SocketServer: New connection", {
-                    ...ctx,
-                    socketId: ws.id,
-                  });
-
-                  callback({
-                    status: "success",
-                    serviceName: Cadenza.serviceRegistry.serviceName,
-                  });
-
-                  if (ctx.isFrontend) {
-                    const fetchId = `browser:${ctx.serviceInstanceId}`;
-                    Cadenza.createMetaTask(
-                      `Transmit signal to ${fetchId}`,
-                      (ctx, emit) => {
-                        if (ctx.__signalName === undefined) {
-                          return;
-                        }
-
-                        ws.emit("signal", ctx);
-
-                        if (ctx.__routineExecId) {
-                          emit(
-                            `meta.socket_client.transmitted:${ctx.__routineExecId}`,
-                            {},
-                          );
-                        }
-                      },
-                    )
-                      .doOn(
-                        `meta.service_registry.selected_instance_for_socket:${fetchId}`,
-                      )
-                      .attachSignal("meta.socket_client.transmitted");
-                  }
-
-                  Cadenza.emit("meta.socket.handshake", ctx);
-                },
-              );
-
-              ws.on(
-                "delegation",
-                (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
-                  const deputyExecId = ctx.__metadata.__deputyExecId;
-
-                  Cadenza.createEphemeralMetaTask(
-                    "Resolve delegation",
-                    (ctx: AnyObject) => {
-                      callback(ctx);
-                    },
-                    "Resolves a delegation request using the provided callback from the client (.emitWithAck())",
-                    { register: false },
-                  )
-                    .doOn(`meta.node.graph_completed:${deputyExecId}`)
-                    .emits(`meta.socket.delegation_resolved:${deputyExecId}`);
-
-                  Cadenza.createEphemeralMetaTask(
-                    "Delegation progress update",
-                    (ctx) => {
-                      if (ctx.__progress !== undefined)
-                        ws.emit("delegation_progress", ctx);
-                    },
-                    "Updates delegation progress",
-                    {
-                      once: false,
-                      destroyCondition: (ctx: AnyObject) =>
-                        ctx.data.progress === 1.0 ||
-                        ctx.data?.progress === undefined,
-                      register: false,
-                    },
-                  )
-                    .doOn(
-                      `meta.node.routine_execution_progress:${deputyExecId}`,
-                      `meta.node.graph_completed:${deputyExecId}`,
-                    )
-                    .emitsOnFail(`meta.socket.progress_failed:${deputyExecId}`);
-
-                  Cadenza.emit("meta.socket.delegation_requested", {
-                    ...ctx,
-                    __name: ctx.__remoteRoutineName,
-                  });
-                },
-              );
-
-              ws.on(
-                "signal",
-                (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
-                  if (
-                    Cadenza.signalBroker
-                      .listObservedSignals()
-                      .includes(ctx.__signalName)
-                  ) {
-                    callback({
-                      __status: "success",
-                      __signalName: ctx.__signalName,
-                    });
-
-                    Cadenza.emit(ctx.__signalName, ctx);
-                  } else {
-                    Cadenza.log(
-                      `No such signal ${ctx.__signalName} on ${ctx.__serviceName}`,
-                      "warning",
-                    );
-                    callback({
-                      ...ctx,
-                      __status: "error",
-                      __error: `No such signal: ${ctx.__signalName}`,
-                      errored: true,
-                    });
-                  }
-                },
-              );
-
-              ws.on(
-                "status_check",
-                (ctx: AnyObject, callback: (ctx: AnyObject) => any) => {
-                  Cadenza.createEphemeralMetaTask(
-                    "Resolve status check",
-                    callback,
-                    "Resolves a status check request",
-                    { register: false },
-                  ).doAfter(Cadenza.serviceRegistry.getStatusTask);
-
-                  Cadenza.emit("meta.socket.status_check_requested", ctx);
-                },
-              );
-
-              ws.on("disconnect", () => {
-                Cadenza.log(
-                  "Socket client disconnected",
-                  { socketId: ws.id },
-                  "warning",
-                );
-                Cadenza.emit("meta.socket.disconnected", {
-                  __wsId: ws.id,
-                });
-              });
-            } catch (e) {
-              Cadenza.log(
-                "SocketServer: Error in socket event",
-                { error: e },
-                "error",
-              );
-            }
-
-            Cadenza.emit("meta.socket.connected", { __wsId: ws.id });
-          });
-
-          Cadenza.createMetaTask(
-            "Broadcast status",
-            (ctx) => server.emit("status_update", ctx),
-            "Broadcasts the status of the server to all clients",
-          ).doOn("meta.service.updated");
-
-          Cadenza.createMetaTask(
-            "Shutdown SocketServer",
-            () => server.close(),
-            "Shuts down the socket server",
-          )
-            .doOn("meta.socket_server_shutdown_requested")
-            .emits("meta.socket.shutdown");
-
-          return ctx;
-        }),
-      ],
-      "Bootstraps the socket server",
-    ).doOn("global.meta.rest.network_configured");
-
-    Cadenza.createMetaTask(
-      "Connect to socket server",
-      (ctx) => {
-        const {
-          serviceInstanceId,
-          communicationTypes,
-          serviceName,
-          serviceAddress,
-          servicePort,
-          protocol,
-        } = ctx;
-
-        const socketProtocol = protocol === "https" ? "wss" : "ws";
-        const port = protocol === "https" ? 443 : servicePort;
-        const URL = `${socketProtocol}://${serviceAddress}:${port}`;
-        const fetchId = `${serviceAddress}_${port}`;
-        const socketDiagnostics = this.ensureSocketClientDiagnostics(
-          fetchId,
-          serviceName,
-          URL,
-        );
-        socketDiagnostics.destroyed = false;
-        socketDiagnostics.updatedAt = Date.now();
-        let handshake = false;
-        let errorCount = 0;
-        const ERROR_LIMIT = 5;
-
-        if (Cadenza.get(`Socket handshake with ${URL}`)) {
-          console.error("Socket client already exists", URL);
-          return;
-        }
-
-        const pendingDelegationIds = new Set<string>();
-        const pendingTimers = new Set<NodeJS.Timeout>();
-        const syncPendingCounts = () => {
-          socketDiagnostics.pendingDelegations = pendingDelegationIds.size;
-          socketDiagnostics.pendingTimers = pendingTimers.size;
-          socketDiagnostics.updatedAt = Date.now();
-        };
-
-        let handshakeTask: Task | null = null;
-        let emitWhenReady:
-          | (<T>(
-              event: string,
-              data: any,
-              timeoutMs: number,
-              ack?: (response: T) => void,
-            ) => Promise<T>)
-          | null = null;
-        let transmitTask: Task | null = null;
-        let delegateTask: Task | null = null;
-        let socket: Socket | null = null;
-
-        socket = io(URL, {
-          reconnection: true,
-          reconnectionAttempts: 5,
-          reconnectionDelay: 2000,
-          reconnectionDelayMax: 10000,
-          randomizationFactor: 0.5,
-          transports: ["websocket"],
-          autoConnect: false,
-        });
-
-        emitWhenReady = <T>(
-          event: string,
-          data: any,
-          timeoutMs: number = 60_000,
-          ack?: (response: T) => void,
-        ): Promise<T> => {
-          return new Promise((resolve) => {
-            const parsedTimeout = Number(timeoutMs);
-            const normalizedTimeoutMs =
-              Number.isFinite(parsedTimeout) && parsedTimeout > 0
-                ? Math.trunc(parsedTimeout)
-                : 60_000;
-            let timer: NodeJS.Timeout | null = null;
-            let settled = false;
-            const clearPendingTimer = () => {
-              if (!timer) {
-                return;
-              }
-              clearTimeout(timer);
-              pendingTimers.delete(timer);
-              syncPendingCounts();
-              timer = null;
-            };
-            const settle = (response: T) => {
-              if (settled) {
-                return;
-              }
-              settled = true;
-              clearPendingTimer();
-              if (ack) ack(response);
-              resolve(response);
-            };
-            const resolveWithError = (
-              errorMessage: string,
-              fallbackError?: unknown,
-            ) => {
-              settle({
-                ...data,
-                errored: true,
-                __error: errorMessage,
-                error:
-                  fallbackError instanceof Error
-                    ? fallbackError.message
-                    : errorMessage,
-                socketId: socket?.id,
-                serviceName,
-                URL,
-              } as T);
-            };
-
-            const tryEmit = async () => {
-              const waitTimeoutMs = normalizedTimeoutMs + 10;
-              const waitResult = await waitForSocketConnection(
-                socket,
-                waitTimeoutMs,
-                (reason, error) => {
-                  if (reason === "connect_timeout") {
-                    return `Socket connect timed out before '${event}'`;
-                  }
-                  if (reason === "connect_error") {
-                    const errMessage =
-                      error instanceof Error ? error.message : String(error);
-                    return `Socket connect error before '${event}': ${errMessage}`;
-                  }
-                  return `Socket disconnected before '${event}'`;
-                },
-              );
-
-              if (!waitResult.ok) {
-                Cadenza.log(
-                  waitResult.error,
-                  { socketId: socket?.id, serviceName, URL, event },
-                  "error",
-                );
-                this.recordSocketClientError(
-                  fetchId,
-                  serviceName,
-                  URL,
-                  waitResult.error,
-                );
-                resolveWithError(waitResult.error);
-                return;
-              }
-
-              timer = setTimeout(() => {
-                if (settled) {
-                  return;
-                }
-                clearPendingTimer();
-                Cadenza.log(
-                  `Socket event '${event}' timed out`,
-                  { socketId: socket?.id, serviceName, URL },
-                  "error",
-                );
-                this.recordSocketClientError(
-                  fetchId,
-                  serviceName,
-                  URL,
-                  `Socket event '${event}' timed out`,
-                );
-                resolveWithError(`Socket event '${event}' timed out`);
-              }, normalizedTimeoutMs + 10);
-              pendingTimers.add(timer);
-              syncPendingCounts();
-
-              const connectedSocket = socket;
-              if (!connectedSocket) {
-                resolveWithError(
-                  `Socket unavailable before emitting '${event}'`,
-                );
-                return;
-              }
-
-              connectedSocket
-                .timeout(normalizedTimeoutMs)
-                .emit(event, data, (err: any, response: T) => {
-                  if (err) {
-                    Cadenza.log(
-                      "Socket timeout.",
-                      {
-                        event,
-                        error: err.message,
-                        socketId: socket?.id,
-                        serviceName,
-                      },
-                      "warning",
-                    );
-                    this.recordSocketClientError(
-                      fetchId,
-                      serviceName,
-                      URL,
-                      err,
-                    );
-                    response = {
-                      __error: `Timeout error: ${err}`,
-                      errored: true,
-                      ...ctx,
-                      ...ctx.__metadata,
-                    };
-                  }
-                  settle(response);
-                });
-            };
-
-            void tryEmit().catch((error) => {
-              Cadenza.log(
-                "Socket emit failed unexpectedly",
-                {
-                  event,
-                  error:
-                    error instanceof Error ? error.message : String(error),
-                  socketId: socket?.id,
-                  serviceName,
-                  URL,
-                },
-                "error",
-              );
-              this.recordSocketClientError(fetchId, serviceName, URL, error);
-              resolveWithError(`Socket event '${event}' failed`, error);
-            });
-          });
-        };
-
-        socket.on("connect", () => {
-          if (handshake) return;
-          socketDiagnostics.connected = true;
-          socketDiagnostics.destroyed = false;
-          socketDiagnostics.socketId = socket?.id ?? null;
-          socketDiagnostics.updatedAt = Date.now();
-          Cadenza.emit(`meta.socket_client.connected:${fetchId}`, ctx);
-        });
-
-        socket.on("delegation_progress", (ctx) => {
-          Cadenza.emit(
-            `meta.socket_client.delegation_progress:${ctx.__metadata.__deputyExecId}`,
-            ctx,
-          );
-        });
-
-        socket.on("signal", (ctx) => {
-          if (
-            Cadenza.signalBroker
-              .listObservedSignals()
-              .includes(ctx.__signalName)
-          ) {
-            Cadenza.emit(ctx.__signalName, ctx);
-          }
-        });
-
-        socket.on("status_update", (status) => {
-          Cadenza.emit("meta.socket_client.status_received", status);
-        });
-
-        socket.on("connect_error", (err) => {
-          handshake = false;
-          socketDiagnostics.connected = false;
-          socketDiagnostics.handshake = false;
-          socketDiagnostics.connectErrors++;
-          socketDiagnostics.lastHandshakeError = err.message;
-          socketDiagnostics.updatedAt = Date.now();
-          this.recordSocketClientError(fetchId, serviceName, URL, err);
-          Cadenza.log(
-            "Socket connect error",
-            { error: err.message, serviceName, socketId: socket?.id, URL },
-            "error",
-          );
-          Cadenza.emit(`meta.socket_client.connect_error:${fetchId}`, err);
-        });
-
-        socket.on("reconnect_attempt", (attempt) => {
-          socketDiagnostics.reconnectAttempts = Math.max(
-            socketDiagnostics.reconnectAttempts,
-            attempt,
-          );
-          socketDiagnostics.updatedAt = Date.now();
-          Cadenza.log(`Reconnect attempt: ${attempt}`);
-        });
-
-        socket.on("reconnect", (attempt) => {
-          socketDiagnostics.connected = true;
-          socketDiagnostics.updatedAt = Date.now();
-          Cadenza.log(`Socket reconnected after ${attempt} tries`, {
-            socketId: socket?.id,
-            URL,
-            serviceName,
-          });
-        });
-
-        socket.on("reconnect_error", (err) => {
-          handshake = false;
-          socketDiagnostics.connected = false;
-          socketDiagnostics.handshake = false;
-          socketDiagnostics.reconnectErrors++;
-          socketDiagnostics.lastHandshakeError = err.message;
-          socketDiagnostics.updatedAt = Date.now();
-          this.recordSocketClientError(fetchId, serviceName, URL, err);
-          Cadenza.log(
-            "Socket reconnect failed.",
-            { error: err.message, serviceName, URL, socketId: socket?.id },
-            "warning",
-          );
-        });
-
-        socket.on("error", (err) => {
-          // TODO: Retry on rate limit error
-          errorCount++;
-          socketDiagnostics.socketErrors++;
-          socketDiagnostics.updatedAt = Date.now();
-          this.recordSocketClientError(fetchId, serviceName, URL, err);
-
-          Cadenza.log(
-            "Socket error",
-            { error: err, socketId: socket?.id, URL, serviceName },
-            "error",
-          );
-          Cadenza.emit("meta.socket_client.error", err);
-        });
-
-        socket.on("disconnect", () => {
-          const disconnectedAt = new Date().toISOString();
-          socketDiagnostics.connected = false;
-          socketDiagnostics.handshake = false;
-          socketDiagnostics.lastDisconnectAt = disconnectedAt;
-          socketDiagnostics.updatedAt = Date.now();
-          Cadenza.log(
-            "Socket disconnected.",
-            { URL, serviceName, socketId: socket?.id },
-            "warning",
-          );
-          Cadenza.emit(`meta.socket_client.disconnected:${fetchId}`, {
-            serviceName,
-            serviceAddress,
-            servicePort,
-          });
-          handshake = false;
-        });
-
-        socket.connect();
-
-        handshakeTask = Cadenza.createMetaTask(
-          `Socket handshake with ${URL}`,
-          async (ctx, emit) => {
-            if (handshake) return;
-            handshake = true;
-            socketDiagnostics.handshake = true;
-            socketDiagnostics.updatedAt = Date.now();
-
-            await emitWhenReady?.(
-              "handshake",
-              {
-                serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-                serviceName: Cadenza.serviceRegistry.serviceName,
-                isFrontend: isBrowser,
-                __status: "success",
-              },
-              10_000,
-              (result: any) => {
-                if (result.status === "success") {
-                  socketDiagnostics.connected = true;
-                  socketDiagnostics.handshake = true;
-                  socketDiagnostics.lastHandshakeAt = new Date().toISOString();
-                  socketDiagnostics.lastHandshakeError = null;
-                  socketDiagnostics.updatedAt = Date.now();
-                  Cadenza.log("Socket client connected", {
-                    result,
-                    serviceName,
-                    socketId: socket?.id,
-                    URL,
-                  });
-                } else {
-                  socketDiagnostics.connected = false;
-                  socketDiagnostics.handshake = false;
-                  socketDiagnostics.lastHandshakeError =
-                    result?.__error ?? result?.error ?? "Socket handshake failed";
-                  socketDiagnostics.updatedAt = Date.now();
-                  this.recordSocketClientError(
-                    fetchId,
-                    serviceName,
-                    URL,
-                    socketDiagnostics.lastHandshakeError,
-                  );
-                  Cadenza.log(
-                    "Socket handshake failed",
-                    { result, serviceName, socketId: socket?.id, URL },
-                    "warning",
-                  );
-                }
-
-                // if (result.errored) {
-                //   errorCount++;
-                //   if (errorCount > ERROR_LIMIT) {
-                //     console.error("Too many errors, closing socket", URL);
-                //     emit(`meta.socket_shutdown_requested:${fetchId}`, {});
-                //   }
-                // }
-              },
-            );
-          },
-          "Handshakes with socket server",
-        ).doOn(`meta.socket_client.connected:${fetchId}`);
-
-        delegateTask = Cadenza.createMetaTask(
-          `Delegate flow to Socket service ${URL}`,
-          async (ctx, emit) => {
-            if (ctx.__remoteRoutineName === undefined) {
-              return;
-            }
-
-            delete ctx.__isSubMeta;
-            delete ctx.__broadcast;
-
-            const deputyExecId = ctx.__metadata?.__deputyExecId;
-            const requestSentAt = Date.now();
-            if (deputyExecId) {
-              pendingDelegationIds.add(deputyExecId);
-              syncPendingCounts();
-            }
-
-            try {
-              const resultContext =
-                ((await emitWhenReady?.(
-                  "delegation",
-                  ctx,
-                  ctx.__timeout ?? 60_000,
-                )) as AnyObject | undefined) ??
-                ({
-                  errored: true,
-                  __error: "Socket delegation returned no response",
-                } as AnyObject);
-
-              const requestDuration = Date.now() - requestSentAt;
-              const metadata = resultContext.__metadata;
-              delete resultContext.__metadata;
-
-              if (deputyExecId) {
-                emit(`meta.socket_client.delegated:${deputyExecId}`, {
-                  ...resultContext,
-                  ...metadata,
-                  __requestDuration: requestDuration,
-                });
-              }
-
-              if (resultContext?.errored || resultContext?.failed) {
-                this.recordSocketClientError(
-                  fetchId,
-                  serviceName,
-                  URL,
-                  resultContext?.__error ??
-                    resultContext?.error ??
-                    "Socket delegation failed",
-                );
-              }
-
-              return resultContext;
-            } catch (error) {
-              const message =
-                error instanceof Error ? error.message : String(error);
-              const failedContext = {
-                errored: true,
-                __error: message,
-              };
-
-              if (deputyExecId) {
-                emit(`meta.socket_client.delegated:${deputyExecId}`, {
-                  ...failedContext,
-                  __requestDuration: Date.now() - requestSentAt,
-                });
-              }
-
-              this.recordSocketClientError(fetchId, serviceName, URL, error);
-              return failedContext;
-            } finally {
-              if (deputyExecId) {
-                pendingDelegationIds.delete(deputyExecId);
-                syncPendingCounts();
-              }
-            }
-          },
-          `Delegate flow to service ${serviceName} with address ${URL}`,
-        )
-          .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
-          .attachSignal(
-            "meta.socket_client.delegated",
-            "meta.socket_shutdown_requested",
-          );
-
-        transmitTask = Cadenza.createMetaTask(
-          `Transmit signal to socket server ${URL}`,
-          async (ctx, emit) => {
-            if (ctx.__signalName === undefined) {
-              return;
-            }
-
-            delete ctx.__broadcast;
-
-            const response =
-              ((await emitWhenReady?.("signal", ctx, 5_000)) as
-                | AnyObject
-                | undefined) ??
-              ({
-                errored: true,
-                __error: "Socket signal transmission returned no response",
-              } as AnyObject);
-
-            if (ctx.__routineExecId) {
-              emit(`meta.socket_client.transmitted:${ctx.__routineExecId}`, {
-                ...response,
-              });
-            }
-
-            return response;
-          },
-          `Transmits signal to service ${serviceName} with address ${URL}`,
-        )
-          .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
-          .attachSignal("meta.socket_client.transmitted");
-
-        Cadenza.createEphemeralMetaTask(
-          `Shutdown SocketClient ${URL}`,
-          (ctx, emit) => {
-            handshake = false;
-            socketDiagnostics.connected = false;
-            socketDiagnostics.handshake = false;
-            socketDiagnostics.destroyed = true;
-            socketDiagnostics.updatedAt = Date.now();
-            Cadenza.log("Shutting down socket client", { URL, serviceName });
-            socket?.close();
-            handshakeTask?.destroy();
-            delegateTask?.destroy();
-            transmitTask?.destroy();
-            handshakeTask = null;
-            delegateTask = null;
-            transmitTask = null;
-            emitWhenReady = null;
-            socket = null;
-            emit(`meta.fetch.handshake_requested:${fetchId}`, {
-              serviceInstanceId,
-              serviceName,
-              communicationTypes,
-              serviceAddress,
-              servicePort,
-              protocol,
-              handshakeData: {
-                instanceId: Cadenza.serviceRegistry.serviceInstanceId,
-                serviceName: Cadenza.serviceRegistry.serviceName,
-              },
-            });
-
-            for (const id of pendingDelegationIds) {
-              emit(`meta.socket_client.delegated:${id}`, {
-                errored: true,
-                __error: "Shutting down socket client",
-              });
-            }
-
-            pendingDelegationIds.clear();
-            syncPendingCounts();
-
-            for (const timer of pendingTimers) {
-              clearTimeout(timer);
-            }
-
-            pendingTimers.clear();
-            syncPendingCounts();
-          },
-          "Shuts down the socket client",
-        )
-          .doOn(
-            `meta.socket_shutdown_requested:${fetchId}`,
-            `meta.socket_client.disconnected:${fetchId}`,
-            `meta.fetch.handshake_failed:${fetchId}`,
-            `meta.socket_client.connect_error:${fetchId}`,
-          )
-          .attachSignal("meta.fetch.handshake_requested")
-          .emits("meta.socket_client_shutdown_complete");
-
-        return true;
-      },
-      "Connects to a specified socket server",
-    )
-      .doOn("meta.fetch.handshake_complete")
-      .emitsOnFail("meta.socket_client.connect_failed");
   }
 }

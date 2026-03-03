@@ -1,4 +1,8 @@
 import Cadenza, {
+  Actor,
+  ActorDefinition,
+  ActorFactoryOptions,
+  ActorSpec,
   AnyObject,
   CadenzaMode,
   DebounceOptions,
@@ -1216,6 +1220,28 @@ export default class CadenzaService {
     this.bootstrap();
     options.isMeta = true;
     this.createDatabaseService(name, schema, description, options);
+  }
+
+  static createActor<
+    D extends Record<string, any> = AnyObject,
+    R = AnyObject,
+  >(
+    spec: ActorSpec<D, R>,
+    options: ActorFactoryOptions = {},
+  ): Actor<D, R> {
+    this.bootstrap();
+    return new Actor<D, R>(spec, options as ActorFactoryOptions<D, R>);
+  }
+
+  static createActorFromDefinition<
+    D extends Record<string, any> = AnyObject,
+    R = AnyObject,
+  >(
+    definition: ActorDefinition<D, R>,
+    options: ActorFactoryOptions<D, R> = {},
+  ): Actor<D, R> {
+    this.bootstrap();
+    return Cadenza.createActorFromDefinition(definition, options);
   }
 
   /**

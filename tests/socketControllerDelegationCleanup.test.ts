@@ -39,14 +39,14 @@ import Cadenza from "../src/Cadenza";
 import SocketController from "../src/network/SocketController";
 
 async function waitForCondition(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs = 1_000,
   pollIntervalMs = 10,
 ): Promise<void> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    if (predicate()) {
+    if (await predicate()) {
       return;
     }
 
@@ -89,8 +89,6 @@ describe("SocketController delegation cleanup", () => {
 
   it("does not accumulate pending delegation/timer counters across failed retries", async () => {
     const controller = SocketController.instance as any;
-    const socketClientDiagnostics = controller
-      .socketClientDiagnostics as Map<string, any>;
 
     const serviceAddress = "127.0.0.1";
     const servicePort = 65531;
@@ -107,11 +105,16 @@ describe("SocketController delegation cleanup", () => {
       protocol: "http",
     });
 
-    await waitForCondition(() => socketClientDiagnostics.has(fetchId), 1_000);
+    await waitForCondition(
+      async () =>
+        Boolean(await controller.getSocketClientDiagnosticsEntry(fetchId)),
+      1_000,
+    );
 
     for (let i = 0; i < 15; i++) {
       const previousErrorCount =
-        socketClientDiagnostics.get(fetchId)?.errorHistory.length ?? 0;
+        (await controller.getSocketClientDiagnosticsEntry(fetchId))
+          ?.errorHistory.length ?? 0;
 
       Cadenza.emit(delegationSignal, {
         __remoteRoutineName: "remote-task",
@@ -121,18 +124,18 @@ describe("SocketController delegation cleanup", () => {
         __timeout: 10,
       });
 
-      await waitForCondition(() => {
-        const state = socketClientDiagnostics.get(fetchId);
-        return (
-          Boolean(state) &&
-          state.errorHistory.length > previousErrorCount &&
-          state.pendingDelegations === 0 &&
-          state.pendingTimers === 0
+      await waitForCondition(async () => {
+        const state = await controller.getSocketClientDiagnosticsEntry(fetchId);
+        return Boolean(
+          state &&
+            state.errorHistory.length > previousErrorCount &&
+            state.pendingDelegations === 0 &&
+            state.pendingTimers === 0,
         );
       }, 1_000);
     }
 
-    const finalState = socketClientDiagnostics.get(fetchId);
+    const finalState = await controller.getSocketClientDiagnosticsEntry(fetchId);
     expect(finalState).toBeDefined();
     expect(finalState.pendingDelegations).toBe(0);
     expect(finalState.pendingTimers).toBe(0);
