@@ -1,3 +1,10 @@
+# [2.10.0](https://github.com/cadenzaio/cadenza-service/compare/v2.9.0...v2.10.0) (2026-03-03)
+
+
+### Features
+
+* **actors:** add actor registration and task mapping logic ([4a166b8](https://github.com/cadenzaio/cadenza-service/commit/4a166b8d251fd49cc84d373c3a8f5afd38d946f7))
+
 # [2.9.0](https://github.com/cadenzaio/cadenza-service/compare/v2.8.0...v2.9.0) (2026-03-03)
 
 
