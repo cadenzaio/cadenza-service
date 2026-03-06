@@ -117,6 +117,12 @@ This keeps initialization observable and fully expressible through primitives.
 - Idempotency: disabled by default.
 - If idempotency enabled: duplicate failed executions re-run by default.
 - Session touch default: `extendIdleTtlOnRead = true`.
+- Session durable persistence default: `persistDurableState = false` (per-actor opt-in).
+- Session persistence timeout default: `5000ms`.
+- Strict write-through default when persistence is enabled:
+  - durable state writes fail if persistence fails.
+  - in-memory durable commit occurs only after persistence success contract.
+- Runtime-only writes do not trigger persistence.
 - Per-task session touch override remains available.
 
 ## 8. Service-Layer Usage Pattern
@@ -210,6 +216,13 @@ Foreign keys:
 ### 10.3 `actor_session_state`
 
 Durable actor state per resolved key.
+
+Strict write-through integration (v1):
+
+- Core actor write tasks optionally invoke inquiry intent `meta-actor-session-state-persist`.
+- Service responds to that intent and persists using upsert semantics.
+- Upsert stale-write guard: `actor_session_state.durable_version <= excluded.durable_version`.
+- Success contract back to core: `__success === true` and `persisted === true`.
 
 Fields:
 
@@ -306,6 +319,9 @@ const readTask = Cadenza.createTask(
 - Keep actor behavior inside primitives to support DB-native generation later.
 - DB `actor` table uses `is_meta` instead of `kind`.
 - DB sync contracts are validated by field identity, not naming style.
+- Session durable persistence is per-actor opt-in and strict write-through in v1.
+- No auto-hydration from DB in v1.
+- Single-writer per actor key is the v1 assumption.
 
 ## 13. MVP Acceptance Criteria
 

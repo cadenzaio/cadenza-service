@@ -16,10 +16,10 @@
   resolved "https://registry.yarnpkg.com/@babel/helper-validator-identifier/-/helper-validator-identifier-7.28.5.tgz#010b6938fab7cb7df74aa2bbc06aa503b8fe5fb4"
   integrity sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q==
 
-"@cadenza.io/core@^3.23.0":
-  version "3.23.0"
-  resolved "https://registry.yarnpkg.com/@cadenza.io/core/-/core-3.23.0.tgz#dba69b0e4c1102e403f7321813d3c14da24d448c"
-  integrity sha512-53s3NyG2xLZi4MmypSXO2QdJSSwPWeRT2rdq0+ZDbpUUoJlR1EdagpFQdNak3Uy4xNTkdPitzp5ZtMlVfMnE7Q==
+"@cadenza.io/core@^3.24.0":
+  version "3.24.0"
+  resolved "https://registry.yarnpkg.com/@cadenza.io/core/-/core-3.24.0.tgz#bb74e6dd2df308d5b5265c44802aa0d950a8850f"
+  integrity sha512-xQEvyBAQRi8Bi/dzTbfTMZOJo2rNrcUnczPUnTk9G5hZ61rCkjAHupEsD5CS33xJlZqNAf0FPpFep6Aw3G/esA==
   dependencies:
     "@types/uuid" "^10.0.0"
     uuid "^10.0.0"

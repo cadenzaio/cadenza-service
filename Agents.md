@@ -1,55 +1,233 @@
+# Repo-Specific Agent Rules
+
+This document defines repository-level execution rules.
+
+Global workflow governance (WIP limits, clarification protocol,
+assumptions policy, complexity gate, contract governance)
+is defined in the workspace root AGENTS.md.
+
+If conflict exists:
+- Root AGENTS.md governs workflow and process.
+- This file governs tooling, commands, and repo-specific constraints.
+
+---
+
+# 1. Repository Overview
+
+Name: cadenza-service
+Purpose: Distributed/service extension layer for Cadenza core.
+Owner Domain: Service transport, sync metadata, distribution integration contracts.
+
+Boundaries:
+- Do NOT modify other repos from here.
+- Cross-repo changes must follow workspace multi-repo discipline.
+- Keep core primitive semantics in `cadenza`; keep DB schema authority in `cadenza-db`.
+
+---
+
+# 2. Local Development Commands
+
+Use these canonical commands. Do not invent alternatives.
+
+## Install
+
+```bash
+yarn install
+```
+
+## Build
+
+```bash
+yarn build
+```
+
+## Test
+
+```bash
+yarn test
+```
+
+## Typecheck
+
+```bash
+yarn tsc --noEmit
+```
+
+## Format
+
+```bash
+yarn prettier --check .
+```
+
+If CI uses a specific command, prefer that command.
+
+# 3. Pre-PR Checklist (Repo-Specific)
+
+## Before opening PR:
+
+- [ ] Install succeeds
+- [ ] Typecheck passes
+- [ ] Tests pass
+- [ ] No console logs left
+- [ ] No commented-out code
+- [ ] No debug artifacts
+- [ ] Migration files included (if applicable)
+
+If this repo exposes contracts:
+
+- [ ] Contract changes propagated per workspace rules
+
+# 4. Environment & Configuration
+
+Required environment variables (from source usage):
+
+- `HTTP_PORT`: Local HTTP server port.
+- `SECURITY_PROFILE`: Service security profile (`low|medium|high`).
+- `NETWORK_MODE`: Service network mode (`internal|exposed|exposed-high-sec|auto|dev`).
+- `CADENZA_DB_ADDRESS`: CadenzaDB service host/address.
+- `CADENZA_DB_PORT`: CadenzaDB service port.
+- `RELATED_SERVICES`: Pipe-separated service bootstrap list.
+- `DATABASE_POOL_SIZE`: DB pool size for database service setup.
+- `DATABASE_ADDRESS`: Database connection string.
+- `CORS_ORIGIN`: CORS allowlist origin.
+- `IS_DOCKER`: Docker runtime flag (`true`/`false`).
+- `CADENZA_SERVER_URL`: Public service URL hint when containerized.
+- `SSL_KEY_PATH`: HTTPS key file path.
+- `SSL_CERT_PATH`: HTTPS cert file path.
+- `NODE_ENV`: Runtime environment (`development`/`production`).
+
+Local dev setup notes:
+
+- Default local service bootstrap works without TLS.
+- DB-backed flows require reachable DB/CadenzaDB endpoints.
+
+Never hardcode secrets.
+
+Never commit .env files.
+
+# 5. Testing Rules
+
+Test expectations:
+
+- All new logic must include tests.
+- Edge cases must be tested.
+- Regression tests required for bug fixes.
+- Snapshot tests updated intentionally, never blindly.
+
+If integration tests exist:
+
+- Ensure external services are mocked or containerized.
+
+# 6. Contract Responsibilities (If This Repo Owns Contracts)
+
+This repo owns service/distribution integration contracts.
+
+- Update authority source first.
+- Keep metadata signal payload field identity aligned with `cadenza-db` schemas.
+- Update or notify consumers in same task OR create follow-up issue.
+- Add/update tests that lock payload contract behavior.
+
+Breaking contract changes require:
+
+- Explicit approval
+
+  OR
+
+- Design-required phase.
+
+# 7. Logging & Observability
+
+- Use structured logging.
+- Avoid logging sensitive data.
+- Log errors with context.
+- No silent catches.
+
+# 8. Performance & Safety Constraints
+
+- Avoid unbounded loops over incoming network input.
+- Validate external input and metadata payloads.
+- Keep retry/delegation logic bounded and observable.
+- Fail fast on invalid states.
+
+# 9. Repo-Specific Anti-Patterns
+
+Do NOT:
+
+- Bypass primitive flow with hidden side channels.
+- Read/write actor state outside actor-bound tasks when actor context is required.
+- Persist runtime-only objects.
+- Modify generated files manually.
+- Disable tests to make builds pass.
+- Introduce new dependencies without justification.
+
+# 10. Documentation Discipline
+
+If you modify:
+
+- Public API
+- DB sync payload contracts
+- Build system
+- Major module structure
+
+Update:
+
+- README.md
+- This AGENTS.md (if command/process changes)
+- Relevant repo docs (including actor RFC when applicable)
+
+All documentation changes must be:
+
+- Evidence-based
+- Implemented via approved proposals from Queue Health process
+
+# 11. Execution Principle
+
+Within this repo:
+
+- Prefer small, incremental changes.
+- Prefer additive changes over breaking.
+- If uncertain, trigger clarification per root policy.
+- If complexity increases, trigger design-required per root policy.
+
+When in doubt: stop and ask.
+
 # Agents Notes: cadenza-service
 
 ## What I have learned
 
-- `CadenzaService` wraps core primitives and adds service-level concerns (service registry, transport, database task/deputy abstractions, distributed inquiry behavior).
-- The runtime ecosystem still depends on primitive flow:
+- `CadenzaService` wraps core primitives and adds service-level concerns (service registry, transport, database abstractions, distributed inquiry behavior).
+- Primitive flow remains central:
   - signals trigger tasks
   - tasks execute work
-  - intents/inquiries call responders
-  - actors should provide formalized state access for tasks
-- Actor API is exposed at service layer through:
+  - intents/inquiries resolve task responders
+  - actors provide formalized state access for tasks
+- Actor API is exposed at service layer via:
   - `CadenzaService.createActor(...)`
   - `CadenzaService.createActorFromDefinition(...)`
 
-## SocketController findings (critical for refactor direction)
+## SocketController alignment
 
-- The pre-migration version (HEAD) uses pure meta-task setup flow:
-  - `Setup SocketServer` (inside `SocketServer` meta routine) triggered by `global.meta.rest.network_configured`
+- Socket setup remains signal-driven task orchestration:
+  - `Setup SocketServer` triggered by `global.meta.rest.network_configured`
   - `Connect to socket server` triggered by `meta.fetch.handshake_complete`
-  - dynamic per-connection tasks created inside setup (`handshake`, `delegate`, `transmit`, `shutdown`)
-- The current migration introduced actors but still executes many actor-task wrappers directly (manual invocation helpers), which bypasses normal graph registration/discovery semantics.
-- Current file also contains migration artifacts, e.g. invalid identifier `socketCli.entSessionActor`, and expanded complexity that obscures the primitive mapping.
-- The desired model from discussion is:
-  - actor replaces old setup-state container
-  - durable actor bootstrap is declarative (`initState`) while runtime setup is done by normal write tasks triggered by signals/flows
-  - actor tasks are ordinary tasks in GraphRegistry (no new discoverability convention)
+- Actor-backed model:
+  - durable actor state for serializable session/diagnostic data
+  - runtime actor state for live socket/timer handles
+- Runtime-only objects are not persisted.
 
-## Design constraints confirmed in discussion
+## Actor/DB sync alignment
 
-- Actors are not graph nodes; actor tasks are.
-- Runtime objects (socket instances, clients, handles) belong in runtime state, not durable persisted state.
-- Durable state should be explicit and serializable.
-- For now, runtime state persistence is strict no-write.
-- Primitive descriptions should be used heavily (`description` on actors/tasks/intents).
-- Runtime-created tasks are valid and intentional for complex workflows.
-- Ephemeral tasks as promise resolvers are part of the intended primitive-native orchestration style.
-
-## Latest lessons (DB-native shift)
-
-- Patterns that feel convenient in file-based code can become counterproductive for DB-native primitive generation.
-- Keep logic inside the primitive ecosystem: state reads/writes should happen through actor-bound tasks, not ad-hoc controller state access.
-- Initialization should be modeled as graph behavior (signals -> tasks), not hidden lifecycle hooks.
-- Runtime state should be explicitly task-managed and recreated as needed; durable state should remain explicit and serializable.
-- Designing this way now reduces migration friction when actors/tasks/signals move from repo-defined code to DB-defined structures.
+- Actor metadata and actor-task association are treated as DB-sync contracts.
+- Field identity must match DB schemas; case conversion is transport-level.
+- Graph metadata tasks enrich actor payloads with `service_name` before DB-facing global meta signals.
 
 ## Long-term direction (recorded)
 
-- Business logic should eventually live primarily as DB-stored primitives (tasks/signals/intents/actors/agents), generated and managed through UI + AI-assisted flows.
-- Runtime engines are intended to be generalized executors that materialize DB definitions into active graphs and continuously sync runtime metrics/state.
+- Business logic is intended to move toward DB-native primitives authored/generated outside static files.
+- Service runtime remains a materialization/execution layer that syncs metadata and runtime telemetry.
 
 ## What I will keep learning in this discussion
 
-- Exact 1:1 mapping from each old socket setup step to actor durable bootstrap and runtime task responsibilities.
-- Minimal actor task surface needed for server/client without duplicating legacy patterns.
-- How to keep dynamic signal subscriptions compatible with actor-centered state ownership.
+- Actor session persistence strategy (`actor_session_state`) with clear durable/runtime boundaries.
+- Conflict/consistency behavior for actor durable state hydration and write-back.
+- Minimal metadata contracts needed for engine-driven DB-native materialization.
