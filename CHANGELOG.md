@@ -1,3 +1,10 @@
+# [2.12.0](https://github.com/cadenzaio/cadenza-service/compare/v2.11.0...v2.12.0) (2026-03-09)
+
+
+### Features
+
+* **postgres-actor:** introduce PostgresActor API, CRUD intents, and query macros ([3122ae4](https://github.com/cadenzaio/cadenza-service/commit/3122ae419de357462027ebb1f6207ef6706833bf))
+
 # [2.11.0](https://github.com/cadenzaio/cadenza-service/compare/v2.10.0...v2.11.0) (2026-03-06)
 
 
