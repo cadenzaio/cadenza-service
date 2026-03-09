@@ -51,10 +51,13 @@ import ServiceRegistry, {
 } from "./registry/ServiceRegistry";
 import SignalController from "./signals/SignalController";
 import {
+  AggregateDefinition,
+  AggregateFunction,
   DbOperationType,
   DbOperationPayload,
   JoinDefinition,
   OpEffect,
+  QueryMode,
   SortDirection,
   SubOperation,
   SubOperationType,
@@ -93,6 +96,9 @@ export type {
   ServiceInstanceDescriptor,
   DeputyDescriptor,
   DbOperationType,
+  QueryMode,
+  AggregateFunction,
+  AggregateDefinition,
   SortDirection,
   JoinDefinition,
   SubOperationType,

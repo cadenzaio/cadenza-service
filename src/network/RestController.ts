@@ -480,23 +480,62 @@ export default class RestController {
                   let ctx;
                   ctx = req.body;
                   deputyExecId = ctx.__metadata.__deputyExecId;
+                  const remoteRoutineName = ctx.__remoteRoutineName;
+                  const targetNotFoundSignal = `meta.rest.delegation_target_not_found:${deputyExecId}`;
+                  let resolved = false;
+
+                  const resolveDelegation = (
+                    endCtx: AnyObject,
+                    status: "success" | "error",
+                  ) => {
+                    if (resolved || res.headersSent) {
+                      return;
+                    }
+
+                    resolved = true;
+
+                    const metadata =
+                      endCtx?.__metadata && typeof endCtx.__metadata === "object"
+                        ? endCtx.__metadata
+                        : {};
+                    if (endCtx?.__metadata) {
+                      delete endCtx.__metadata;
+                    }
+
+                    res.json({
+                      ...endCtx,
+                      ...metadata,
+                      __status: status,
+                    });
+                  };
 
                   Cadenza.createEphemeralMetaTask(
                     "Resolve delegation",
-                    (endCtx) => {
-                      const metadata = endCtx.__metadata;
-                      delete endCtx.__metadata;
-                      res.json({
-                        ...endCtx,
-                        ...metadata,
-                        __status: "success",
-                      });
-                    },
+                    (endCtx) => resolveDelegation(endCtx, "success"),
                     "Resolves a delegation request",
                     { register: false },
                   )
                     .doOn(`meta.node.graph_completed:${deputyExecId}`)
                     .emits(`meta.rest.delegation_resolved:${deputyExecId}`);
+
+                  Cadenza.createEphemeralMetaTask(
+                    "Resolve delegation target lookup failure",
+                    (endCtx) => resolveDelegation(endCtx, "error"),
+                    "Resolves delegation requests that cannot find a local task or routine",
+                    { register: false },
+                  ).doOn(targetNotFoundSignal);
+
+                  if (
+                    !Cadenza.get(remoteRoutineName) &&
+                    !Cadenza.registry.routines.get(remoteRoutineName)
+                  ) {
+                    Cadenza.emit(targetNotFoundSignal, {
+                      ...ctx,
+                      __error: `No task or routine registered for delegation target ${remoteRoutineName}.`,
+                      errored: true,
+                    });
+                    return;
+                  }
 
                   // Cadenza.createEphemeralMetaTask(
                   //   "Delegation progress update",
@@ -732,8 +771,21 @@ export default class RestController {
                               Cadenza.runner.run(routine, context);
                               return true;
                             } else {
+                              const deputyExecId =
+                                context.__metadata?.__deputyExecId ??
+                                context.__deputyExecId;
+                              const remoteRoutineName =
+                                context.__remoteRoutineName ??
+                                context.__name ??
+                                "unknown";
                               context.errored = true;
-                              context.__error = "No routine or task defined.";
+                              context.__error = `No task or routine registered for delegation target ${remoteRoutineName}.`;
+                              if (deputyExecId) {
+                                emit(
+                                  `meta.rest.delegation_target_not_found:${deputyExecId}`,
+                                  context,
+                                );
+                              }
                               emit("meta.runner.failed", context);
                               return false;
                             }

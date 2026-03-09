@@ -127,6 +127,30 @@ export interface TableDefinition {
           input?: SchemaDefinition;
         }
     )[];
+    insert?: (
+      | string
+      | {
+          intent: string;
+          description?: string;
+          input?: SchemaDefinition;
+        }
+    )[];
+    update?: (
+      | string
+      | {
+          intent: string;
+          description?: string;
+          input?: SchemaDefinition;
+        }
+    )[];
+    delete?: (
+      | string
+      | {
+          intent: string;
+          description?: string;
+          input?: SchemaDefinition;
+        }
+    )[];
   };
   initialData?: { fields: string[]; data: any[][] };
 }

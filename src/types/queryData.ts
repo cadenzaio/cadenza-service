@@ -2,6 +2,15 @@
 import type { AnyObject } from "@cadenza.io/core";
 
 export type DbOperationType = "query" | "insert" | "update" | "delete";
+export type QueryMode = "rows" | "count" | "exists" | "one" | "aggregate";
+export type AggregateFunction = "count" | "sum" | "avg" | "min" | "max";
+
+export interface AggregateDefinition {
+  fn: AggregateFunction;
+  field?: string;
+  as?: string;
+  distinct?: boolean;
+}
 
 // Define sort direction
 export type SortDirection = "asc" | "desc";
@@ -45,6 +54,9 @@ export interface DbOperationPayload {
   filter?: Record<string, ValueOrList>; // For query/update/delete
   fields?: string[];
   joins?: Record<string, JoinDefinition>; // For query
+  queryMode?: QueryMode;
+  aggregates?: AggregateDefinition[];
+  groupBy?: string[];
   sort?: Record<string, SortDirection>;
   limit?: number; // For query
   offset?: number; // For query

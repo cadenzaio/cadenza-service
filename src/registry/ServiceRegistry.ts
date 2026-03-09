@@ -2270,7 +2270,7 @@ export default class ServiceRegistry {
       .emitsOnFail("meta.service_registry.service_insertion_failed");
 
     this.insertServiceInstanceTask = Cadenza.createCadenzaDBInsertTask(
-      "serviceInstance",
+      "service_instance",
       {},
       {
         inputSchema: {

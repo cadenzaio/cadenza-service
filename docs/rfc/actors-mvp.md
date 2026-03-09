@@ -1,7 +1,7 @@
 # RFC: Actors as Stateful Data Interaction Primitive (MVP)
 
 Status: Active Draft  
-Last updated: 2026-03-03  
+Last updated: 2026-03-08  
 Scope: `cadenza` (core), `cadenza-service`, `cadenza-db`
 
 ## 1. Summary
@@ -139,6 +139,34 @@ SocketController migration pattern:
 - Durable/session updates go through actor write tasks.
 - Runtime handles (socket instances, timers, callbacks) remain runtime state and are never persisted.
 - Diagnostics reads should execute via diagnostics actor read task (not direct ad-hoc state reads).
+
+### 8.1 Specialized Actor Plugins: PostgresActor
+
+- Canonical API in service layer:
+  - `Cadenza.createPostgresActor(...)`
+  - `Cadenza.createMetaPostgresActor(...)`
+- Legacy compatibility wrappers:
+  - `createDatabaseService(...)`
+  - `createMetaDatabaseService(...)`
+  - These delegate to PostgresActor setup and still emit `global.meta.created_database_service` (bridge mode).
+- Intents are service-agnostic and actor-scoped:
+  - `query-pg-{actor}-{table}`
+  - `insert-pg-{actor}-{table}`
+  - `update-pg-{actor}-{table}`
+  - `delete-pg-{actor}-{table}`
+- Query mode extensions on PostgresActor query payload:
+  - `rows` (default)
+  - `count`
+  - `exists`
+  - `one`
+  - `aggregate` (with `aggregates[]` and optional `groupBy[]`)
+- Auto-generated macro intents:
+  - `count-pg-{actor}-{table}`
+  - `exists-pg-{actor}-{table}`
+  - `one-pg-{actor}-{table}`
+  - `aggregate-pg-{actor}-{table}`
+  - `upsert-pg-{actor}-{table}`
+- Intents/inquiries are not read-only by definition. Write intents are first-class effect intents and may cause side effects outside response context.
 
 ## 9. Distributed Extension Boundary
 
@@ -322,6 +350,7 @@ const readTask = Cadenza.createTask(
 - Session durable persistence is per-actor opt-in and strict write-through in v1.
 - No auto-hydration from DB in v1.
 - Single-writer per actor key is the v1 assumption.
+- Service-agnostic, actor-scoped CRUD intents are the canonical naming rule for specialized Postgres actors.
 
 ## 13. MVP Acceptance Criteria
 

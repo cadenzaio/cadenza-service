@@ -1151,16 +1151,16 @@ export default class CadenzaService {
   }
 
   /**
-   * Creates and initializes a database service with the provided name, schema, and configuration options.
-   * This method is not supported in a browser environment and will log a warning if called in such an environment.
+   * Creates and initializes a PostgresActor-backed database service.
+   * This is the canonical API for schema-driven postgres setup in cadenza-service.
    *
-   * @param {string} name - The name of the database service to be created.
-   * @param {DatabaseSchemaDefinition} schema - The schema definition for the database service.
-   * @param {string} [description=""] - An optional description of the database service.
-   * @param {ServerOptions & DatabaseOptions} [options={}] - Optional configuration settings for the database and server.
-   * @return {void} This method does not return a value.
+   * @param {string} name - Logical actor/service name.
+   * @param {DatabaseSchemaDefinition} schema - Database schema definition.
+   * @param {string} [description=""] - Optional human-readable description.
+   * @param {ServerOptions & DatabaseOptions} [options={}] - Server/database runtime options.
+   * @return {void}
    */
-  static createDatabaseService(
+  static createPostgresActor(
     name: string,
     schema: DatabaseSchemaDefinition,
     description: string = "",
@@ -1175,7 +1175,7 @@ export default class CadenzaService {
     if (this.serviceCreated) return;
     this.bootstrap();
     this.serviceRegistry.serviceName = name;
-    DatabaseController.instance; // Ensure DB controller is created
+    const databaseController = DatabaseController.instance;
 
     options = {
       loadBalance: true,
@@ -1199,7 +1199,17 @@ export default class CadenzaService {
       ...options,
     };
 
-    console.log("Creating database service", options);
+    const registration = databaseController.createPostgresActor(
+      name,
+      schema,
+      options,
+    );
+
+    console.log("Creating PostgresActor", {
+      serviceName: name,
+      actorName: registration.actorName,
+      options,
+    });
 
     this.emit("meta.database_init_requested", {
       schema,
@@ -1208,7 +1218,7 @@ export default class CadenzaService {
     });
 
     this.createMetaTask("Set database connection", () => {
-      this.createMetaTask("Insert database service", (_, emit) => {
+      this.createMetaTask("Insert database service bridge", (_, emit) => {
         emit("global.meta.created_database_service", {
           data: {
             service_name: name,
@@ -1220,11 +1230,44 @@ export default class CadenzaService {
         this.log("Database service created", {
           name,
           isMeta: options.isMeta,
+          actorName: registration.actorName,
         });
       }).doOn("meta.service_registry.service_inserted");
 
       this.createCadenzaService(name, description, options);
     }).doOn("meta.database.setup_done");
+  }
+
+  /**
+   * Creates a meta PostgresActor service.
+   *
+   * @param {string} name - Logical actor/service name.
+   * @param {DatabaseSchemaDefinition} schema - Database schema definition.
+   * @param {string} [description=""] - Optional description.
+   * @param {ServerOptions & DatabaseOptions} [options={}] - Optional server/database options.
+   * @return {void}
+   */
+  static createMetaPostgresActor(
+    name: string,
+    schema: DatabaseSchemaDefinition,
+    description: string = "",
+    options: ServerOptions & DatabaseOptions = {},
+  ) {
+    this.bootstrap();
+    options.isMeta = true;
+    this.createPostgresActor(name, schema, description, options);
+  }
+
+  /**
+   * Legacy compatibility wrapper. Prefer {@link createPostgresActor}.
+   */
+  static createDatabaseService(
+    name: string,
+    schema: DatabaseSchemaDefinition,
+    description: string = "",
+    options: ServerOptions & DatabaseOptions = {},
+  ) {
+    this.createPostgresActor(name, schema, description, options);
   }
 
   /**
@@ -1242,9 +1285,7 @@ export default class CadenzaService {
     description: string = "",
     options: ServerOptions & DatabaseOptions = {},
   ) {
-    this.bootstrap();
-    options.isMeta = true;
-    this.createDatabaseService(name, schema, description, options);
+    this.createMetaPostgresActor(name, schema, description, options);
   }
 
   static createActor<

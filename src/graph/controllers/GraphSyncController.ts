@@ -403,14 +403,14 @@ export default class GraphSyncController {
 
     this.splitActorsForRegistration = Cadenza.createMetaTask(
       "Split actors for registration",
-      function* (ctx) {
+      function* (this: GraphSyncController, ctx: any) {
         Cadenza.debounce("meta.sync_controller.synced_resource", {
           delayMs: 3000,
         });
 
         const actors = ctx.actors ?? [];
         for (const actor of actors) {
-          const data = {
+          const data: Record<string, any> = {
             ...buildActorRegistrationData(actor),
             service_name: Cadenza.serviceRegistry.serviceName,
           };
@@ -466,7 +466,7 @@ export default class GraphSyncController {
 
     this.registerActorTaskMapTask = Cadenza.createMetaTask(
       "Split actor task maps",
-      function* (ctx) {
+      function* (this: GraphSyncController, ctx: any) {
         const task = ctx.task;
         if (task.hidden || !task.register) {
           return;

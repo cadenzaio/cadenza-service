@@ -55,6 +55,18 @@ localTask.doOn('ContextService.process.failed');
 
 For full examples, see this repository or the test suite.
 
+## PostgresActor Documentation
+
+Canonical PostgresActor docs:
+
+- [PostgresActor Guide](./docs/postgres-actor-guide.md)
+- [PostgresActor Reference](./docs/postgres-actor-reference.md)
+
+Workspace mirror (for cross-repo publication):
+
+- [Workspace Guide Mirror](../docs/postgres-actor-guide.md)
+- [Workspace Reference Mirror](../docs/postgres-actor-reference.md)
+
 
 ## Features
 
