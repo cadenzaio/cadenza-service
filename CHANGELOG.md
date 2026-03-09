@@ -1,3 +1,10 @@
+# [2.11.0](https://github.com/cadenzaio/cadenza-service/compare/v2.10.0...v2.11.0) (2026-03-06)
+
+
+### Features
+
+* **actors:** add strict session persistence and write-through defaults ([f6368a6](https://github.com/cadenzaio/cadenza-service/commit/f6368a697b823a89d93e8cdac1f0c4cf1a5d43e1))
+
 # [2.10.0](https://github.com/cadenzaio/cadenza-service/compare/v2.9.0...v2.10.0) (2026-03-03)
 
 
