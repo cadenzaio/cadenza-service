@@ -1,0 +1,110 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import Cadenza from "../src/Cadenza";
+import RestController from "../src/network/RestController";
+import type { AnyObject } from "@cadenza.io/core";
+
+function resetRuntimeState() {
+  try {
+    Cadenza.emit("meta.server_shutdown_requested", {});
+  } catch {
+    // Ignore shutdown attempts before bootstrap.
+  }
+
+  try {
+    Cadenza.reset();
+  } catch {
+    // Ignore first-run reset errors before bootstrap.
+  }
+
+  (RestController as any)._instance = undefined;
+}
+
+describe("RestController delegation resolution", () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  let originalNodeEnv: string | undefined;
+
+  beforeEach(() => {
+    consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "development";
+    resetRuntimeState();
+    Cadenza.bootstrap();
+    Cadenza.setMode("production");
+    RestController.instance;
+  });
+
+  afterEach(() => {
+    resetRuntimeState();
+    process.env.NODE_ENV = originalNodeEnv;
+    consoleLogSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("registers the service instance insert deputy with the snake_case target", () => {
+    const serviceInstanceInsertTask = (Cadenza as any).serviceRegistry
+      .insertServiceInstanceTask as any;
+
+    expect(serviceInstanceInsertTask).toBeDefined();
+    expect(serviceInstanceInsertTask?.name).toBe(
+      "Insert service_instance in CadenzaDB",
+    );
+    expect(serviceInstanceInsertTask?.remoteRoutineName).toBe(
+      "Insert service_instance",
+    );
+  });
+
+  it("returns an error response when delegation target lookup fails", async () => {
+    const networkConfiguredPromise = new Promise<AnyObject>((resolve) => {
+      Cadenza.createEphemeralMetaTask(
+        "Observe rest network configured",
+        (ctx) => {
+          resolve(ctx);
+          return true;
+        },
+        "Observes REST network configuration during tests",
+        { register: false },
+      ).doOn("global.meta.rest.network_configured");
+    });
+
+    Cadenza.emit("meta.service_registry.service_inserted", {
+      __isDatabase: false,
+      __networkMode: "dev",
+      __port: 0,
+      __securityProfile: "low",
+      __serviceInstanceId: "rest-delegation-resolution-test",
+      __serviceName: "RestDelegationResolutionTest",
+    });
+
+    const networkContext = await networkConfiguredPromise;
+    const port = networkContext.httpServer?.address()?.port;
+
+    const deputyExecId = "delegation-target-not-found";
+    const response = await fetch(`http://localhost:${port}/delegation`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        __remoteRoutineName: "Insert serviceInstance",
+        __metadata: {
+          __deputyExecId: deputyExecId,
+        },
+      }),
+    });
+
+    const failureContext = await response.json();
+
+    expect(response.ok).toBe(true);
+    expect(failureContext.__status).toBe("error");
+    expect(failureContext.errored).toBe(true);
+    expect(failureContext.__error).toBe(
+      "No task or routine registered for delegation target Insert serviceInstance.",
+    );
+  }, 10_000);
+});
