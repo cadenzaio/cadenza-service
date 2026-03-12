@@ -1842,7 +1842,7 @@ export default class CadenzaService {
   }
 
   /**
-   * Creates an ephemeral meta task with the specified name, function, description, and options.
+   * Creates an ephemeral meta-task with the specified name, function, description, and options.
    * See {@link createEphemeralTask} and {@link createMetaTask} for more details.
    *
    * @param {string} name - The name of the task to be created.
