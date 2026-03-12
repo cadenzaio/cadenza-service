@@ -18,11 +18,19 @@ It covers:
 - Runtime actor state: live `pg.Pool` and runtime handles
 - Auto-generated DB tasks per table (`query|insert|update|delete`)
 - Auto-generated actor-scoped intents for query and write flows
+- No service bootstrap side effects
 
 Canonical creation APIs:
 
 - `Cadenza.createPostgresActor(...)`
 - `Cadenza.createMetaPostgresActor(...)`
+
+Dedicated database service wrappers:
+
+- `Cadenza.createDatabaseService(...)`
+- `Cadenza.createMetaDatabaseService(...)`
+
+Use the actor API when you want Postgres-backed data access inside an existing service or process. Use the database-service wrapper when you want the common pattern of "create actor first, then expose it as a service".
 
 ## 2. Quick Start
 
@@ -51,9 +59,37 @@ const schema: DatabaseSchemaDefinition = {
 };
 
 Cadenza.createPostgresActor(
-  "TelemetryService",
+  "TelemetryReadModel",
   schema,
-  "Stores and serves IoT telemetry",
+  "Stores telemetry inside an existing service",
+  {
+    databaseName: "telemetry_read_model",
+  },
+);
+```
+
+What this gives you for table `telemetry`:
+
+- Tasks: `Query telemetry`, `Insert telemetry`, `Update telemetry`, `Delete telemetry`
+- Intents:
+  - `query-pg-telemetry-read-model-postgres-actor-telemetry`
+  - `insert-pg-telemetry-read-model-postgres-actor-telemetry`
+  - `update-pg-telemetry-read-model-postgres-actor-telemetry`
+  - `delete-pg-telemetry-read-model-postgres-actor-telemetry`
+- Macro intents:
+  - `count-pg-telemetry-read-model-postgres-actor-telemetry`
+  - `exists-pg-telemetry-read-model-postgres-actor-telemetry`
+  - `one-pg-telemetry-read-model-postgres-actor-telemetry`
+  - `aggregate-pg-telemetry-read-model-postgres-actor-telemetry`
+  - `upsert-pg-telemetry-read-model-postgres-actor-telemetry`
+
+## 2.1 Dedicated database service helper
+
+```ts
+Cadenza.createDatabaseService(
+  "TelemetryDatabaseService",
+  schema,
+  "Dedicated telemetry data access layer",
   {
     port: 3010,
     networkMode: "dev",
@@ -63,20 +99,7 @@ Cadenza.createPostgresActor(
 );
 ```
 
-What this gives you for table `telemetry`:
-
-- Tasks: `Query telemetry`, `Insert telemetry`, `Update telemetry`, `Delete telemetry`
-- Intents:
-  - `query-pg-telemetry-service-postgres-actor-telemetry`
-  - `insert-pg-telemetry-service-postgres-actor-telemetry`
-  - `update-pg-telemetry-service-postgres-actor-telemetry`
-  - `delete-pg-telemetry-service-postgres-actor-telemetry`
-- Macro intents:
-  - `count-pg-telemetry-service-postgres-actor-telemetry`
-  - `exists-pg-telemetry-service-postgres-actor-telemetry`
-  - `one-pg-telemetry-service-postgres-actor-telemetry`
-  - `aggregate-pg-telemetry-service-postgres-actor-telemetry`
-  - `upsert-pg-telemetry-service-postgres-actor-telemetry`
+This wrapper creates the PostgresActor first and only creates the service after actor setup completes.
 
 ## 3. Choosing Tasks vs Intents vs Signals
 

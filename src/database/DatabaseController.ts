@@ -39,7 +39,7 @@ interface PostgresActorSafetyPolicy {
 interface PostgresActorDurableState {
   actorName: string;
   actorToken: string;
-  serviceName: string;
+  ownerServiceName: string | null;
   databaseName: string;
   status: "idle" | "initializing" | "ready" | "error";
   schemaVersion: number;
@@ -60,13 +60,17 @@ interface PostgresActorRuntimeState {
 }
 
 interface PostgresActorRegistration {
-  serviceName: string;
+  ownerServiceName: string | null;
   databaseName: string;
   actorName: string;
   actorToken: string;
   actorKey: string;
+  setupSignal: string;
+  setupDoneSignal: string;
+  setupFailedSignal: string;
   actor: Actor<PostgresActorDurableState, PostgresActorRuntimeState>;
   schema: DatabaseSchemaDefinition;
+  description: string;
   options: ServerOptions & DatabaseOptions;
   tasksGenerated: boolean;
   intentNames: Set<string>;
@@ -81,6 +85,10 @@ function normalizeIntentToken(value: string): string {
   }
 
   return normalized;
+}
+
+function buildPostgresActorName(name: string): string {
+  return `${String(name ?? "").trim()}PostgresActor`;
 }
 
 function validateIntentName(intentName: string): void {
@@ -303,7 +311,9 @@ export default class DatabaseController {
     return this._instance;
   }
 
-  private readonly registrationsByService: Map<string, PostgresActorRegistration> =
+  private readonly registrationsByActorName: Map<string, PostgresActorRegistration> =
+    new Map();
+  private readonly registrationsByActorToken: Map<string, PostgresActorRegistration> =
     new Map();
 
   private readonly adminDbClient = new Pool({
@@ -318,17 +328,12 @@ export default class DatabaseController {
     Cadenza.createMetaTask(
       "Route PostgresActor setup requests",
       (ctx) => {
-        const serviceName = String(ctx.options?.serviceName ?? ctx.serviceName ?? "");
-        if (!serviceName) {
-          return ctx;
-        }
-
-        const registration = this.registrationsByService.get(serviceName);
+        const registration = this.resolveRegistration(ctx);
         if (!registration) {
           return ctx;
         }
 
-        Cadenza.emit(`meta.postgres_actor.setup_requested.${registration.actorToken}`, ctx);
+        this.requestPostgresActorSetup(registration, ctx);
         return ctx;
       },
       "Routes generic database init requests to actor-scoped setup signal.",
@@ -337,30 +342,34 @@ export default class DatabaseController {
   }
 
   reset() {
-    for (const registration of this.registrationsByService.values()) {
+    for (const registration of this.registrationsByActorName.values()) {
       const runtimeState = registration.actor.getRuntimeState(registration.actorKey);
       if (runtimeState?.pool) {
         runtimeState.pool.end().catch(() => undefined);
       }
     }
 
-    this.registrationsByService.clear();
+    this.registrationsByActorName.clear();
+    this.registrationsByActorToken.clear();
     this.adminDbClient.end().catch(() => undefined);
   }
 
   createPostgresActor(
-    serviceName: string,
+    name: string,
     schema: DatabaseSchemaDefinition,
+    description: string,
     options: ServerOptions & DatabaseOptions,
   ): PostgresActorRegistration {
-    const existing = this.registrationsByService.get(serviceName);
+    const actorName = buildPostgresActorName(name);
+    const existing = this.registrationsByActorName.get(actorName);
     if (existing) {
       return existing;
     }
 
-    const actorName = `${serviceName}PostgresActor`;
     const actorToken = normalizeIntentToken(actorName);
-    const actorKey = String(options.databaseName ?? snakeCase(serviceName));
+    const actorKey = String(options.databaseName ?? snakeCase(name));
+    const ownerServiceName =
+      options.ownerServiceName ?? Cadenza.serviceRegistry?.serviceName ?? null;
 
     const optionTimeout =
       typeof (options as AnyObject).timeoutMs === "number"
@@ -388,6 +397,7 @@ export default class DatabaseController {
       {
         name: actorName,
         description:
+          description ||
           "Specialized PostgresActor owning pool runtime state and schema-driven DB task generation.",
         defaultKey: actorKey,
         keyResolver: (input: Record<string, any>) =>
@@ -397,7 +407,7 @@ export default class DatabaseController {
         initState: {
           actorName,
           actorToken,
-          serviceName,
+          ownerServiceName,
           databaseName: actorKey,
           status: "idle",
           schemaVersion: Number(schema.version ?? 1),
@@ -413,27 +423,128 @@ export default class DatabaseController {
     );
 
     const registration: PostgresActorRegistration = {
-      serviceName,
+      ownerServiceName,
       databaseName: actorKey,
       actorName,
       actorToken,
       actorKey,
+      setupSignal: `meta.postgres_actor.setup_requested.${actorToken}`,
+      setupDoneSignal: `meta.postgres_actor.setup_done.${actorToken}`,
+      setupFailedSignal: `meta.postgres_actor.setup_failed.${actorToken}`,
       actor,
       schema,
+      description,
       options,
       tasksGenerated: false,
       intentNames: new Set(),
     };
 
-    this.registrationsByService.set(serviceName, registration);
+    this.registrationsByActorName.set(actorName, registration);
+    this.registrationsByActorToken.set(actorToken, registration);
     this.registerSetupTask(registration);
 
     return registration;
   }
 
-  private registerSetupTask(registration: PostgresActorRegistration): void {
-    const setupSignal = `meta.postgres_actor.setup_requested.${registration.actorToken}`;
+  requestPostgresActorSetup(
+    registrationOrName: PostgresActorRegistration | string,
+    ctx: AnyObject = {},
+  ): PostgresActorRegistration | undefined {
+    const registration =
+      typeof registrationOrName === "string"
+        ? this.resolveRegistration({
+            actorName: registrationOrName,
+          })
+        : registrationOrName;
 
+    if (!registration) {
+      return undefined;
+    }
+
+    const payload = {
+      ...ctx,
+      actorName: registration.actorName,
+      actorToken: registration.actorToken,
+      databaseName: registration.databaseName,
+      ownerServiceName: registration.ownerServiceName,
+      options: {
+        ...(ctx.options ?? {}),
+        actorName: registration.actorName,
+        actorToken: registration.actorToken,
+        ownerServiceName: registration.ownerServiceName,
+        databaseName: registration.databaseName,
+      },
+    };
+
+    const runtimeState = registration.actor.getRuntimeState(registration.actorKey);
+    if (runtimeState?.ready) {
+      this.emitSetupDone(registration, payload);
+      return registration;
+    }
+
+    Cadenza.emit(registration.setupSignal, payload);
+    return registration;
+  }
+
+  private resolveRegistration(ctx: AnyObject): PostgresActorRegistration | undefined {
+    const rawActorToken = String(
+      ctx.options?.actorToken ?? ctx.actorToken ?? "",
+    ).trim();
+    if (rawActorToken) {
+      const actorToken = normalizeIntentToken(rawActorToken);
+      const registration = this.registrationsByActorToken.get(actorToken);
+      if (registration) {
+        return registration;
+      }
+    }
+
+    const rawActorName = String(
+      ctx.options?.actorName ??
+        ctx.actorName ??
+        ctx.options?.postgresActorName ??
+        ctx.postgresActorName ??
+        "",
+    ).trim();
+    if (rawActorName) {
+      const registration =
+        this.registrationsByActorName.get(rawActorName) ??
+        this.registrationsByActorName.get(buildPostgresActorName(rawActorName));
+      if (registration) {
+        return registration;
+      }
+    }
+
+    const legacyServiceName = String(
+      ctx.options?.serviceName ?? ctx.serviceName ?? "",
+    ).trim();
+    if (legacyServiceName) {
+      return this.registrationsByActorName.get(
+        buildPostgresActorName(legacyServiceName),
+      );
+    }
+
+    return undefined;
+  }
+
+  private emitSetupDone(
+    registration: PostgresActorRegistration,
+    payload: AnyObject,
+  ): void {
+    const resolvedPayload = {
+      ...payload,
+      actorName: registration.actorName,
+      actorToken: registration.actorToken,
+      databaseName: registration.databaseName,
+      ownerServiceName: registration.ownerServiceName,
+      __success: true,
+    };
+
+    Cadenza.emit(registration.setupDoneSignal, resolvedPayload);
+    Cadenza.emit("meta.postgres_actor.setup_done", resolvedPayload);
+    Cadenza.emit("meta.database.setup_done", resolvedPayload);
+  }
+
+  private registerSetupTask(registration: PostgresActorRegistration): void {
     Cadenza.createMetaTask(
       `Setup ${registration.actorName}`,
       registration.actor.task(
@@ -506,11 +617,8 @@ export default class DatabaseController {
               tables: Object.keys(registration.schema.tables ?? {}),
             });
 
-            emit("meta.database.setup_done", {
-              serviceName: registration.serviceName,
-              databaseName: registration.databaseName,
-              actorName: registration.actorName,
-              __success: true,
+            this.emitSetupDone(registration, {
+              ...input,
             });
 
             return {
@@ -518,6 +626,7 @@ export default class DatabaseController {
               __success: true,
               actorName: registration.actorName,
               databaseName: registration.databaseName,
+              ownerServiceName: registration.ownerServiceName,
             };
           } catch (error) {
             const message = errorMessage(error);
@@ -541,7 +650,13 @@ export default class DatabaseController {
       ),
       "Initializes PostgresActor runtime pool, applies schema, and generates CRUD tasks/intents.",
       { isMeta: true },
-    ).doOn(setupSignal);
+    )
+      .doOn(registration.setupSignal)
+      .emitsOnFail(
+        registration.setupFailedSignal,
+        "meta.postgres_actor.setup_failed",
+        "meta.database.setup_failed",
+      );
   }
 
   private createTargetPool(databaseName: string, statementTimeoutMs: number): Pool {

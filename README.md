@@ -16,7 +16,8 @@ This repository (@Cadenza.io/service) is an extension of the core package, provi
 
 The service package provides everything in the core package plus the following:
 - **Service Extension**: A Service exposes the local graphs and signals to other Services in the system and enables them to interact with tasks and signals across other Services in the system via socket and/or REST.
-- **Database Service Extension**: A Database Service takes a schema and auto generates the necessary tasks and signals to interact with that database using the cadenza model. It exposes those tasks using by creating a Service.
+- **PostgresActor Extension**: A PostgresActor is a specialized actor that owns a Postgres pool, applies schema setup, and auto generates database tasks and intents without creating a network service.
+- **Database Service Extension**: A Database Service is the higher-level helper that first creates a PostgresActor and then creates a Service that exposes those generated database tasks.
 - **CadenzaDB compatibility**: A service can connect to the official CadenzaDB service and will automatically sync realtime data for introspection and visualization.
 
 There is no need to install the core package separately. Instead, install the service package, which includes everything in the core package plus the distributed extensions.
@@ -61,6 +62,11 @@ Canonical PostgresActor docs:
 
 - [PostgresActor Guide](./docs/postgres-actor-guide.md)
 - [PostgresActor Reference](./docs/postgres-actor-reference.md)
+
+High-level database service helper APIs:
+
+- `Cadenza.createDatabaseService(...)`
+- `Cadenza.createMetaDatabaseService(...)`
 
 Workspace mirror (for cross-repo publication):
 

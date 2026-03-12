@@ -6,13 +6,27 @@ This is the canonical reference for PostgresActor in `cadenza-service`.
 
 ```ts
 Cadenza.createPostgresActor(
-  serviceName: string,
+  name: string,
   schema: DatabaseSchemaDefinition,
   description?: string,
   options?: ServerOptions & DatabaseOptions,
 ): void
 
 Cadenza.createMetaPostgresActor(
+  name: string,
+  schema: DatabaseSchemaDefinition,
+  description?: string,
+  options?: ServerOptions & DatabaseOptions,
+): void
+
+Cadenza.createDatabaseService(
+  serviceName: string,
+  schema: DatabaseSchemaDefinition,
+  description?: string,
+  options?: ServerOptions & DatabaseOptions,
+): void
+
+Cadenza.createMetaDatabaseService(
   serviceName: string,
   schema: DatabaseSchemaDefinition,
   description?: string,
@@ -20,10 +34,14 @@ Cadenza.createMetaPostgresActor(
 ): void
 ```
 
-`serviceName` drives actor identity:
+`name` drives PostgresActor identity:
 
-- Actor name: `${serviceName}PostgresActor`
+- Actor name: `${name}PostgresActor`
 - Actor token: `kebab-case(actorName)`
+
+`createPostgresActor(...)` is actor-only. It bootstraps the specialized actor and generated DB operations, but it does not create a transport-exposed service.
+
+`createDatabaseService(...)` is the higher-level wrapper. It creates the PostgresActor first, waits for actor setup readiness, and only then creates the actual service.
 
 ## 2. Generated Artifacts
 

@@ -10,7 +10,7 @@ It adds:
 - REST/socket transport
 - remote task delegation (`DeputyTask`)
 - graph metadata fan-out for persistence/observability
-- database task abstractions and schema-driven DB services
+- database task abstractions, schema-driven Postgres actors, and database-service wrappers
 
 ## Layered Architecture
 
@@ -32,6 +32,20 @@ It adds:
 2. Service bootstrap wires singleton controllers (`SignalController`, `RestController`, `SocketController`, `GraphMetadataController`, `GraphSyncController`).
 3. `createCadenzaService(...)` registers service identity and transport surface.
 4. Meta flows sync local graph metadata and runtime status to the wider system.
+
+## PostgresActor vs Database Service
+
+- `createPostgresActor(...)` is actor-only:
+  - creates the specialized actor
+  - bootstraps the Postgres pool/schema
+  - generates CRUD tasks and intents
+  - does not create a network service
+- `createDatabaseService(...)` is the higher-level wrapper:
+  - creates the PostgresActor first
+  - waits for actor setup readiness
+  - then creates the actual service and bridge metadata signal
+
+This separation allows multiple Postgres actors inside one service process while preserving the common dedicated database-service bootstrap helper.
 
 ## Actor Integration in Service Runtime
 

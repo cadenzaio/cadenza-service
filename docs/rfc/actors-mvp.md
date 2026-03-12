@@ -148,7 +148,8 @@ SocketController migration pattern:
 - Legacy compatibility wrappers:
   - `createDatabaseService(...)`
   - `createMetaDatabaseService(...)`
-  - These delegate to PostgresActor setup and still emit `global.meta.created_database_service` (bridge mode).
+  - These create the PostgresActor first, wait for actor setup readiness, and then create the service.
+  - They still emit `global.meta.created_database_service` as the bridge signal for the higher-level database-service concept.
 - Intents are service-agnostic and actor-scoped:
   - `query-pg-{actor}-{table}`
   - `insert-pg-{actor}-{table}`
