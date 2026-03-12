@@ -1,3 +1,10 @@
+# [2.13.0](https://github.com/cadenzaio/cadenza-service/compare/v2.12.0...v2.13.0) (2026-03-12)
+
+
+### Features
+
+* **postgres-actor:** add unit tests for PostgresActor separation and setup order ([f8c67f7](https://github.com/cadenzaio/cadenza-service/commit/f8c67f7fd470347fa59fdf57abf0234149e0fc88))
+
 # [2.12.0](https://github.com/cadenzaio/cadenza-service/compare/v2.11.0...v2.12.0) (2026-03-09)
 
 
