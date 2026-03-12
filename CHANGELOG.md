@@ -1,3 +1,10 @@
+# [2.14.0](https://github.com/cadenzaio/cadenza-service/compare/v2.13.0...v2.14.0) (2026-03-12)
+
+
+### Features
+
+* just triggering a new release ([b7ddd79](https://github.com/cadenzaio/cadenza-service/commit/b7ddd79b335dcc2b674ac10399b13b98608bb03c))
+
 # [2.13.0](https://github.com/cadenzaio/cadenza-service/compare/v2.12.0...v2.13.0) (2026-03-12)
 
 
