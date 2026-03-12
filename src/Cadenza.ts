@@ -1849,7 +1849,7 @@ export default class CadenzaService {
    * @param {TaskFunction} func - The function to be executed as part of the task.
    * @param {string} [description] - An optional description of the task.
    * @param {TaskOptions & EphemeralTaskOptions} [options={}] - Additional options for configuring the task.
-   * @return {EphemeralTask} The created ephemeral meta task.
+   * @return {EphemeralTask} The created ephemeral meta-task.
    */
   static createEphemeralMetaTask(
     name: string,
