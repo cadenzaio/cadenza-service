@@ -118,6 +118,55 @@ function isExplicitSqlLiteral(value: string): boolean {
   return /^'.*'::[a-z_][a-z0-9_]*(\[\])?$/i.test(value.trim());
 }
 
+function isExplicitSqlExpression(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (isExplicitSqlLiteral(trimmed)) {
+    return true;
+  }
+
+  if (/^'.*'$/.test(trimmed)) {
+    return true;
+  }
+
+  if (/^[a-z_][a-z0-9_]*\([^)]*\)$/i.test(trimmed)) {
+    return true;
+  }
+
+  return /^(current_timestamp|current_date|current_time)$/i.test(trimmed);
+}
+
+export function serializeFieldDefaultForSql(
+  value: unknown,
+  field?: FieldDefinition,
+): string {
+  if (value === undefined || value === null) {
+    return "NULL";
+  }
+
+  if (typeof value === "number") {
+    return String(value);
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "TRUE" : "FALSE";
+  }
+
+  const stringValue = String(value);
+  if (isExplicitSqlExpression(stringValue)) {
+    return stringValue;
+  }
+
+  if (field?.type === "jsonb") {
+    return `'${JSON.stringify(value).replace(/'/g, "''")}'::jsonb`;
+  }
+
+  return `'${stringValue.replace(/'/g, "''")}'`;
+}
+
 export function serializeInitialDataValueForSql(
   value: unknown,
   field?: FieldDefinition,
@@ -144,7 +193,7 @@ export function serializeInitialDataValueForSql(
   }
 
   const stringValue = String(value);
-  if (isExplicitSqlLiteral(stringValue)) {
+  if (isExplicitSqlExpression(stringValue)) {
     return stringValue;
   }
 
@@ -1536,7 +1585,7 @@ export default class DatabaseController {
     if (field.primary) definition += " PRIMARY KEY";
     if (field.unique) definition += " UNIQUE";
     if (field.default !== undefined) {
-      definition += ` DEFAULT ${field.default === "" ? "''" : String(field.default)}`;
+      definition += ` DEFAULT ${serializeFieldDefaultForSql(field.default, field)}`;
     }
     if (field.required && !field.nullable) definition += " NOT NULL";
     if (field.nullable) definition += " NULL";

@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { SchemaDefinition } from "@cadenza.io/core";
 import {
+  serializeFieldDefaultForSql,
   getInsertDataSchemaFromTable,
   getQueryFilterSchemaFromTable,
   resolveTableOperationIntents,
   resolveTableQueryIntents,
   serializeInitialDataValueForSql,
 } from "../src/database/DatabaseController";
+import DatabaseController from "../src/database/DatabaseController";
 import type { TableDefinition } from "../src/types/database";
 
 describe("DatabaseController schema and intent helpers", () => {
@@ -217,5 +219,39 @@ describe("DatabaseController schema and intent helpers", () => {
         },
       ),
     ).toBe('\'{"schema":{}}\'::jsonb');
+  });
+
+  it("quotes plain string defaults and preserves explicit SQL expressions", () => {
+    expect(serializeFieldDefaultForSql("eager", { type: "varchar" })).toBe("'eager'");
+    expect(serializeFieldDefaultForSql("", { type: "varchar" })).toBe("''");
+    expect(serializeFieldDefaultForSql("now()", { type: "timestamp" })).toBe("now()");
+    expect(serializeFieldDefaultForSql("gen_random_uuid()", { type: "uuid" })).toBe(
+      "gen_random_uuid()",
+    );
+    expect(serializeFieldDefaultForSql("'{}'", { type: "jsonb" })).toBe("'{}'");
+    expect(serializeFieldDefaultForSql(null, { type: "jsonb" })).toBe("NULL");
+  });
+
+  it("uses the default serializer when generating column DDL", () => {
+    const controller = Object.create(DatabaseController.prototype) as DatabaseController;
+    const fieldDefinitionToSql = (
+      controller as unknown as {
+        fieldDefinitionToSql: (fieldName: string, field: TableDefinition["fields"][string]) => string;
+      }
+    ).fieldDefinitionToSql;
+
+    expect(
+      fieldDefinitionToSql("loadPolicy", {
+        type: "varchar",
+        default: "eager",
+      }),
+    ).toBe("load_policy VARCHAR(255) DEFAULT 'eager'");
+
+    expect(
+      fieldDefinitionToSql("created", {
+        type: "timestamp",
+        default: "now()",
+      }),
+    ).toBe("created TIMESTAMP DEFAULT now()");
   });
 });
