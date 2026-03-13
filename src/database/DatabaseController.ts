@@ -1927,13 +1927,9 @@ export default class DatabaseController {
     );
 
     for (const intent of intents) {
-      if (registration.intentNames.has(intent.name)) {
-        throw new Error(
-          `Duplicate auto/custom intent '${intent.name}' detected while generating ${op} task for table '${tableName}' in actor '${registration.actorName}'`,
-        );
+      if (!registration.intentNames.has(intent.name)) {
+        registration.intentNames.add(intent.name);
       }
-
-      registration.intentNames.add(intent.name);
       Cadenza.defineIntent({
         name: intent.name,
         description: intent.description,

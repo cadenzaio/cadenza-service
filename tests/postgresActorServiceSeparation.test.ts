@@ -224,4 +224,86 @@ describe("PostgresActor and database service separation", () => {
 
     expect(createServiceSpy).not.toHaveBeenCalled();
   });
+
+  it("allows one inquiry intent to fan out across multiple generated table tasks", () => {
+    const controller = DatabaseController.instance;
+    const syncSchema: DatabaseSchemaDefinition = {
+      version: 1,
+      tables: {
+        service_instance: {
+          fields: {
+            uuid: {
+              type: "uuid",
+              primary: true,
+              required: true,
+            },
+          },
+          customIntents: {
+            query: [
+              {
+                intent: "meta-service-registry-full-sync",
+                description: "Collect service registry sync data.",
+                input: {
+                  type: "object",
+                  properties: {
+                    syncScope: {
+                      type: "string",
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+        service_instance_transport: {
+          fields: {
+            uuid: {
+              type: "uuid",
+              primary: true,
+              required: true,
+            },
+          },
+          customIntents: {
+            query: [
+              {
+                intent: "meta-service-registry-full-sync",
+                description: "Collect service registry sync data.",
+                input: {
+                  type: "object",
+                  properties: {
+                    syncScope: {
+                      type: "string",
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    const registration = controller.createPostgresActor(
+      "RegistryDB",
+      syncSchema,
+      "Registry actor",
+      {
+        databaseName: "registry_db",
+        ownerServiceName: "CadenzaDB",
+      },
+    );
+
+    expect(() =>
+      (controller as unknown as {
+        generateDatabaseTasks: (value: unknown) => void;
+      }).generateDatabaseTasks(registration),
+    ).not.toThrow();
+
+    const observer = Cadenza.inquiryBroker.inquiryObservers.get(
+      "meta-service-registry-full-sync",
+    );
+
+    expect(observer).toBeDefined();
+    expect(observer?.tasks.size).toBe(2);
+  });
 });
