@@ -1,3 +1,10 @@
+## [2.17.3](https://github.com/cadenzaio/cadenza-service/compare/v2.17.2...v2.17.3) (2026-03-13)
+
+
+### Bug Fixes
+
+* **runtime:** harden status fallback routing ([eec09c2](https://github.com/cadenzaio/cadenza-service/commit/eec09c2f95aaa54f0e9e01a1431a79f9511c4914))
+
 ## [2.17.2](https://github.com/cadenzaio/cadenza-service/compare/v2.17.1...v2.17.2) (2026-03-13)
 
 
