@@ -1,3 +1,10 @@
+# [2.17.0](https://github.com/cadenzaio/cadenza-service/compare/v2.16.0...v2.17.0) (2026-03-13)
+
+
+### Features
+
+* **database:** add `serializeInitialDataValueForSql` for consistent SQL value serialization ([c698a34](https://github.com/cadenzaio/cadenza-service/commit/c698a34226312e4cf92927ab0812e6262c7592e3))
+
 # [2.16.0](https://github.com/cadenzaio/cadenza-service/compare/v2.15.0...v2.16.0) (2026-03-13)
 
 
