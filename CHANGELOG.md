@@ -1,3 +1,10 @@
+## [2.17.2](https://github.com/cadenzaio/cadenza-service/compare/v2.17.1...v2.17.2) (2026-03-13)
+
+
+### Bug Fixes
+
+* **database:** allow multi-responder custom intents ([60dc911](https://github.com/cadenzaio/cadenza-service/commit/60dc9118238e80c31b41a7c0e9725706b6e878c7))
+
 ## [2.17.1](https://github.com/cadenzaio/cadenza-service/compare/v2.17.0...v2.17.1) (2026-03-13)
 
 
