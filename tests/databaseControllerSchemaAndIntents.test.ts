@@ -5,6 +5,7 @@ import {
   getQueryFilterSchemaFromTable,
   resolveTableOperationIntents,
   resolveTableQueryIntents,
+  serializeInitialDataValueForSql,
 } from "../src/database/DatabaseController";
 import type { TableDefinition } from "../src/types/database";
 
@@ -192,5 +193,29 @@ describe("DatabaseController schema and intent helpers", () => {
     expect(Array.isArray(fieldSchema)).toBe(false);
     expect(fieldSchema.value?.type).toBe("string");
     expect(fieldSchema.in?.type).toBe("array");
+  });
+
+  it("keeps explicit SQL jsonb literals unquoted in initial data", () => {
+    expect(
+      serializeInitialDataValueForSql(
+        '\'{"minLength": 0, "maxLength": 255}\'::jsonb',
+        {
+          type: "jsonb",
+        },
+      ),
+    ).toBe('\'{"minLength": 0, "maxLength": 255}\'::jsonb');
+  });
+
+  it("serializes plain jsonb seed values as jsonb literals", () => {
+    expect(
+      serializeInitialDataValueForSql(
+        {
+          schema: {},
+        },
+        {
+          type: "jsonb",
+        },
+      ),
+    ).toBe('\'{"schema":{}}\'::jsonb');
   });
 });

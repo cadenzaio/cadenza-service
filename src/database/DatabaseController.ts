@@ -114,6 +114,43 @@ function defaultOperationIntentDescription(
   return `Perform a ${operation} operation on the ${tableName} table`;
 }
 
+function isExplicitSqlLiteral(value: string): boolean {
+  return /^'.*'::[a-z_][a-z0-9_]*(\[\])?$/i.test(value.trim());
+}
+
+export function serializeInitialDataValueForSql(
+  value: unknown,
+  field?: FieldDefinition,
+): string {
+  if (value === undefined || value === null) {
+    return "NULL";
+  }
+
+  if (typeof value === "number") {
+    return String(value);
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "TRUE" : "FALSE";
+  }
+
+  if (field?.type === "jsonb") {
+    if (typeof value === "string" && isExplicitSqlLiteral(value)) {
+      return value;
+    }
+
+    const jsonString = JSON.stringify(value);
+    return `'${jsonString.replace(/'/g, "''")}'::jsonb`;
+  }
+
+  const stringValue = String(value);
+  if (isExplicitSqlLiteral(stringValue)) {
+    return stringValue;
+  }
+
+  return `'${stringValue.replace(/'/g, "''")}'`;
+}
+
 function readCustomIntentConfig(
   customIntent: string | { intent: string; description?: string; input?: SchemaDefinition },
 ): { intent: string; description?: string; input?: SchemaDefinition } {
@@ -1469,14 +1506,12 @@ export default class DatabaseController {
             .map(
               (row) =>
                 `(${row
-                  .map((value) => {
-                    if (value === undefined) return "NULL";
-                    if (value === null) return "NULL";
-                    if (typeof value === "number") return String(value);
-                    if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-                    const stringValue = String(value);
-                    return `'${stringValue.replace(/'/g, "''")}'`;
-                  })
+                  .map((value, index) =>
+                    serializeInitialDataValueForSql(
+                      value,
+                      table.fields[table.initialData!.fields[index]],
+                    ),
+                  )
                   .join(", ")})`,
             )
             .join(", ")} ON CONFLICT DO NOTHING;`,
