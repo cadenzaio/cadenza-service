@@ -1,3 +1,10 @@
+# [2.16.0](https://github.com/cadenzaio/cadenza-service/compare/v2.15.0...v2.16.0) (2026-03-13)
+
+
+### Features
+
+* add bootstrap resolution and SSR inquiry bridge ([d466f68](https://github.com/cadenzaio/cadenza-service/commit/d466f68a5b01d631a3995d6c0d270277e966d4ef))
+
 # [2.15.0](https://github.com/cadenzaio/cadenza-service/compare/v2.14.0...v2.15.0) (2026-03-12)
 
 
