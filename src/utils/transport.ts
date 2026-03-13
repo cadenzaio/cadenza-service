@@ -145,7 +145,15 @@ export function selectTransportForRole(
       (!protocol || transportSupportsProtocol(transport, protocol)),
   );
 
-  return filtered[0];
+  return filtered.sort((left, right) => {
+    const leftIsBootstrap = left.uuid.endsWith("-bootstrap") ? 1 : 0;
+    const rightIsBootstrap = right.uuid.endsWith("-bootstrap") ? 1 : 0;
+    if (leftIsBootstrap !== rightIsBootstrap) {
+      return leftIsBootstrap - rightIsBootstrap;
+    }
+
+    return left.origin.localeCompare(right.origin);
+  })[0];
 }
 
 export function buildTransportClientKey(

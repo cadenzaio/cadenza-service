@@ -409,6 +409,36 @@ export default class ServiceRegistry {
     return this.getInstance(this.serviceName, this.serviceInstanceId);
   }
 
+  private resolveTransportProtocolOrder(
+    ctx: AnyObject,
+  ): ServiceTransportProtocol[] {
+    const explicit =
+      ctx.__preferredTransportProtocol === "rest" ||
+      ctx.__preferredTransportProtocol === "socket"
+        ? ctx.__preferredTransportProtocol
+        : undefined;
+
+    const preferred = explicit ?? (this.useSocket ? "socket" : "rest");
+    const fallback = preferred === "socket" ? "rest" : "socket";
+
+    return [preferred, fallback];
+  }
+
+  private selectTransportForInstance(
+    instance: ServiceInstanceDescriptor,
+    ctx: AnyObject,
+    role: ServiceTransportRole = this.getRoutingTransportRole(),
+  ): ServiceTransportDescriptor | undefined {
+    for (const protocol of this.resolveTransportProtocolOrder(ctx)) {
+      const transport = this.getRouteableTransport(instance, protocol, role);
+      if (transport) {
+        return transport;
+      }
+    }
+
+    return undefined;
+  }
+
   private getRoutingTransportRole(): ServiceTransportRole {
     return this.isFrontend ? "public" : "internal";
   }
@@ -814,12 +844,45 @@ export default class ServiceRegistry {
       requireComplete?: boolean;
     } = {},
   ): Promise<{ report: RuntimeStatusReport; inquiryMeta: AnyObject }> {
+    const instance = this.getInstance(serviceName, serviceInstanceId);
+    if (instance) {
+      const directReport = await this.requestRuntimeStatusViaRest(
+        instance,
+        serviceName,
+        serviceInstanceId,
+      );
+
+      if (directReport) {
+        if (!this.applyRuntimeStatusReport(directReport)) {
+          throw new Error(
+            `No tracked instance for runtime fallback ${serviceName}/${serviceInstanceId}`,
+          );
+        }
+
+        this.lastHeartbeatAtByInstance.set(serviceInstanceId, Date.now());
+        this.missedHeartbeatsByInstance.set(serviceInstanceId, 0);
+
+        return {
+          report: directReport,
+          inquiryMeta: {
+            inquiry: META_RUNTIME_STATUS_INTENT,
+            responded: 1,
+            failed: 0,
+            timedOut: 0,
+            pending: 0,
+            directStatusCheck: true,
+          },
+        };
+      }
+    }
+
     const inquiryResult = await Cadenza.inquire(
       META_RUNTIME_STATUS_INTENT,
       {
         targetServiceName: serviceName,
         targetServiceInstanceId: serviceInstanceId,
         detailLevel: options.detailLevel ?? "minimal",
+        __preferredTransportProtocol: "rest",
       },
       {
         overallTimeoutMs:
@@ -856,6 +919,66 @@ export default class ServiceRegistry {
       report,
       inquiryMeta: inquiryResult.__inquiryMeta ?? {},
     };
+  }
+
+  private async requestRuntimeStatusViaRest(
+    instance: ServiceInstanceDescriptor,
+    serviceName: string,
+    serviceInstanceId: string,
+  ): Promise<RuntimeStatusReport | null> {
+    if (typeof globalThis.fetch !== "function") {
+      return null;
+    }
+
+    const transport = this.getRouteableTransport(instance, "rest");
+    if (!transport) {
+      return null;
+    }
+
+    const controller =
+      typeof AbortController === "function" ? new AbortController() : null;
+    const timeoutId = controller
+      ? setTimeout(() => controller.abort(), this.runtimeStatusFallbackTimeoutMs)
+      : null;
+
+    try {
+      const response = await globalThis.fetch(`${transport.origin}/status`, {
+        method: "GET",
+        signal: controller?.signal,
+      });
+
+      if ("ok" in response && response.ok === false) {
+        return null;
+      }
+
+      const payload =
+        typeof response.json === "function" ? await response.json() : response;
+      const report = this.normalizeRuntimeStatusReport({
+        ...payload,
+        serviceTransportId: payload?.serviceTransportId ?? transport.uuid,
+        serviceOrigin: payload?.serviceOrigin ?? transport.origin,
+        transportProtocols: payload?.transportProtocols ?? transport.protocols,
+      });
+
+      if (!report) {
+        return null;
+      }
+
+      if (
+        report.serviceName !== serviceName ||
+        report.serviceInstanceId !== serviceInstanceId
+      ) {
+        return null;
+      }
+
+      return report;
+    } catch {
+      return null;
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 
   private evaluateDependencyReadinessDetail(
@@ -1902,8 +2025,13 @@ export default class ServiceRegistry {
     this.getBalancedInstance = Cadenza.createMetaTask(
       "Get balanced instance",
       (context, emit) => {
-        const { __serviceName, __triedInstances, __retries, __broadcast } =
-          context;
+        const {
+          __serviceName,
+          __triedInstances,
+          __retries,
+          __broadcast,
+          targetServiceInstanceId,
+        } = context;
         let retries = __retries ?? 0;
         let triedInstances = __triedInstances ?? [];
         const preferredRole = this.getRoutingTransportRole();
@@ -1911,6 +2039,13 @@ export default class ServiceRegistry {
         const instances = this.instances
           .get(__serviceName)
           ?.filter((instance) => {
+            if (
+              targetServiceInstanceId &&
+              instance.uuid !== targetServiceInstanceId
+            ) {
+              return false;
+            }
+
             if (
               !instance.isActive ||
               instance.isNonResponsive ||
@@ -1920,11 +2055,7 @@ export default class ServiceRegistry {
             }
 
             return Boolean(
-              this.getRouteableTransport(
-                instance,
-                this.useSocket ? "socket" : "rest",
-                preferredRole,
-              ) ?? this.getRouteableTransport(instance, "rest", preferredRole),
+              this.selectTransportForInstance(instance, context, preferredRole),
             );
           })
           .sort((a, b) => {
@@ -1968,9 +2099,11 @@ export default class ServiceRegistry {
 
         if (__broadcast || instances[0].isFrontend) {
           for (const instance of instances) {
-            const selectedTransport =
-              this.getRouteableTransport(instance, "socket", preferredRole) ??
-              this.getRouteableTransport(instance, "rest", preferredRole);
+            const selectedTransport = this.selectTransportForInstance(
+              instance,
+              context,
+              preferredRole,
+            );
             if (!selectedTransport) {
               continue;
             }
@@ -1978,7 +2111,8 @@ export default class ServiceRegistry {
             const transportKey = buildTransportClientKey(selectedTransport);
             emit(
               `${
-                this.useSocket && transportSupportsProtocol(selectedTransport, "socket")
+                this.resolveTransportProtocolOrder(context)[0] === "socket" &&
+                transportSupportsProtocol(selectedTransport, "socket")
                   ? "meta.service_registry.selected_instance_for_socket"
                   : "meta.service_registry.selected_instance_for_fetch"
               }:${transportKey}`,
@@ -2018,9 +2152,11 @@ export default class ServiceRegistry {
             instancesToTry[Math.floor(Math.random() * instancesToTry.length)];
         }
 
-        const selectedTransport =
-          this.getRouteableTransport(selected, "socket", preferredRole) ??
-          this.getRouteableTransport(selected, "rest", preferredRole);
+        const selectedTransport = this.selectTransportForInstance(
+          selected,
+          context,
+          preferredRole,
+        );
 
         if (!selectedTransport) {
           context.errored = true;
@@ -2041,7 +2177,10 @@ export default class ServiceRegistry {
         context.__triedInstances.push(selected.uuid);
         context.__retries = retries;
 
-        if (this.useSocket && transportSupportsProtocol(selectedTransport, "socket")) {
+        if (
+          this.resolveTransportProtocolOrder(context)[0] === "socket" &&
+          transportSupportsProtocol(selectedTransport, "socket")
+        ) {
           emit(
             `meta.service_registry.selected_instance_for_socket:${context.__fetchId}`,
             context,
