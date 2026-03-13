@@ -25,24 +25,37 @@ import DeputyTask from "./graph/definition/DeputyTask";
 import DatabaseTask from "./graph/definition/DatabaseTask";
 import ServiceRegistry from "./registry/ServiceRegistry";
 import SignalTransmissionTask from "./graph/definition/SignalTransmissionTask";
-import RestController from "./network/RestController";
+import RestController from "@service-rest-controller";
 import SocketController from "./network/SocketController";
 import SignalController from "./signals/SignalController";
 import { DbOperationPayload, DbOperationType } from "./types/queryData";
 import GraphMetadataController from "./graph/controllers/GraphMetadataController";
+import { registerActorSessionPersistenceTasks } from "./graph/controllers/registerActorSessionPersistence";
 import { DatabaseSchemaDefinition } from "./types/database";
 import { snakeCase } from "lodash-es";
-import DatabaseController from "./database/DatabaseController";
+import DatabaseController from "@service-database-controller";
 import { v4 as uuid } from "uuid";
 import GraphSyncController from "./graph/controllers/GraphSyncController";
 import { isBrowser } from "./utils/environment";
 import { formatTimestamp } from "./utils/tools";
+import {
+  BootstrapOptions,
+  HydrationOptions,
+  readIntegerEnv,
+  readListEnv,
+  readStringEnv,
+  resolveBootstrapEndpoint,
+} from "./utils/bootstrap";
 import {
   DistributedInquiryMeta,
   DistributedInquiryOptions,
   InquiryResponderDescriptor,
   InquiryResponderStatus,
 } from "./types/inquiry";
+import type {
+  ServiceTransportConfig,
+  ServiceTransportRole,
+} from "./types/transport";
 import {
   compareResponderDescriptors,
   isMetaIntentName,
@@ -50,6 +63,7 @@ import {
   shouldExecuteInquiryResponder,
   summarizeResponderStatuses,
 } from "./utils/inquiry";
+import { normalizeServiceTransportConfig } from "./utils/transport";
 
 export type SecurityProfile = "low" | "medium" | "high";
 export type NetworkMode =
@@ -71,6 +85,9 @@ export type ServerOptions = {
   networkMode?: NetworkMode;
   retryCount?: number;
   cadenzaDB?: { connect?: boolean; address?: string; port?: number };
+  bootstrap?: BootstrapOptions;
+  hydration?: HydrationOptions;
+  transports?: ServiceTransportConfig[];
   relatedServices?: string[][];
   isDatabase?: boolean;
   isFrontend?: boolean;
@@ -97,6 +114,8 @@ export default class CadenzaService {
   protected static isBootstrapped = false;
   protected static serviceCreated = false;
   protected static warnedInvalidMetaIntentResponderKeys: Set<string> = new Set();
+  protected static hydratedInquiryResults: Map<string, AnyObject> = new Map();
+  protected static frontendSyncScheduled = false;
 
   /**
    * Initializes the application by setting up necessary components and configurations.
@@ -115,10 +134,90 @@ export default class CadenzaService {
     this.metaRunner = Cadenza.metaRunner;
     this.registry = Cadenza.registry;
     this.serviceRegistry = ServiceRegistry.instance;
-    SignalController.instance;
     RestController.instance;
     SocketController.instance;
     console.log("BOOTSTRAPPED");
+  }
+
+  private static ensureTransportControllers(isFrontend: boolean): void {
+    if (!isFrontend) {
+      SignalController.instance;
+    }
+  }
+
+  private static setHydrationResults(
+    hydration?: HydrationOptions,
+  ): void {
+    this.hydratedInquiryResults = new Map();
+
+    const initialInquiryResults = hydration?.initialInquiryResults ?? {};
+    for (const [key, value] of Object.entries(initialInquiryResults)) {
+      this.hydratedInquiryResults.set(key, value as AnyObject);
+    }
+  }
+
+  private static consumeHydratedInquiryResult(
+    hydrationKey?: string,
+  ): AnyObject | undefined {
+    if (!hydrationKey) {
+      return undefined;
+    }
+
+    const result = this.hydratedInquiryResults.get(hydrationKey);
+    if (result === undefined) {
+      return undefined;
+    }
+
+    this.hydratedInquiryResults.delete(hydrationKey);
+    return result;
+  }
+
+  private static ensureFrontendSyncLoop(): void {
+    if (this.frontendSyncScheduled) {
+      return;
+    }
+
+    this.frontendSyncScheduled = true;
+    Cadenza.interval("meta.sync_requested", { __syncing: false }, 180000);
+    Cadenza.schedule("meta.sync_requested", { __syncing: false }, 250);
+  }
+
+  private static normalizeDeclaredTransports(
+    transports: ServiceTransportConfig[] | undefined,
+    serviceId: string,
+  ): Array<
+    ServiceTransportConfig & {
+      uuid: string;
+    }
+  > {
+    return (transports ?? [])
+      .map((transport) => normalizeServiceTransportConfig(transport))
+      .filter(
+        (
+          transport,
+        ): transport is ServiceTransportConfig =>
+          !!transport,
+      )
+      .map((transport, index) => ({
+        ...transport,
+        uuid: `${serviceId}-transport-${index + 1}`,
+      }));
+  }
+
+  private static createBootstrapTransport(
+    serviceInstanceId: string,
+    role: ServiceTransportRole,
+    endpoint: ReturnType<typeof resolveBootstrapEndpoint>,
+  ) {
+    return {
+      uuid: `${serviceInstanceId}-${role}-bootstrap`,
+      service_instance_id: serviceInstanceId,
+      role,
+      origin: endpoint.url,
+      protocols: ["rest", "socket"] as const,
+      security_profile: null,
+      auth_strategy: null,
+    };
   }
 
   /**
@@ -275,6 +374,13 @@ export default class CadenzaService {
     options: DistributedInquiryOptions = {},
   ): Promise<AnyObject> {
     this.bootstrap();
+
+    const hydratedResult = this.consumeHydratedInquiryResult(
+      options.hydrationKey,
+    );
+    if (hydratedResult !== undefined) {
+      return hydratedResult;
+    }
 
     const observer = this.inquiryBroker?.inquiryObservers.get(inquiry);
     const allResponders = observer
@@ -1025,30 +1131,57 @@ export default class CadenzaService {
     const serviceId = options.customServiceId ?? uuid();
     this.serviceRegistry.serviceName = serviceName;
     this.serviceRegistry.serviceInstanceId = serviceId;
+    this.setHydrationResults(options.hydration);
+
+    const explicitFrontendMode = options.isFrontend;
 
     options = {
       loadBalance: true,
       useSocket: true,
       displayName: undefined,
       isMeta: false,
-      port: parseInt(process.env.HTTP_PORT ?? "3000"),
+      port: readIntegerEnv("HTTP_PORT", 3000),
       securityProfile:
-        (process.env.SECURITY_PROFILE as SecurityProfile) ?? "medium",
-      networkMode: (process.env.NETWORK_MODE as NetworkMode) ?? "dev",
+        (readStringEnv("SECURITY_PROFILE") as SecurityProfile) ?? "medium",
+      networkMode: (readStringEnv("NETWORK_MODE") as NetworkMode) ?? "dev",
       retryCount: 3,
       cadenzaDB: {
         connect: true,
-        address: process.env.CADENZA_DB_ADDRESS ?? "localhost",
-        port: parseInt(process.env.CADENZA_DB_PORT ?? "5000"),
       },
-      relatedServices: process.env.RELATED_SERVICES
-        ? process.env.RELATED_SERVICES.split("|").map((s) =>
-            s.trim().split(","),
-          )
-        : [],
-      isFrontend: isBrowser,
+      relatedServices: readListEnv("RELATED_SERVICES"),
+      isFrontend:
+        typeof explicitFrontendMode === "boolean"
+          ? explicitFrontendMode
+          : isBrowser,
       ...options,
     };
+
+    const isFrontend = !!options.isFrontend;
+    const declaredTransports = this.normalizeDeclaredTransports(
+      options.transports,
+      serviceId,
+    );
+    this.serviceRegistry.isFrontend = isFrontend;
+    this.serviceRegistry.useSocket = !!options.useSocket;
+    this.serviceRegistry.retryCount = options.retryCount ?? 3;
+    this.ensureTransportControllers(isFrontend);
+
+    const resolvedBootstrapEndpoint = options.cadenzaDB?.connect
+      ? resolveBootstrapEndpoint({
+          runtime: isFrontend ? "browser" : "server",
+          bootstrap: options.bootstrap,
+          cadenzaDB: options.cadenzaDB,
+        })
+      : undefined;
+
+    if (resolvedBootstrapEndpoint) {
+      options.cadenzaDB = {
+        ...options.cadenzaDB,
+        connect: true,
+        address: resolvedBootstrapEndpoint.address,
+        port: resolvedBootstrapEndpoint.port,
+      };
+    }
 
     if (options.cadenzaDB?.connect) {
       this.emit("meta.initializing_service", {
@@ -1056,31 +1189,54 @@ export default class CadenzaService {
         serviceInstance: {
           uuid: "cadenza-db",
           serviceName: "CadenzaDB",
-          address: options.cadenzaDB?.address,
-          port: options.cadenzaDB?.port,
-          exposed: options.networkMode !== "dev",
           numberOfRunningGraphs: 0,
           isActive: true, // Assume it is deployed
           isNonResponsive: false,
           isBlocked: false,
           health: {},
+          isFrontend: false,
+          transports: resolvedBootstrapEndpoint
+            ? [
+                this.createBootstrapTransport(
+                  "cadenza-db",
+                  isFrontend ? "public" : "internal",
+                  resolvedBootstrapEndpoint,
+                ),
+              ]
+            : [],
         },
       });
     }
 
     options.relatedServices?.forEach((service) => {
+      const relatedTransport = normalizeServiceTransportConfig({
+        role: isFrontend ? "public" : "internal",
+        origin: service[2].includes("://") ? service[2] : `http://${service[2]}`,
+        protocols: ["rest", "socket"],
+      });
       this.emit("meta.initializing_service", {
         serviceInstance: {
           uuid: service[0],
           serviceName: service[1],
-          address: service[2].split(":")[0],
-          port: service[2].split(":")[1] ?? 3000,
-          exposed: options.networkMode !== "dev",
           numberOfRunningGraphs: 0,
           isActive: true, // Assume it is deployed
           isNonResponsive: false,
           isBlocked: false,
           health: {},
+          isFrontend: false,
+          transports: relatedTransport
+            ? [
+                {
+                  uuid: `${service[0]}-${relatedTransport.role}`,
+                  service_instance_id: service[0],
+                  role: relatedTransport.role,
+                  origin: relatedTransport.origin,
+                  protocols: relatedTransport.protocols ?? ["rest", "socket"],
+                  security_profile: relatedTransport.securityProfile ?? null,
+                  auth_strategy: relatedTransport.authStrategy ?? null,
+                },
+              ]
+            : [],
         },
       });
     });
@@ -1104,6 +1260,8 @@ export default class CadenzaService {
       __retryCount: options.retryCount,
       __cadenzaDBConnect: options.cadenzaDB?.connect,
       __isDatabase: options.isDatabase,
+      __isFrontend: isFrontend,
+      __declaredTransports: declaredTransports,
     };
 
     if (options.cadenzaDB?.connect) {
@@ -1121,15 +1279,46 @@ export default class CadenzaService {
     }
 
     this.createMetaTask("Handle service setup completion", () => {
-      GraphMetadataController.instance;
-      GraphSyncController.instance.isCadenzaDBReady =
-        !!options.cadenzaDB?.connect;
-      GraphSyncController.instance.init();
+      if (isFrontend) {
+        registerActorSessionPersistenceTasks();
+        this.ensureFrontendSyncLoop();
+      } else {
+        GraphMetadataController.instance;
+        GraphSyncController.instance.isCadenzaDBReady =
+          !!options.cadenzaDB?.connect;
+        GraphSyncController.instance.init();
+      }
 
       this.log("Service created.");
 
       return true;
     }).doOn("meta.service_registry.instance_inserted");
+
+    if (!options.cadenzaDB?.connect && isFrontend) {
+      Cadenza.schedule(
+        "meta.service_registry.instance_registration_requested",
+        {
+          data: {
+            uuid: serviceId,
+            process_pid: 1,
+            service_name: serviceName,
+            is_frontend: true,
+            is_active: true,
+            is_non_responsive: false,
+            is_blocked: false,
+            health: {},
+          },
+          transportData: [],
+          __serviceName: serviceName,
+          __serviceInstanceId: serviceId,
+          __useSocket: options.useSocket,
+          __retryCount: options.retryCount,
+          __isFrontend: true,
+          __skipRemoteExecution: true,
+        },
+        0,
+      );
+    }
 
     this.serviceCreated = true;
   }
@@ -1167,9 +1356,9 @@ export default class CadenzaService {
     description: string = "",
     options: ServerOptions & DatabaseOptions = {},
   ) {
-    if (isBrowser) {
+    if (isBrowser || options.isFrontend) {
       console.warn(
-        "PostgresActor creation is not supported in the browser.",
+        "PostgresActor creation is not supported in frontend mode.",
       );
       return;
     }
@@ -1231,9 +1420,9 @@ export default class CadenzaService {
     description: string = "",
     options: ServerOptions & DatabaseOptions = {},
   ) {
-    if (isBrowser) {
+    if (isBrowser || options.isFrontend) {
       console.warn(
-        "Database service creation is not supported in the browser. Use the CadenzaDB service instead.",
+        "Database service creation is not supported in frontend mode. Use the CadenzaDB service instead.",
       );
       return;
     }
@@ -1346,7 +1535,7 @@ export default class CadenzaService {
       retryCount: 3,
       databaseType: "postgres",
       databaseName: snakeCase(name),
-      poolSize: parseInt(process.env.DATABASE_POOL_SIZE ?? "10"),
+      poolSize: readIntegerEnv("DATABASE_POOL_SIZE", 10),
       ownerServiceName:
         options.ownerServiceName ?? this.serviceRegistry?.serviceName ?? null,
       ...options,
@@ -1362,19 +1551,17 @@ export default class CadenzaService {
       useSocket: true,
       displayName: undefined,
       isMeta: false,
-      port: parseInt(process.env.HTTP_PORT ?? "3000"),
+      port: readIntegerEnv("HTTP_PORT", 3000),
       securityProfile:
-        (process.env.SECURITY_PROFILE as SecurityProfile) ?? "medium",
-      networkMode: (process.env.NETWORK_MODE as NetworkMode) ?? "dev",
+        (readStringEnv("SECURITY_PROFILE") as SecurityProfile) ?? "medium",
+      networkMode: (readStringEnv("NETWORK_MODE") as NetworkMode) ?? "dev",
       retryCount: 3,
       cadenzaDB: {
         connect: true,
-        address: process.env.CADENZA_DB_ADDRESS ?? "localhost",
-        port: parseInt(process.env.CADENZA_DB_PORT ?? "5000"),
       },
       databaseType: "postgres",
       databaseName: snakeCase(name),
-      poolSize: parseInt(process.env.DATABASE_POOL_SIZE ?? "10"),
+      poolSize: readIntegerEnv("DATABASE_POOL_SIZE", 10),
       isDatabase: true,
       ownerServiceName: options.ownerServiceName ?? name,
       ...options,
@@ -1920,6 +2107,11 @@ export default class CadenzaService {
 
   static reset() {
     Cadenza.reset();
-    this.serviceRegistry.reset();
+    this.serviceRegistry?.reset();
+    this.isBootstrapped = false;
+    this.serviceCreated = false;
+    this.warnedInvalidMetaIntentResponderKeys = new Set();
+    this.hydratedInquiryResults = new Map();
+    this.frontendSyncScheduled = false;
   }
 }

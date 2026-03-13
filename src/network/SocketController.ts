@@ -1,11 +1,20 @@
 import Cadenza from "../Cadenza";
-import { Server } from "socket.io";
 import { IRateLimiterOptions, RateLimiterMemory } from "rate-limiter-flexible";
 import type { AnyObject, Task } from "@cadenza.io/core";
 import { io, Socket } from "socket.io-client";
 import { isBrowser } from "../utils/environment";
 import { waitForSocketConnection } from "./socketClientUtils";
 import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
+import { parseTransportOrigin } from "../utils/transport";
+
+const dynamicImport = new Function(
+  "specifier",
+  "return import(specifier);",
+) as <T>(specifier: string) => Promise<T>;
+
+async function importNodeModule<T>(specifier: string): Promise<T> {
+  return dynamicImport(specifier);
+}
 
 type TransportDetailLevel = "summary" | "full";
 
@@ -49,9 +58,9 @@ interface SocketClientSessionState {
   serviceInstanceId: string;
   communicationTypes: string[];
   serviceName: string;
-  serviceAddress: string;
-  servicePort: number;
-  protocol: string;
+  serviceTransportId: string;
+  serviceOrigin: string;
+  transportProtocols: string[];
   url: string;
   socketId: string | null;
   connected: boolean;
@@ -106,7 +115,7 @@ interface SocketServerSessionState {
 }
 
 interface SocketServerRuntimeHandle {
-  server: Server;
+  server: any;
   initialized: boolean;
   connectedSocketIds: Set<string>;
   broadcastStatusTask: Task | null;
@@ -149,9 +158,9 @@ export default class SocketController {
     serviceInstanceId: "",
     communicationTypes: [],
     serviceName: "",
-    serviceAddress: "",
-    servicePort: 0,
-    protocol: "http",
+    serviceTransportId: "",
+    serviceOrigin: "",
+    transportProtocols: [],
     url: "",
     socketId: null,
     connected: false,
@@ -360,7 +369,7 @@ export default class SocketController {
     const setupSocketServerTask = Cadenza.createMetaTask(
       "Setup SocketServer",
       this.socketServerActor.task(
-        ({ state, runtimeState, input, actor, setState, setRuntimeState, emit }) => {
+        async ({ state, runtimeState, input, actor, setState, setRuntimeState, emit }) => {
           const serverKey =
             this.resolveSocketServerKey(input) ?? actor.key ?? this.socketServerDefaultKey;
           const shouldUseSocket = Boolean(input.__useSocket);
@@ -382,7 +391,9 @@ export default class SocketController {
 
           let runtimeHandle = runtimeState;
           if (!runtimeHandle) {
-            runtimeHandle = this.createSocketServerRuntimeHandleFromContext(input);
+            runtimeHandle = await this.createSocketServerRuntimeHandleFromContext(
+              input,
+            );
             setRuntimeState(runtimeHandle);
           }
 
@@ -423,7 +434,7 @@ export default class SocketController {
             updatedAt: Date.now(),
           });
 
-          server.use((socket, next) => {
+          server.use((socket: any, next: any) => {
             const origin = socket?.handshake?.headers?.origin;
             const allowedOrigins = ["*"];
             let effectiveOrigin = origin || "unknown";
@@ -448,7 +459,7 @@ export default class SocketController {
             );
             const clientKey = socket?.handshake?.address || "unknown";
 
-            socket.use((packet, packetNext) => {
+            socket.use((packet: any, packetNext: any) => {
               limiter
                 .consume(clientKey)
                 .then(() => packetNext())
@@ -699,20 +710,22 @@ export default class SocketController {
           if (input.serviceName !== undefined) {
             next.serviceName = String(input.serviceName);
           }
-          if (input.serviceAddress !== undefined) {
-            next.serviceAddress = String(input.serviceAddress);
+          if (input.serviceTransportId !== undefined) {
+            next.serviceTransportId = String(input.serviceTransportId);
           }
           if (input.serviceInstanceId !== undefined) {
             next.serviceInstanceId = String(input.serviceInstanceId);
           }
-          if (input.protocol !== undefined) {
-            next.protocol = String(input.protocol);
+          if (input.serviceOrigin !== undefined) {
+            next.serviceOrigin = String(input.serviceOrigin);
+          }
+          if (input.transportProtocols !== undefined) {
+            next.transportProtocols = Array.isArray(input.transportProtocols)
+              ? input.transportProtocols.map((entry: unknown) => String(entry))
+              : [];
           }
           if (input.url !== undefined) {
             next.url = String(input.url);
-          }
-          if (input.servicePort !== undefined) {
-            next.servicePort = Number(input.servicePort);
           }
           if (input.fetchId !== undefined) {
             next.fetchId = String(input.fetchId);
@@ -762,27 +775,27 @@ export default class SocketController {
             input.communicationTypes,
           );
           const serviceName = String(input.serviceName ?? "");
-          const serviceAddress = String(input.serviceAddress ?? "");
-          const protocol = String(input.protocol ?? "http");
+          const serviceTransportId = String(input.serviceTransportId ?? "");
+          const serviceOrigin = String(input.serviceOrigin ?? "");
+          const parsedOrigin = parseTransportOrigin(serviceOrigin);
 
-          const normalizedPort = this.resolveServicePort(protocol, input.servicePort);
-          if (!serviceAddress || !normalizedPort) {
+          if (!serviceTransportId || !serviceOrigin || !parsedOrigin) {
             Cadenza.log(
-              "Socket client setup skipped due to missing address/port",
+              "Socket client setup skipped due to missing transport origin",
               {
                 serviceName,
-                serviceAddress,
-                servicePort: input.servicePort,
-                protocol,
+                serviceTransportId,
+                serviceOrigin,
               },
               "warning",
             );
             return false;
           }
 
-          const socketProtocol = protocol === "https" ? "wss" : "ws";
-          const url = `${socketProtocol}://${serviceAddress}:${normalizedPort}`;
-          const fetchId = `${serviceAddress}_${normalizedPort}`;
+          const socketProtocol =
+            parsedOrigin.protocol === "https" ? "wss" : "ws";
+          const url = `${socketProtocol}://${parsedOrigin.hostname}:${parsedOrigin.port}`;
+          const fetchId = serviceTransportId;
 
           const applySessionOperation = (
             operation: SocketClientSessionOperation,
@@ -795,9 +808,9 @@ export default class SocketController {
               serviceInstanceId,
               communicationTypes,
               serviceName,
-              serviceAddress,
-              servicePort: normalizedPort,
-              protocol,
+              serviceTransportId,
+              serviceOrigin,
+              transportProtocols: input.transportProtocols,
               url,
             });
           };
@@ -821,9 +834,11 @@ export default class SocketController {
             serviceInstanceId,
             communicationTypes,
             serviceName,
-            serviceAddress,
-            servicePort: normalizedPort,
-            protocol,
+            serviceTransportId,
+            serviceOrigin,
+            transportProtocols: Array.isArray(input.transportProtocols)
+              ? input.transportProtocols.map((entry: unknown) => String(entry))
+              : [],
             url,
             destroyed: false,
             updatedAt: Date.now(),
@@ -1195,8 +1210,8 @@ export default class SocketController {
             );
             Cadenza.emit(`meta.socket_client.disconnected:${fetchId}`, {
               serviceName,
-              serviceAddress,
-              servicePort: normalizedPort,
+              serviceTransportId,
+              serviceOrigin,
             });
             runtimeHandle.handshake = false;
           });
@@ -1221,7 +1236,7 @@ export default class SocketController {
                 {
                   serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
                   serviceName: Cadenza.serviceRegistry.serviceName,
-                  isFrontend: isBrowser,
+                  isFrontend: Cadenza.serviceRegistry.isFrontend || isBrowser,
                   __status: "success",
                 },
                 10_000,
@@ -1436,9 +1451,9 @@ export default class SocketController {
                 serviceInstanceId,
                 serviceName,
                 communicationTypes,
-                serviceAddress,
-                servicePort: normalizedPort,
-                protocol,
+                serviceTransportId,
+                serviceOrigin,
+                transportProtocols: input.transportProtocols,
                 handshakeData: {
                   instanceId: Cadenza.serviceRegistry.serviceInstanceId,
                   serviceName: Cadenza.serviceRegistry.serviceName,
@@ -1491,36 +1506,15 @@ export default class SocketController {
       return explicitFetchId;
     }
 
-    const serviceAddress = String(input.serviceAddress ?? "").trim();
-    const protocol = String(input.protocol ?? "http").trim();
-    const port = this.resolveServicePort(protocol, input.servicePort);
-
-    if (!serviceAddress || !port) {
-      return undefined;
-    }
-
-    return `${serviceAddress}_${port}`;
+    const transportId = String(
+      input.serviceTransportId ?? input.transportId ?? "",
+    ).trim();
+    return transportId || undefined;
   }
 
-  private resolveServicePort(
-    protocol: string,
-    rawPort: unknown,
-  ): number | undefined {
-    if (protocol === "https") {
-      return 443;
-    }
-
-    const parsed = Number(rawPort);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      return undefined;
-    }
-
-    return Math.trunc(parsed);
-  }
-
-  private createSocketServerRuntimeHandleFromContext(
+  private async createSocketServerRuntimeHandleFromContext(
     context: AnyObject,
-  ): SocketServerRuntimeHandle {
+  ): Promise<SocketServerRuntimeHandle> {
     const baseServer = context.httpsServer ?? context.httpServer;
     if (!baseServer) {
       throw new Error(
@@ -1528,6 +1522,10 @@ export default class SocketController {
       );
     }
 
+    const socketServerModule = await importNodeModule<{
+      Server: new (server: any, options: AnyObject) => any;
+    }>("socket.io");
+    const Server = socketServerModule.Server;
     const server = new Server(baseServer, {
       pingInterval: 30_000,
       pingTimeout: 20_000,

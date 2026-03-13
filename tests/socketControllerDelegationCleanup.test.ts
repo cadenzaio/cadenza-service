@@ -106,19 +106,18 @@ describe("SocketController delegation cleanup", () => {
   it("does not accumulate pending delegation/timer counters across failed retries", async () => {
     const controller = SocketController.instance as any;
 
-    const serviceAddress = "127.0.0.1";
-    const servicePort = 65531;
+    const serviceOrigin = "http://127.0.0.1:65531";
     const serviceName = "RetryLeakTestService";
-    const fetchId = `${serviceAddress}_${servicePort}`;
+    const fetchId = "retry-transport-1";
     const delegationSignal = `meta.service_registry.selected_instance_for_socket:${fetchId}`;
 
     Cadenza.emit("meta.fetch.handshake_complete", {
       serviceInstanceId: "remote-instance",
       communicationTypes: ["socket"],
       serviceName,
-      serviceAddress,
-      servicePort,
-      protocol: "http",
+      serviceTransportId: fetchId,
+      serviceOrigin,
+      transportProtocols: ["rest", "socket"],
     });
 
     await waitForCondition(

@@ -41,6 +41,52 @@ import Cadenza from '@cadenza.io/service';
 Cadenza.createCadenzaService('MyService'); // Name should start with an uppercase letter and contain no spaces.
 ```
 
+### Creating a frontend runtime
+Frontend mode keeps the same package and distributed primitives, but disables Node-only features such as REST/socket server creation, PostgresActors, and database-service bootstrapping.
+
+```typescript
+import Cadenza from '@cadenza.io/service';
+
+Cadenza.createCadenzaService('BrowserApp', 'Frontend app', {
+  isFrontend: true,
+  bootstrap: {
+    url: 'https://cadenza-db.example.com:5000',
+  },
+});
+```
+
+Frontend bootstrap resolution order is:
+
+1. `options.bootstrap.url`
+2. `globalThis.__CADENZA_RUNTIME__.bootstrapUrl`
+3. `CADENZA_DB_ADDRESS` plus optional `CADENZA_DB_PORT` on the server side
+
+`CADENZA_DB_ADDRESS` now accepts either a full address with port, or a bare host/address when `CADENZA_DB_PORT` is also set.
+
+### SSR inquiries
+For SSR use cases, use the request-scoped bridge for one-off distributed inquiries and pass dehydrated results to the browser runtime.
+
+```typescript
+import {
+  createSSRInquiryBridge,
+  type HydrationOptions,
+} from '@cadenza.io/service';
+
+const bridge = createSSRInquiryBridge({
+  bootstrap: {
+    url: process.env.CADENZA_DB_ADDRESS,
+  },
+});
+
+const users = await bridge.inquire(
+  'users-list',
+  {},
+  { hydrationKey: 'users-list.initial' },
+);
+
+const hydration: HydrationOptions = bridge.dehydrate();
+```
+
 ### Working with distribution
 Distribution is easy with Cadenza. You can delegate the flow by using a DeputyTask, or subscribe to foreign signals by prefixing them with the service name.
 

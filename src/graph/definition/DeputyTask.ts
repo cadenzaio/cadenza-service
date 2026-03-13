@@ -87,7 +87,7 @@ export default class DeputyTask extends Task {
         }
 
         if (context.__metadata.__skipRemoteExecution) {
-          resolve(true);
+          resolve(context);
           return;
         }
 
@@ -213,6 +213,10 @@ export default class DeputyTask extends Task {
       __executionTraceId: metadata.__executionTraceId ?? null,
       __metadata: {
         ...metadata,
+        __skipRemoteExecution:
+          metadata.__skipRemoteExecution ?? ctx.__skipRemoteExecution ?? false,
+        __blockRemoteExecution:
+          metadata.__blockRemoteExecution ?? ctx.__blockRemoteExecution ?? false,
         __deputyTaskName: this.name,
       },
       ...ctx,

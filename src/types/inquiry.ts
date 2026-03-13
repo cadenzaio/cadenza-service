@@ -44,4 +44,9 @@ export type DistributedInquiryOptions = Partial<InquiryOptions> & {
    * Mainly used by distributed deputy responders.
    */
   perResponderTimeoutMs?: number;
+  /**
+   * Optional hydration cache key used to consume one SSR-provided inquiry result
+   * before the live frontend runtime performs normal distributed routing.
+   */
+  hydrationKey?: string;
 };

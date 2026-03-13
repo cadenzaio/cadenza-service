@@ -118,6 +118,7 @@ export default class DatabaseTask extends DeputyTask {
     delete ctx.queryData;
 
     const deputyContext = {
+      ...ctx,
       __localTaskName: this.name,
       __localTaskVersion: this.version,
       __localServiceName: Cadenza.serviceRegistry.serviceName,
@@ -129,6 +130,10 @@ export default class DatabaseTask extends DeputyTask {
         metadata.__routineExecId ?? metadata.__metadata?.__routineExecId,
       __metadata: {
         ...metadata,
+        __skipRemoteExecution:
+          metadata.__skipRemoteExecution ?? ctx.__skipRemoteExecution ?? false,
+        __blockRemoteExecution:
+          metadata.__blockRemoteExecution ?? ctx.__blockRemoteExecution ?? false,
         __deputyTaskName: this.name,
       },
       queryData: {

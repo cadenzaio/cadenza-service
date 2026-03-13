@@ -1,5 +1,5 @@
 import Cadenza from "../Cadenza";
-import express, { Request, Response } from "express";
+import express from "express";
 import bodyParser from "body-parser";
 import helmet from "helmet";
 import cors from "cors";
@@ -340,13 +340,10 @@ export default class RestController {
         Cadenza.createMetaTask(
           "Setup Express app security",
           (ctx, emit) => {
-            if (isBrowser) {
-              emit("meta.rest.browser_detected", {
+            if (isBrowser || ctx.__isFrontend) {
+              emit("meta.service_registry.instance_registration_requested", {
                 data: {
                   uuid: ctx.__serviceInstanceId,
-                  address: `browser:${ctx.__serviceInstanceId}`,
-                  port: 0,
-                  exposed: false,
                   process_pid: 1,
                   service_name: ctx.__serviceName,
                   is_frontend: true,
@@ -355,6 +352,7 @@ export default class RestController {
                   is_blocked: false,
                   health: {},
                 },
+                transportData: [],
                 ...ctx,
               });
               return;
@@ -447,7 +445,7 @@ export default class RestController {
           },
           "Sets up the Express server according to the security profile",
         )
-          .attachSignal("meta.rest.browser_detected")
+          .attachSignal("meta.service_registry.instance_registration_requested")
           .then(
             Cadenza.createMetaTask(
               "Define RestServer",
@@ -456,7 +454,7 @@ export default class RestController {
 
                 // TODO: add body validation based on profile
 
-                app.post("/handshake", (req: Request, res: Response) => {
+                app.post("/handshake", (req: any, res: any) => {
                   try {
                     Cadenza.log("New fetch connection.", req.body);
                     Cadenza.emit("meta.rest.handshake", req.body);
@@ -475,7 +473,7 @@ export default class RestController {
                   }
                 });
 
-                app.post("/delegation", (req: Request, res: Response) => {
+                app.post("/delegation", (req: any, res: any) => {
                   let deputyExecId;
                   let ctx;
                   ctx = req.body;
@@ -562,7 +560,7 @@ export default class RestController {
                   });
                 });
 
-                app.post("/signal", (req: Request, res: Response) => {
+                app.post("/signal", (req: any, res: any) => {
                   let ctx;
                   try {
                     ctx = req.body;
@@ -599,7 +597,7 @@ export default class RestController {
                   Cadenza.emit(ctx.__signalName, ctx);
                 });
 
-                app.get("/status", (req: Request, res: Response) => {
+                app.get("/status", (req: any, res: any) => {
                   Cadenza.createEphemeralMetaTask(
                     "Resolve status check",
                     (statusCtx) => res.json(statusCtx),
@@ -621,33 +619,41 @@ export default class RestController {
                 Cadenza.createMetaTask(
                   "Configure network",
                   async (ctx) => {
-                    let address: string = "undefined";
-                    let port: number = ctx.__port;
-                    let exposed: boolean = false;
+                    let httpOrigin: string | null = null;
+                    let httpsOrigin: string | null = null;
+
+                    const resolveBoundAddress = (server: any): string => {
+                      if (typeof server?.address() === "string") {
+                        return server.address() as string;
+                      }
+
+                      if (server?.address()?.address === "::") {
+                        if (process.env.NODE_ENV === "development") {
+                          return "localhost";
+                        }
+
+                        if (process.env.IS_DOCKER === "true") {
+                          return process.env.CADENZA_SERVER_URL || "localhost";
+                        }
+                      }
+
+                      return server?.address()?.address || "localhost";
+                    };
 
                     const createHttpServer = async (ctx: any) => {
                       await new Promise((resolve) => {
                         const server = http.createServer(ctx.__app);
                         ctx.httpServer = server;
                         server.listen(ctx.__port, () => {
-                          if (typeof server?.address() === "string") {
-                            address = server.address() as string;
-                            // @ts-ignore
-                          } else if (server?.address()?.address === "::") {
-                            if (process.env.NODE_ENV === "development") {
-                              address = "localhost";
-                            } else if (process.env.IS_DOCKER === "true") {
-                              address =
-                                process.env.CADENZA_SERVER_URL || "localhost";
-                            }
-                          } else {
-                            // @ts-ignore
-                            address = server?.address()?.address || "undefined";
-                          }
+                          const addressInfo = server.address();
+                          const address = resolveBoundAddress(server);
+                          const port =
+                            typeof addressInfo === "object" && addressInfo
+                              ? addressInfo.port || ctx.__port
+                              : ctx.__port;
+                          httpOrigin = `http://${address}:${port}`;
 
-                          console.log(
-                            `Server is running on ${address}:${port}`,
-                          );
+                          console.log(`Server is running on ${httpOrigin}`);
                           resolve(address);
                         });
 
@@ -682,27 +688,16 @@ export default class RestController {
                           ctx.__app,
                         );
                         ctx.httpsServer = httpsServer;
-                        ctx.__port = 443;
-                        port = 443;
                         httpsServer.listen(443, () => {
-                          if (typeof httpsServer?.address() === "string") {
-                            address = httpsServer.address() as string;
-                            // @ts-ignore
-                          } else if (httpsServer?.address()?.address === "::") {
-                            if (process.env.IS_DOCKER === "true") {
-                              address =
-                                process.env.CADENZA_SERVER_URL || "localhost";
-                            }
-                          } else {
-                            // @ts-ignore
-                            address = httpsServer?.address()?.address || "";
-                          }
+                          const addressInfo = httpsServer.address();
+                          const address = resolveBoundAddress(httpsServer);
+                          const port =
+                            typeof addressInfo === "object" && addressInfo
+                              ? addressInfo.port || 443
+                              : 443;
+                          httpsOrigin = `https://${address}:${port}`;
 
-                          exposed = true;
-
-                          console.log(
-                            `HTTPS Server is running on ${address}:443`,
-                          );
+                          console.log(`HTTPS Server is running on ${httpsOrigin}`);
                           resolve(address);
                         });
 
@@ -732,11 +727,44 @@ export default class RestController {
                       // createHttpsServer(ctx);
                     }
 
+                    const declaredTransports = Array.isArray(ctx.__declaredTransports)
+                      ? ctx.__declaredTransports
+                      : [];
+                    const hasExplicitInternalTransport = declaredTransports.some(
+                      (transport: any) => transport.role === "internal",
+                    );
+                    const transportData = declaredTransports.map((transport: any) => ({
+                      uuid: transport.uuid,
+                      service_instance_id: ctx.__serviceInstanceId,
+                      role: transport.role,
+                      origin: transport.origin,
+                      protocols: transport.protocols ?? ["rest", "socket"],
+                      ...(transport.securityProfile
+                        ? { security_profile: transport.securityProfile }
+                        : {}),
+                      ...(transport.authStrategy
+                        ? { auth_strategy: transport.authStrategy }
+                        : {}),
+                    }));
+
+                    if (!hasExplicitInternalTransport) {
+                      const internalOrigin = httpOrigin ?? httpsOrigin;
+                      if (internalOrigin) {
+                        transportData.unshift({
+                          uuid: `${ctx.__serviceInstanceId}-internal-auto`,
+                          service_instance_id: ctx.__serviceInstanceId,
+                          role: "internal",
+                          origin: internalOrigin,
+                          protocols: ["rest", "socket"],
+                          ...(ctx.__securityProfile
+                            ? { security_profile: ctx.__securityProfile }
+                            : {}),
+                        });
+                      }
+                    }
+
                     ctx.data = {
                       uuid: ctx.__serviceInstanceId,
-                      address: address,
-                      port: port,
-                      exposed: exposed,
                       process_pid: process.pid,
                       service_name: ctx.__serviceName,
                       is_active: true,
@@ -745,8 +773,14 @@ export default class RestController {
                       is_blocked: false,
                       health: {},
                     };
+                    ctx.transportData = transportData;
 
                     delete ctx.__app;
+
+                    Cadenza.emit(
+                      "meta.service_registry.instance_registration_requested",
+                      ctx,
+                    );
 
                     return ctx;
                   },
@@ -810,11 +844,12 @@ export default class RestController {
     Cadenza.createMetaTask(
       "Setup fetch client",
       (ctx) => {
-        const { serviceName, serviceAddress, servicePort, protocol } = ctx;
-
-        const port = protocol === "https" ? 443 : servicePort;
-        const URL = `${protocol}://${serviceAddress}:${port}`;
-        const fetchId = `${serviceAddress}_${port}`;
+        const serviceName = String(ctx.serviceName ?? "");
+        const URL = String(ctx.serviceOrigin ?? "");
+        const fetchId = String(ctx.serviceTransportId ?? "");
+        if (!serviceName || !URL || !fetchId) {
+          return false;
+        }
         const fetchDiagnostics = this.ensureFetchClientDiagnostics(
           fetchId,
           serviceName,
@@ -1111,20 +1146,20 @@ export default class RestController {
               serviceName,
               serviceInstanceId,
               communicationTypes,
-              serviceAddress,
-              servicePort,
-              protocol,
+              serviceTransportId,
+              serviceOrigin,
+              transportProtocols,
             } = ctx;
 
-            const fetchId = `${serviceAddress}_${servicePort}`;
+            const fetchId = String(serviceTransportId ?? "");
 
             emit(`meta.fetch.handshake_requested:${fetchId}`, {
               serviceInstanceId,
               serviceName,
               communicationTypes,
-              serviceAddress,
-              servicePort,
-              protocol,
+              serviceTransportId,
+              serviceOrigin,
+              transportProtocols,
               handshakeData: {
                 instanceId: Cadenza.serviceRegistry.serviceInstanceId,
                 serviceName: Cadenza.serviceRegistry.serviceName,

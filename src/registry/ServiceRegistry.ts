@@ -3,12 +3,27 @@ import type { AnyObject } from "@cadenza.io/core";
 import Cadenza from "../Cadenza";
 import { isBrowser } from "../utils/environment";
 import { InquiryResponderDescriptor } from "../types/inquiry";
+import type { ServiceInstanceDescriptor } from "../types/serviceRegistry";
+import type {
+  ServiceTransportDescriptor,
+  ServiceTransportProtocol,
+  ServiceTransportRole,
+} from "../types/transport";
 import {
   isMetaIntentName,
   META_READINESS_INTENT,
   META_RUNTIME_STATUS_INTENT,
   META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT,
 } from "../utils/inquiry";
+import {
+  getRouteableTransport,
+  normalizeServiceInstanceDescriptor,
+} from "../utils/serviceInstance";
+import {
+  buildTransportClientKey,
+  normalizeServiceTransportDescriptor,
+  transportSupportsProtocol,
+} from "../utils/transport";
 import {
   evaluateDependencyReadiness,
   resolveServiceReadinessState,
@@ -62,25 +77,6 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
   return normalized;
 }
 
-export interface ServiceInstanceDescriptor {
-  uuid: string;
-  address: string;
-  port: number;
-  serviceName: string;
-  numberOfRunningGraphs?: number;
-  isPrimary: boolean;
-  isActive: boolean;
-  isNonResponsive: boolean;
-  isBlocked: boolean;
-  runtimeState?: RuntimeStatusState;
-  acceptingWork?: boolean;
-  reportedAt?: string;
-  health: AnyObject;
-  exposed: boolean;
-  clientCreated?: boolean;
-  isFrontend: boolean;
-}
-
 export interface DeputyDescriptor {
   serviceName: string;
   remoteRoutineName?: string;
@@ -102,9 +98,9 @@ interface RemoteIntentDeputyDescriptor {
 interface RuntimeStatusReport {
   serviceName: string;
   serviceInstanceId: string;
-  serviceAddress?: string;
-  servicePort?: number;
-  exposed?: boolean;
+  transportId?: string;
+  transportOrigin?: string;
+  transportProtocols?: ServiceTransportProtocol[];
   isFrontend?: boolean;
   reportedAt: string;
   state: RuntimeStatusState;
@@ -211,8 +207,10 @@ export default class ServiceRegistry {
   numberOfRunningGraphs: number = 0;
   useSocket: boolean = false;
   retryCount: number = 3;
+  isFrontend: boolean = false;
 
   handleInstanceUpdateTask: Task;
+  handleTransportUpdateTask: Task;
   handleGlobalSignalRegistrationTask: Task;
   handleGlobalIntentRegistrationTask: Task;
   handleSocketStatusUpdateTask: Task;
@@ -227,6 +225,7 @@ export default class ServiceRegistry {
   getStatusTask: Task;
   insertServiceTask: Task;
   insertServiceInstanceTask: Task;
+  insertServiceTransportTask: Task;
   handleServiceNotRespondingTask: Task;
   handleServiceHandshakeTask: Task;
   collectTransportDiagnosticsTask: Task;
@@ -410,6 +409,58 @@ export default class ServiceRegistry {
     return this.getInstance(this.serviceName, this.serviceInstanceId);
   }
 
+  private getRoutingTransportRole(): ServiceTransportRole {
+    return this.isFrontend ? "public" : "internal";
+  }
+
+  private getTransportById(
+    instance: ServiceInstanceDescriptor,
+    transportId: string,
+  ): ServiceTransportDescriptor | undefined {
+    return instance.transports.find((transport) => transport.uuid === transportId);
+  }
+
+  private getRouteableTransport(
+    instance: ServiceInstanceDescriptor,
+    protocol?: ServiceTransportProtocol,
+    role: ServiceTransportRole = this.getRoutingTransportRole(),
+  ): ServiceTransportDescriptor | undefined {
+    return getRouteableTransport(instance, role, protocol);
+  }
+
+  private getTransportClientKey(
+    instance: ServiceInstanceDescriptor,
+    protocol?: ServiceTransportProtocol,
+    role: ServiceTransportRole = this.getRoutingTransportRole(),
+  ): string | null {
+    const transport = this.getRouteableTransport(instance, protocol, role);
+    if (!transport) {
+      return null;
+    }
+
+    return buildTransportClientKey(transport);
+  }
+
+  private hasTransportClientCreated(
+    instance: ServiceInstanceDescriptor,
+    transportId: string,
+  ): boolean {
+    return (instance.clientCreatedTransportIds ?? []).includes(transportId);
+  }
+
+  private markTransportClientCreated(
+    instance: ServiceInstanceDescriptor,
+    transportId: string,
+  ): void {
+    if (!instance.clientCreatedTransportIds) {
+      instance.clientCreatedTransportIds = [];
+    }
+
+    if (!instance.clientCreatedTransportIds.includes(transportId)) {
+      instance.clientCreatedTransportIds.push(transportId);
+    }
+  }
+
   private registerDependee(
     serviceName: string,
     serviceInstanceId: string,
@@ -522,7 +573,26 @@ export default class ServiceRegistry {
     if (!serviceName || !serviceInstanceId) {
       return null;
     }
-    const servicePort = ctx.servicePort ?? ctx.port ?? ctx.serviceInstance?.port;
+    const transportId =
+      ctx.transportId ??
+      ctx.serviceTransportId ??
+      ctx.serviceTransport?.uuid ??
+      undefined;
+    const transportOrigin =
+      ctx.transportOrigin ??
+      ctx.serviceOrigin ??
+      ctx.serviceTransport?.origin ??
+      undefined;
+    const transportProtocols = Array.isArray(
+      ctx.transportProtocols ?? ctx.serviceTransport?.protocols,
+    )
+      ? ((ctx.transportProtocols ?? ctx.serviceTransport?.protocols) as unknown[])
+          .map((entry) => String(entry))
+          .filter(
+            (entry): entry is ServiceTransportProtocol =>
+              entry === "rest" || entry === "socket",
+          )
+      : undefined;
 
     const numberOfRunningGraphs = Math.max(
       0,
@@ -544,15 +614,18 @@ export default class ServiceRegistry {
     return {
       serviceName,
       serviceInstanceId,
-      serviceAddress:
-        ctx.serviceAddress ?? ctx.address ?? ctx.serviceInstance?.address,
-      servicePort: typeof servicePort === "number" ? servicePort : undefined,
-      exposed:
-        typeof ctx.exposed === "boolean"
-          ? ctx.exposed
-          : typeof ctx.serviceInstance?.exposed === "boolean"
-            ? ctx.serviceInstance.exposed
-            : undefined,
+      transportId:
+        typeof transportId === "string" && transportId.trim().length > 0
+          ? transportId
+          : undefined,
+      transportOrigin:
+        typeof transportOrigin === "string" && transportOrigin.trim().length > 0
+          ? transportOrigin
+          : undefined,
+      transportProtocols:
+        transportProtocols && transportProtocols.length > 0
+          ? Array.from(new Set(transportProtocols))
+          : undefined,
       isFrontend:
         typeof ctx.isFrontend === "boolean"
           ? ctx.isFrontend
@@ -588,16 +661,26 @@ export default class ServiceRegistry {
       return false;
     }
 
-    if (report.serviceAddress) {
-      instance.address = report.serviceAddress;
-    }
-
-    if (typeof report.servicePort === "number") {
-      instance.port = report.servicePort;
-    }
-
-    if (typeof report.exposed === "boolean") {
-      instance.exposed = report.exposed;
+    if (report.transportId && report.transportOrigin) {
+      const protocols =
+        report.transportProtocols && report.transportProtocols.length > 0
+          ? report.transportProtocols
+          : (["rest", "socket"] as ServiceTransportProtocol[]);
+      const existingTransport = this.getTransportById(instance, report.transportId);
+      if (existingTransport) {
+        existingTransport.origin = report.transportOrigin;
+        existingTransport.protocols = protocols;
+      } else {
+        instance.transports.push({
+          uuid: report.transportId,
+          serviceInstanceId: report.serviceInstanceId,
+          role: this.getRoutingTransportRole(),
+          origin: report.transportOrigin,
+          protocols,
+          securityProfile: null,
+          authStrategy: null,
+        });
+      }
     }
 
     if (typeof report.isFrontend === "boolean") {
@@ -651,9 +734,24 @@ export default class ServiceRegistry {
     const report: RuntimeStatusReport = {
       serviceName: this.serviceName,
       serviceInstanceId: this.serviceInstanceId,
-      serviceAddress: localInstance.address,
-      servicePort: localInstance.port,
-      exposed: localInstance.exposed,
+      transportId:
+        this.getRouteableTransport(
+          localInstance,
+          this.useSocket ? "socket" : "rest",
+          "internal",
+        )?.uuid ?? undefined,
+      transportOrigin:
+        this.getRouteableTransport(
+          localInstance,
+          this.useSocket ? "socket" : "rest",
+          "internal",
+        )?.origin ?? undefined,
+      transportProtocols:
+        this.getRouteableTransport(
+          localInstance,
+          this.useSocket ? "socket" : "rest",
+          "internal",
+        )?.protocols ?? undefined,
       isFrontend: localInstance.isFrontend,
       reportedAt,
       state: snapshot.state,
@@ -1099,62 +1197,58 @@ export default class ServiceRegistry {
     this.handleInstanceUpdateTask = Cadenza.createMetaTask(
       "Handle Instance Update",
       (ctx, emit) => {
-        const serviceInstance =
+        const serviceInstance = normalizeServiceInstanceDescriptor(
           ctx.serviceInstance ??
-          (ctx.__serviceInstanceId || ctx.serviceInstanceId
-            ? {
-                uuid: ctx.__serviceInstanceId ?? ctx.serviceInstanceId,
-                serviceName: ctx.__serviceName ?? ctx.serviceName,
-                address: ctx.serviceAddress ?? "",
-                port: ctx.servicePort ?? 0,
-                exposed: !!ctx.exposed,
-                isFrontend: !!ctx.isFrontend,
-                isActive:
-                  typeof ctx.isActive === "boolean"
-                    ? ctx.isActive
-                    : typeof ctx.__active === "boolean"
-                      ? ctx.__active
-                      : true,
-                isNonResponsive: !!ctx.isNonResponsive,
-                isBlocked: !!ctx.isBlocked,
-                health: (ctx.health ?? ctx.__health ?? {}) as AnyObject,
-                numberOfRunningGraphs:
-                  ctx.numberOfRunningGraphs ?? ctx.__numberOfRunningGraphs ?? 0,
-                isPrimary: false,
-              }
-            : undefined);
-        if (!serviceInstance?.uuid || !serviceInstance?.serviceName) {
+            ctx.data ??
+            ctx.queryData?.data ??
+            (ctx.__serviceInstanceId || ctx.serviceInstanceId
+              ? {
+                  uuid: ctx.__serviceInstanceId ?? ctx.serviceInstanceId,
+                  serviceName: ctx.__serviceName ?? ctx.serviceName,
+                  isFrontend: !!ctx.isFrontend,
+                  isActive:
+                    typeof ctx.isActive === "boolean"
+                      ? ctx.isActive
+                      : typeof ctx.__active === "boolean"
+                        ? ctx.__active
+                        : true,
+                  isNonResponsive: !!ctx.isNonResponsive,
+                  isBlocked: !!ctx.isBlocked,
+                  health: (ctx.health ?? ctx.__health ?? {}) as AnyObject,
+                  numberOfRunningGraphs:
+                    ctx.numberOfRunningGraphs ?? ctx.__numberOfRunningGraphs ?? 0,
+                  isPrimary: false,
+                  transports: ctx.transports ?? [],
+                }
+              : undefined),
+        );
+        if (!serviceInstance) {
           return false;
         }
-        const {
-          uuid,
-          serviceName,
-          address,
-          port,
-          exposed,
-          isFrontend,
-          deleted,
-        } = serviceInstance;
+        const uuid = serviceInstance.uuid;
+        const serviceName = serviceInstance.serviceName;
+        const deleted = Boolean(
+          ctx.deleted ?? ctx.serviceInstance?.deleted ?? ctx.data?.deleted,
+        );
         if (uuid === this.serviceInstanceId) return;
 
         if (deleted) {
+          const existingInstance = this.instances
+            .get(serviceName)
+            ?.find((instance) => instance.uuid === uuid);
           const indexToDelete =
-            this.instances.get(serviceName)?.findIndex((i) => i.uuid === uuid) ??
-            -1;
-          if (indexToDelete >= 0) {
+            this.instances.get(serviceName)?.findIndex((i) => i.uuid === uuid) ?? -1;
+          if (indexToDelete >= 0 && existingInstance) {
             this.instances.get(serviceName)?.splice(indexToDelete, 1);
+            for (const transport of existingInstance.transports) {
+              const transportKey = buildTransportClientKey(transport);
+              emit(`meta.socket_shutdown_requested:${transportKey}`, {});
+              emit(`meta.fetch.destroy_requested:${transportKey}`, {});
+            }
           }
 
           if (this.instances.get(serviceName)?.length === 0) {
             this.instances.delete(serviceName);
-          } else if (
-            this.instances
-              .get(serviceName)
-              ?.filter((i) => i.address === address && i.port === port)
-              .length === 0
-          ) {
-            emit(`meta.socket_shutdown_requested:${address}_${port}`, {});
-            emit(`meta.fetch.destroy_requested:${address}_${port}`, {});
           }
 
           this.unregisterDependee(uuid, serviceName);
@@ -1168,7 +1262,14 @@ export default class ServiceRegistry {
         const existing = instances.find((i) => i.uuid === uuid);
 
         if (existing) {
-          Object.assign(existing, serviceInstance); // Update
+          Object.assign(existing, {
+            ...serviceInstance,
+            transports:
+              serviceInstance.transports.length > 0
+                ? serviceInstance.transports
+                : existing.transports,
+            clientCreatedTransportIds: existing.clientCreatedTransportIds ?? [],
+          });
         } else {
           instances.push(serviceInstance);
         }
@@ -1192,55 +1293,59 @@ export default class ServiceRegistry {
           return false;
         }
 
+        const trackedTransport = this.getRouteableTransport(
+          trackedInstance!,
+          this.useSocket ? "socket" : "rest",
+        );
+
         if (
-          (!isFrontend &&
+          (!serviceInstance.isFrontend &&
             (this.deputies.has(serviceName) ||
               this.remoteIntents.has(serviceName))) ||
           this.remoteSignals.has(serviceName)
         ) {
-          const clientCreated = instances?.some(
-            (i) =>
-              i.address === address &&
-              i.port === port &&
-              i.clientCreated &&
-              i.isActive,
+          const communicationTypes = Array.from(
+            new Set(
+              this.deputies
+                .get(serviceName)
+                ?.map((d) => d.communicationType) ?? [],
+            ),
           );
 
-          if (!clientCreated) {
-            const communicationTypes = Array.from(
-              new Set(
-                this.deputies
-                  .get(serviceName)
-                  ?.map((d) => d.communicationType) ?? [],
-              ),
+          if (
+            !communicationTypes.includes("signal") &&
+            this.remoteSignals.has(serviceName)
+          ) {
+            communicationTypes.push("signal");
+          }
+
+          if (trackedTransport) {
+            const clientCreated = this.hasTransportClientCreated(
+              trackedInstance!,
+              trackedTransport.uuid,
             );
 
-            if (
-              !communicationTypes.includes("signal") &&
-              this.remoteSignals.has(serviceName)
-            ) {
-              communicationTypes.push("signal");
-            }
-
-            emit("meta.service_registry.dependee_registered", {
-              serviceName: serviceName,
-              serviceInstanceId: uuid,
-              serviceAddress: address,
-              servicePort: port,
-              protocol: exposed ? "https" : "http",
-              communicationTypes,
-            });
-
-            instances
-              ?.filter(
-                (i: any) =>
-                  i.address === address &&
-                  i.port === port &&
-                  i.isActive,
-              )
-              .forEach((i: any) => {
-                i.clientCreated = true;
+            if (!clientCreated) {
+              emit("meta.service_registry.dependee_registered", {
+                serviceName,
+                serviceInstanceId: uuid,
+                serviceTransportId: trackedTransport.uuid,
+                serviceOrigin: trackedTransport.origin,
+                transportProtocols: trackedTransport.protocols,
+                communicationTypes,
               });
+              this.markTransportClientCreated(
+                trackedInstance!,
+                trackedTransport.uuid,
+              );
+            }
+          } else {
+            emit("meta.service_registry.routeable_transport_missing", {
+              serviceName,
+              serviceInstanceId: uuid,
+              requiredRole: this.getRoutingTransportRole(),
+              isFrontend: this.isFrontend,
+            });
           }
         }
 
@@ -1255,6 +1360,105 @@ export default class ServiceRegistry {
         "global.meta.service_instance.updated",
         "meta.service_instance.inserted",
         "meta.service_instance.updated",
+      )
+      .attachSignal(
+        "meta.service_registry.dependee_registered",
+        "meta.socket_shutdown_requested",
+        "meta.fetch.destroy_requested",
+      );
+
+    this.handleTransportUpdateTask = Cadenza.createMetaTask(
+      "Handle Transport Update",
+      (ctx, emit) => {
+        const transport = normalizeServiceTransportDescriptor(
+          ctx.serviceTransport ?? ctx.data ?? ctx.queryData?.data ?? ctx,
+        );
+        if (!transport) {
+          return false;
+        }
+
+        let ownerInstance: ServiceInstanceDescriptor | undefined;
+        for (const instances of this.instances.values()) {
+          ownerInstance = instances.find(
+            (instance) => instance.uuid === transport.serviceInstanceId,
+          );
+          if (ownerInstance) {
+            break;
+          }
+        }
+
+        if (!ownerInstance) {
+          return false;
+        }
+
+        if (transport.deleted) {
+          ownerInstance.transports = ownerInstance.transports.filter(
+            (existingTransport) => existingTransport.uuid !== transport.uuid,
+          );
+          const transportKey = buildTransportClientKey(transport);
+          emit(`meta.socket_shutdown_requested:${transportKey}`, {});
+          emit(`meta.fetch.destroy_requested:${transportKey}`, {});
+          return true;
+        }
+
+        const existingTransport = this.getTransportById(ownerInstance, transport.uuid);
+        if (existingTransport) {
+          Object.assign(existingTransport, transport);
+        } else {
+          ownerInstance.transports.push(transport);
+        }
+
+        if (ownerInstance.uuid === this.serviceInstanceId) {
+          return true;
+        }
+
+        const hasRemoteInterest =
+          ((!ownerInstance.isFrontend &&
+            (this.deputies.has(ownerInstance.serviceName) ||
+              this.remoteIntents.has(ownerInstance.serviceName))) ||
+            this.remoteSignals.has(ownerInstance.serviceName)) &&
+          transport.role === this.getRoutingTransportRole();
+
+        if (!hasRemoteInterest) {
+          return true;
+        }
+
+        if (!this.hasTransportClientCreated(ownerInstance, transport.uuid)) {
+          const communicationTypes = Array.from(
+            new Set(
+              this.deputies
+                .get(ownerInstance.serviceName)
+                ?.map((descriptor) => descriptor.communicationType) ?? [],
+            ),
+          );
+
+          if (
+            !communicationTypes.includes("signal") &&
+            this.remoteSignals.has(ownerInstance.serviceName)
+          ) {
+            communicationTypes.push("signal");
+          }
+
+          emit("meta.service_registry.dependee_registered", {
+            serviceName: ownerInstance.serviceName,
+            serviceInstanceId: ownerInstance.uuid,
+            serviceTransportId: transport.uuid,
+            serviceOrigin: transport.origin,
+            transportProtocols: transport.protocols,
+            communicationTypes,
+          });
+          this.markTransportClientCreated(ownerInstance, transport.uuid);
+        }
+
+        return true;
+      },
+      "Handles service transport updates independently from instance rows.",
+    )
+      .doOn(
+        "global.meta.service_instance_transport.inserted",
+        "global.meta.service_instance_transport.updated",
+        "meta.service_instance_transport.inserted",
+        "meta.service_instance_transport.updated",
       )
       .attachSignal(
         "meta.service_registry.dependee_registered",
@@ -1383,18 +1587,28 @@ export default class ServiceRegistry {
     this.handleServiceNotRespondingTask = Cadenza.createMetaTask(
       "Handle service not responding",
       (ctx, emit) => {
-        const { serviceName, serviceAddress, servicePort } = ctx;
+        const { serviceName, serviceInstanceId, serviceTransportId } = ctx;
         const serviceInstances = this.instances.get(serviceName);
-        const instances = serviceInstances?.filter(
-          (i) => i.address === serviceAddress && i.port === servicePort,
-        );
+        const instances = serviceInstances?.filter((instance) => {
+          if (serviceInstanceId && instance.uuid === serviceInstanceId) {
+            return true;
+          }
+
+          if (serviceTransportId) {
+            return instance.transports.some(
+              (transport) => transport.uuid === serviceTransportId,
+            );
+          }
+
+          return false;
+        });
 
         Cadenza.log(
           "Service not responding.",
           {
             serviceName,
-            serviceAddress,
-            servicePort,
+            serviceInstanceId,
+            serviceTransportId,
             instances,
           },
           "warning",
@@ -1440,8 +1654,7 @@ export default class ServiceRegistry {
     this.handleServiceHandshakeTask = Cadenza.createMetaTask(
       "Handle service handshake",
       (ctx, emit) => {
-        const { serviceName, serviceInstanceId, serviceAddress, servicePort } =
-          ctx;
+        const { serviceName, serviceInstanceId } = ctx;
         const serviceInstances = this.instances.get(serviceName);
         const instance = serviceInstances?.find(
           (i) => i.uuid === serviceInstanceId,
@@ -1472,31 +1685,6 @@ export default class ServiceRegistry {
           },
         });
 
-        const instancesToDelete = serviceInstances?.filter(
-          (i) =>
-            i.uuid !== serviceInstanceId &&
-            i.address === serviceAddress &&
-            i.port === servicePort,
-        );
-
-        for (const i of instancesToDelete ?? []) {
-          const indexToDelete = this.instances.get(serviceName)?.indexOf(i) ?? -1;
-          if (indexToDelete >= 0) {
-            this.instances.get(serviceName)?.splice(indexToDelete, 1);
-          }
-          this.unregisterDependee(i.uuid, serviceName);
-          emit("global.meta.service_registry.deleted", {
-            data: {
-              isActive: false,
-              isNonResponsive: false,
-              deleted: true,
-            },
-            filter: {
-              uuid: i.uuid,
-            },
-          });
-        }
-
         return true;
       },
       "Handles service handshake",
@@ -1525,8 +1713,8 @@ export default class ServiceRegistry {
         let applied = this.applyRuntimeStatusReport(report);
         if (
           !applied &&
-          report.serviceAddress &&
-          typeof report.servicePort === "number"
+          report.transportId &&
+          report.transportOrigin
         ) {
           if (!this.instances.has(report.serviceName)) {
             this.instances.set(report.serviceName, []);
@@ -1535,9 +1723,6 @@ export default class ServiceRegistry {
           this.instances.get(report.serviceName)!.push({
             uuid: report.serviceInstanceId,
             serviceName: report.serviceName,
-            address: report.serviceAddress,
-            port: report.servicePort,
-            exposed: !!report.exposed,
             isFrontend: !!report.isFrontend,
             isActive: report.isActive,
             isNonResponsive: report.isNonResponsive,
@@ -1548,6 +1733,20 @@ export default class ServiceRegistry {
             reportedAt: report.reportedAt,
             health: report.health ?? {},
             isPrimary: false,
+            transports: [
+              {
+                uuid: report.transportId,
+                serviceInstanceId: report.serviceInstanceId,
+                role: this.getRoutingTransportRole(),
+                origin: report.transportOrigin,
+                protocols:
+                  report.transportProtocols && report.transportProtocols.length > 0
+                    ? report.transportProtocols
+                    : (["rest", "socket"] as ServiceTransportProtocol[]),
+                securityProfile: null,
+                authStrategy: null,
+              },
+            ],
           });
           applied = true;
         }
@@ -1597,26 +1796,14 @@ export default class ServiceRegistry {
         );
 
         const serviceInstances = (inquiryResult.serviceInstances ?? [])
-          .filter(
-            (instance: any) =>
-              !instance.deleted &&
-              !!instance.isActive &&
-              !instance.isNonResponsive &&
+        .map((instance: AnyObject) => normalizeServiceInstanceDescriptor(instance))
+        .filter(
+          (instance: ServiceInstanceDescriptor | null): instance is ServiceInstanceDescriptor =>
+            !!instance &&
+            !!instance.isActive &&
+            !instance.isNonResponsive &&
               !instance.isBlocked,
-          )
-          .map((instance: any) => ({
-            uuid: instance.uuid,
-            address: instance.address,
-            port: instance.port,
-            serviceName: instance.serviceName,
-            isActive: !!instance.isActive,
-            isNonResponsive: !!instance.isNonResponsive,
-            isBlocked: !!instance.isBlocked,
-            health: instance.health ?? {},
-            exposed: !!instance.exposed,
-            created: instance.created,
-            isFrontend: !!instance.isFrontend,
-          }));
+          );
 
         return {
           ...ctx,
@@ -1719,10 +1906,27 @@ export default class ServiceRegistry {
           context;
         let retries = __retries ?? 0;
         let triedInstances = __triedInstances ?? [];
+        const preferredRole = this.getRoutingTransportRole();
 
         const instances = this.instances
           .get(__serviceName)
-          ?.filter((i) => i.isActive && !i.isNonResponsive && !i.isBlocked)
+          ?.filter((instance) => {
+            if (
+              !instance.isActive ||
+              instance.isNonResponsive ||
+              instance.isBlocked
+            ) {
+              return false;
+            }
+
+            return Boolean(
+              this.getRouteableTransport(
+                instance,
+                this.useSocket ? "socket" : "rest",
+                preferredRole,
+              ) ?? this.getRouteableTransport(instance, "rest", preferredRole),
+            );
+          })
           .sort((a, b) => {
             const leftStatus = this.resolveRuntimeStatusSnapshot(
               a.numberOfRunningGraphs ?? 0,
@@ -1751,9 +1955,10 @@ export default class ServiceRegistry {
 
         if (!instances || instances.length === 0 || retries > this.retryCount) {
           context.errored = true;
-          context.__error = `No active instances for ${__serviceName}. Retries: ${retries}. ${this.instances.get(
-            __serviceName,
-          )}`;
+          context.__error =
+            this.isFrontend && preferredRole === "public"
+              ? `No public transport available for ${__serviceName}.`
+              : `No routeable ${preferredRole} transport available for ${__serviceName}. Retries: ${retries}.`;
           emit(
             `meta.service_registry.load_balance_failed:${context.__metadata.__deputyExecId}`,
             context,
@@ -1763,12 +1968,28 @@ export default class ServiceRegistry {
 
         if (__broadcast || instances[0].isFrontend) {
           for (const instance of instances) {
-            const socketKey = instance.isFrontend
-              ? instance.address
-              : `${instance.address}_${instance.port}`;
+            const selectedTransport =
+              this.getRouteableTransport(instance, "socket", preferredRole) ??
+              this.getRouteableTransport(instance, "rest", preferredRole);
+            if (!selectedTransport) {
+              continue;
+            }
+
+            const transportKey = buildTransportClientKey(selectedTransport);
             emit(
-              `meta.service_registry.selected_instance_for_socket:${socketKey}`,
-              context,
+              `${
+                this.useSocket && transportSupportsProtocol(selectedTransport, "socket")
+                  ? "meta.service_registry.selected_instance_for_socket"
+                  : "meta.service_registry.selected_instance_for_fetch"
+              }:${transportKey}`,
+              {
+                ...context,
+                __instance: instance.uuid,
+                __transportId: selectedTransport.uuid,
+                __transportOrigin: selectedTransport.origin,
+                __transportProtocols: selectedTransport.protocols,
+                __fetchId: transportKey,
+              },
             );
           }
 
@@ -1797,13 +2018,30 @@ export default class ServiceRegistry {
             instancesToTry[Math.floor(Math.random() * instancesToTry.length)];
         }
 
+        const selectedTransport =
+          this.getRouteableTransport(selected, "socket", preferredRole) ??
+          this.getRouteableTransport(selected, "rest", preferredRole);
+
+        if (!selectedTransport) {
+          context.errored = true;
+          context.__error = `No routeable ${preferredRole} transport available for ${selected.serviceName}/${selected.uuid}.`;
+          emit(
+            `meta.service_registry.load_balance_failed:${context.__metadata.__deputyExecId}`,
+            context,
+          );
+          return context;
+        }
+
         context.__instance = selected.uuid;
-        context.__fetchId = `${selected.address}_${selected.port}`;
+        context.__transportId = selectedTransport.uuid;
+        context.__transportOrigin = selectedTransport.origin;
+        context.__transportProtocols = selectedTransport.protocols;
+        context.__fetchId = buildTransportClientKey(selectedTransport);
         context.__triedInstances = triedInstances;
         context.__triedInstances.push(selected.uuid);
         context.__retries = retries;
 
-        if (this.useSocket) {
+        if (this.useSocket && transportSupportsProtocol(selectedTransport, "socket")) {
           emit(
             `meta.service_registry.selected_instance_for_socket:${context.__fetchId}`,
             context,
@@ -2026,9 +2264,9 @@ export default class ServiceRegistry {
           __active: report.isActive,
           serviceName: report.serviceName,
           serviceInstanceId: report.serviceInstanceId,
-          serviceAddress: report.serviceAddress,
-          servicePort: report.servicePort,
-          exposed: report.exposed,
+          transportId: report.transportId,
+          transportOrigin: report.transportOrigin,
+          transportProtocols: report.transportProtocols,
           isFrontend: report.isFrontend,
           reportedAt: report.reportedAt,
           numberOfRunningGraphs: report.numberOfRunningGraphs,
@@ -2083,12 +2321,17 @@ export default class ServiceRegistry {
             }
 
             this.runtimeStatusFallbackInFlightByInstance.add(serviceInstanceId);
+            const transport = this.getRouteableTransport(
+              instance,
+              this.useSocket ? "socket" : "rest",
+            );
             emit("meta.service_registry.runtime_status_fallback_requested", {
               ...ctx,
               serviceName,
               serviceInstanceId,
-              serviceAddress: instance.address,
-              servicePort: instance.port,
+              serviceTransportId: transport?.uuid,
+              serviceOrigin: transport?.origin,
+              transportProtocols: transport?.protocols,
             });
           }
         }
@@ -2127,6 +2370,12 @@ export default class ServiceRegistry {
           };
         } catch (error) {
           const instance = this.getInstance(serviceName, serviceInstanceId);
+          const transport = instance
+            ? this.getRouteableTransport(
+                instance,
+                this.useSocket ? "socket" : "rest",
+              )
+            : undefined;
           const message =
             error instanceof Error ? error.message : String(error);
 
@@ -2144,8 +2393,9 @@ export default class ServiceRegistry {
             ...ctx,
             serviceName,
             serviceInstanceId,
-            serviceAddress: instance?.address ?? ctx.serviceAddress,
-            servicePort: instance?.port ?? ctx.servicePort,
+            serviceTransportId: transport?.uuid ?? ctx.serviceTransportId,
+            serviceOrigin: transport?.origin ?? ctx.serviceOrigin,
+            transportProtocols: transport?.protocols ?? ctx.transportProtocols,
             __error: message,
             errored: true,
           });
@@ -2276,80 +2526,198 @@ export default class ServiceRegistry {
         inputSchema: {
           type: "object",
           properties: {
-            uuid: {
-              type: "string",
-            },
-            address: {
-              type: "string",
-            },
-            port: {
-              type: "number",
-            },
-            process_pid: {
-              type: "number",
-            },
-            is_primary: {
-              type: "boolean",
-            },
-            service_name: {
-              type: "string",
-            },
-            is_active: {
-              type: "boolean",
-            },
-            is_non_responsive: {
-              type: "boolean",
-            },
-            is_blocked: {
-              type: "boolean",
-            },
-            exposed: {
-              type: "boolean",
+            data: {
+              type: "object",
+              properties: {
+                uuid: {
+                  type: "string",
+                },
+                process_pid: {
+                  type: "number",
+                },
+                is_primary: {
+                  type: "boolean",
+                },
+                service_name: {
+                  type: "string",
+                },
+                is_active: {
+                  type: "boolean",
+                },
+                is_frontend: {
+                  type: "boolean",
+                },
+                is_database: {
+                  type: "boolean",
+                },
+                is_non_responsive: {
+                  type: "boolean",
+                },
+                is_blocked: {
+                  type: "boolean",
+                },
+                health: {
+                  type: "object",
+                },
+              },
+              required: ["uuid", "process_pid", "service_name"],
             },
           },
-          required: [
-            "id",
-            "address",
-            "port",
-            "process_pid",
-            "service_name",
-            "exposed",
-          ],
+          required: ["data"],
         },
-        // validateInputContext: true,
         outputSchema: {
           type: "object",
           properties: {
-            id: {
+            uuid: {
               type: "string",
             },
           },
-          required: ["id"],
+          required: ["uuid"],
         },
-        // validateOutputContext: true,
         retryCount: 5,
         retryDelay: 1000,
       },
     )
-      .doOn("global.meta.rest.network_configured", "meta.rest.browser_detected")
+      .doOn("meta.service_registry.instance_registration_requested")
       .then(
         Cadenza.createMetaTask(
           "Setup service",
           (ctx) => {
-            const { serviceInstance, data, __useSocket, __retryCount } = ctx;
-            this.serviceInstanceId = serviceInstance?.uuid ?? data?.uuid;
+            const {
+              serviceInstance,
+              data,
+              queryData,
+              __useSocket,
+              __retryCount,
+              __isFrontend,
+            } = ctx;
+            const normalizedLocalInstance = normalizeServiceInstanceDescriptor({
+              ...(serviceInstance ?? data ?? queryData?.data ?? {}),
+              transports: ctx.transportData ?? [],
+            });
+
+            if (
+              !normalizedLocalInstance?.uuid ||
+              !normalizedLocalInstance.serviceName
+            ) {
+              return false;
+            }
+
+            this.serviceInstanceId = normalizedLocalInstance.uuid;
             this.instances.set(
-              data?.service_name ?? serviceInstance?.service_name,
-              [{ ...(serviceInstance ?? data) }],
+              normalizedLocalInstance.serviceName,
+              [{ ...normalizedLocalInstance }],
             );
             this.useSocket = __useSocket;
             this.retryCount = __retryCount;
+            this.isFrontend =
+              typeof __isFrontend === "boolean"
+                ? __isFrontend
+                : !!normalizedLocalInstance.isFrontend;
             console.log("SETUP SERVICE", this.serviceInstanceId);
             return true;
           },
           "Sets service instance id after insertion",
-        ).emits("meta.service_registry.instance_inserted"),
+        )
+          .emits("meta.service_registry.instance_inserted")
+          .then(
+            Cadenza.createMetaTask(
+              "Prepare service transport inserts",
+              function* (ctx: AnyObject, emit) {
+                const transportData = Array.isArray(ctx.transportData)
+                  ? ctx.transportData
+                  : [];
+
+                for (const transport of transportData) {
+                  const transportContext = {
+                    ...ctx,
+                    data: {
+                      ...transport,
+                      service_instance_id:
+                        transport.service_instance_id ?? ctx.__serviceInstanceId,
+                    },
+                  };
+                  emit(
+                    "meta.service_registry.transport_registration_requested",
+                    transportContext,
+                  );
+                  yield transportContext;
+                }
+              },
+              "Splits declared service transports into individual insert payloads.",
+            ).attachSignal("meta.service_registry.transport_registration_requested"),
+          ),
       );
+
+    this.insertServiceTransportTask = Cadenza.createCadenzaDBInsertTask(
+      "service_instance_transport",
+      {
+        onConflict: {
+          target: ["service_instance_id", "role", "origin"],
+          action: {
+            do: "update",
+            set: {
+              protocols: "excluded",
+              security_profile: "excluded",
+              auth_strategy: "excluded",
+              deleted: "false",
+            },
+          },
+        },
+      },
+      {
+        inputSchema: {
+          type: "object",
+          properties: {
+            data: {
+              type: "object",
+              properties: {
+                uuid: {
+                  type: "string",
+                },
+                service_instance_id: {
+                  type: "string",
+                },
+                role: {
+                  type: "string",
+                },
+                origin: {
+                  type: "string",
+                },
+                protocols: {
+                  type: "array",
+                  items: {
+                    type: "string",
+                  },
+                },
+                security_profile: {
+                  type: "string",
+                },
+                auth_strategy: {
+                  type: "string",
+                },
+              },
+              required: ["uuid", "service_instance_id", "role", "origin"],
+            },
+          },
+          required: ["data"],
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            uuid: {
+              type: "string",
+            },
+          },
+          required: ["uuid"],
+        },
+        retryCount: 5,
+        retryDelay: 1000,
+      },
+    )
+      .doOn("meta.service_registry.transport_registration_requested")
+      .emits("meta.service_registry.transport_registered")
+      .emitsOnFail("meta.service_registry.transport_registration_failed");
 
     Cadenza.createMetaTask(
       "Handle service creation",
@@ -2358,7 +2726,7 @@ export default class ServiceRegistry {
           ctx.__skipRemoteExecution = true;
         }
 
-        if (isBrowser) {
+        if (isBrowser || ctx.__isFrontend) {
           Cadenza.createMetaTask("Prepare for signal sync", () => {
             return {};
           })
@@ -2396,35 +2764,27 @@ export default class ServiceRegistry {
                         .get(service)!
                         .filter((i) => i.isActive);
                       for (const instance of instances) {
-                        if (instance.clientCreated) continue;
-                        const address = instance.address;
-                        const port = instance.port;
-
-                        const clientCreated = instances?.some(
-                          (i) =>
-                            i.address === address &&
-                            i.port === port &&
-                            i.clientCreated &&
-                            i.isActive,
+                        const transport = this.getRouteableTransport(
+                          instance,
+                          this.useSocket ? "socket" : "rest",
                         );
+                        if (!transport) {
+                          continue;
+                        }
 
-                        if (!clientCreated) {
+                        if (
+                          !this.hasTransportClientCreated(instance, transport.uuid)
+                        ) {
                           emit("meta.service_registry.dependee_registered", {
                             serviceName: service,
                             serviceInstanceId: instance.uuid,
-                            serviceAddress: address,
-                            servicePort: port,
-                            protocol: instance.exposed ? "https" : "http",
+                            serviceTransportId: transport.uuid,
+                            serviceOrigin: transport.origin,
+                            transportProtocols: transport.protocols,
                             communicationTypes: ["signal"],
                           });
+                          this.markTransportClientCreated(instance, transport.uuid);
                         }
-
-                        instance.clientCreated = true;
-                        instances.forEach((i) => {
-                          if (i.address === address && i.port === port) {
-                            i.clientCreated = true;
-                          }
-                        });
                       }
                     }
                     return {};
@@ -2460,5 +2820,6 @@ export default class ServiceRegistry {
     this.numberOfRunningGraphs = 0;
     this.runtimeStatusHeartbeatStarted = false;
     this.lastRuntimeStatusSnapshot = null;
+    this.isFrontend = false;
   }
 }

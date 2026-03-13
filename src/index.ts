@@ -43,13 +43,23 @@ import GraphMetadataController from "./graph/controllers/GraphMetadataController
 import DatabaseTask from "./graph/definition/DatabaseTask";
 import DeputyTask from "./graph/definition/DeputyTask";
 import SignalTransmissionTask from "./graph/definition/SignalTransmissionTask";
-import RestController from "./network/RestController";
+import RestController from "@service-rest-controller";
 import SocketController from "./network/SocketController";
 import ServiceRegistry, {
   DeputyDescriptor,
-  ServiceInstanceDescriptor,
 } from "./registry/ServiceRegistry";
 import SignalController from "./signals/SignalController";
+import DatabaseController from "@service-database-controller";
+import {
+  BootstrapOptions,
+  HydrationOptions,
+  ResolvedBootstrapEndpoint,
+} from "./utils/bootstrap";
+import {
+  createSSRInquiryBridge,
+  SSRInquiryBridge,
+  SSRInquiryBridgeOptions,
+} from "./ssr/createSSRInquiryBridge";
 import {
   AggregateDefinition,
   AggregateFunction,
@@ -69,9 +79,22 @@ import type {
   InquiryResponderDescriptor,
   InquiryResponderStatus,
 } from "./types/inquiry";
+import type { ServiceInstanceDescriptor } from "./types/serviceRegistry";
+import type {
+  ServiceTransportConfig,
+  ServiceTransportDescriptor,
+  ServiceTransportProtocol,
+  ServiceTransportRole,
+  ServiceTransportSecurityProfile,
+} from "./types/transport";
 
 export default CadenzaService;
 export type {
+  BootstrapOptions,
+  HydrationOptions,
+  ResolvedBootstrapEndpoint,
+  SSRInquiryBridge,
+  SSRInquiryBridgeOptions,
   ActorDefinition,
   ActorSpec,
   ActorStateDefinition,
@@ -94,6 +117,11 @@ export type {
   IdempotencyPolicy,
   SessionPolicy,
   ServiceInstanceDescriptor,
+  ServiceTransportConfig,
+  ServiceTransportDescriptor,
+  ServiceTransportProtocol,
+  ServiceTransportRole,
+  ServiceTransportSecurityProfile,
   DeputyDescriptor,
   DbOperationType,
   QueryMode,
@@ -124,12 +152,14 @@ export {
   Actor,
   GraphMetadataController,
   DeputyTask,
+  DatabaseController,
   DatabaseTask,
   SignalTransmissionTask,
   RestController,
   SocketController,
   ServiceRegistry,
   SignalController,
+  createSSRInquiryBridge,
   Task,
   DebounceTask,
   EphemeralTask,
