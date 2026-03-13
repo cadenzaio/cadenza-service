@@ -1,3 +1,10 @@
+## [2.17.1](https://github.com/cadenzaio/cadenza-service/compare/v2.17.0...v2.17.1) (2026-03-13)
+
+
+### Bug Fixes
+
+* **database:** quote generated sql defaults ([1aebca6](https://github.com/cadenzaio/cadenza-service/commit/1aebca6099930eff2e5dc10643997dcdf9fc58c4))
+
 # [2.17.0](https://github.com/cadenzaio/cadenza-service/compare/v2.16.0...v2.17.0) (2026-03-13)
 
 
