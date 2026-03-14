@@ -1,3 +1,10 @@
+## [2.17.14](https://github.com/cadenzaio/cadenza-service/compare/v2.17.13...v2.17.14) (2026-03-14)
+
+
+### Bug Fixes
+
+* **transport:** normalize direct browser delegation ([3280085](https://github.com/cadenzaio/cadenza-service/commit/328008540bb32185360c2094e0e66867c8211c3a))
+
 ## [2.17.13](https://github.com/cadenzaio/cadenza-service/compare/v2.17.12...v2.17.13) (2026-03-14)
 
 
