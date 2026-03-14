@@ -70,6 +70,20 @@ function normalizeArrayResponse(
   return [];
 }
 
+function buildQueryResponseKeys(tableName: string): string[] {
+  const camelCased = tableName.replace(/_([a-z])/g, (_match, char) =>
+    char.toUpperCase(),
+  );
+
+  return [
+    `${tableName}Rows`,
+    `${tableName}s`,
+    tableName,
+    `${camelCased}s`,
+    camelCased,
+  ];
+}
+
 function normalizeIntentMap(raw: AnyObject): NormalizedIntentMap | null {
   const intentName = String(raw.intentName ?? raw.intent_name ?? "").trim();
   const serviceName = String(raw.serviceName ?? raw.service_name ?? "").trim();
@@ -161,12 +175,7 @@ export function createSSRInquiryBridge(
       { queryData },
       timeoutMs,
     );
-    return normalizeArrayResponse(response, [
-      `${tableName}Rows`,
-      `${tableName}s`,
-      tableName,
-      tableName.replace(/_([a-z])/g, (_match, char) => char.toUpperCase()),
-    ]);
+    return normalizeArrayResponse(response, buildQueryResponseKeys(tableName));
   };
 
   return {
