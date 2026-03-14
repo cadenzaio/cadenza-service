@@ -1,3 +1,10 @@
+## [2.17.12](https://github.com/cadenzaio/cadenza-service/compare/v2.17.11...v2.17.12) (2026-03-14)
+
+
+### Bug Fixes
+
+* **ssr:** read generated query payload arrays ([c56a3f6](https://github.com/cadenzaio/cadenza-service/commit/c56a3f63658a324ad2d95f2a63221019b8f1d920))
+
 ## [2.17.11](https://github.com/cadenzaio/cadenza-service/compare/v2.17.10...v2.17.11) (2026-03-14)
 
 
