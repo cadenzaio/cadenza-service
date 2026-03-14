@@ -1,5 +1,6 @@
 import Cadenza from "../Cadenza";
 import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
+import { ensureDelegationContextMetadata } from "../utils/delegation";
 import type { AnyObject } from "@cadenza.io/core";
 
 type TransportDetailLevel = "summary" | "full";
@@ -385,6 +386,11 @@ export default class RestController {
               return;
             }
 
+            const normalizedDelegateCtx =
+              ensureDelegationContextMetadata(delegateCtx);
+            const deputyExecId =
+              normalizedDelegateCtx.__metadata.__deputyExecId;
+
             fetchDiagnostics.delegationRequests++;
             fetchDiagnostics.updatedAt = Date.now();
 
@@ -397,7 +403,7 @@ export default class RestController {
                     "Content-Type": "application/json",
                   },
                   method: "POST",
-                  body: JSON.stringify(delegateCtx),
+                  body: JSON.stringify(normalizedDelegateCtx),
                 },
                 30_000,
               );
@@ -408,14 +414,11 @@ export default class RestController {
               resultContext = {
                 __error: `Error: ${error}`,
                 errored: true,
-                ...delegateCtx,
-                ...delegateCtx.__metadata,
+                ...normalizedDelegateCtx,
+                ...normalizedDelegateCtx.__metadata,
               };
             } finally {
-              emit(
-                `meta.fetch.delegated:${delegateCtx.__metadata.__deputyExecId}`,
-                resultContext,
-              );
+              emit(`meta.fetch.delegated:${deputyExecId}`, resultContext);
             }
 
             return resultContext;

@@ -11,6 +11,7 @@ import fetch from "node-fetch";
 import { v4 as uuid } from "uuid";
 import { isBrowser } from "../utils/environment";
 import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
+import { ensureDelegationContextMetadata } from "../utils/delegation";
 import type { AnyObject } from "@cadenza.io/core";
 
 type TransportDetailLevel = "summary" | "full";
@@ -475,10 +476,8 @@ export default class RestController {
                 });
 
                 app.post("/delegation", (req: any, res: any) => {
-                  let deputyExecId;
-                  let ctx;
-                  ctx = req.body;
-                  deputyExecId = ctx.__metadata.__deputyExecId;
+                  const ctx = ensureDelegationContextMetadata(req.body);
+                  const deputyExecId = ctx.__metadata.__deputyExecId;
                   const remoteRoutineName = ctx.__remoteRoutineName;
                   const targetNotFoundSignal = `meta.rest.delegation_target_not_found:${deputyExecId}`;
                   let resolved = false;
@@ -953,6 +952,9 @@ export default class RestController {
               return;
             }
 
+            const delegateCtx = ensureDelegationContextMetadata(ctx);
+            const deputyExecId = delegateCtx.__metadata.__deputyExecId;
+
             fetchDiagnostics.delegationRequests++;
             fetchDiagnostics.updatedAt = Date.now();
 
@@ -965,7 +967,7 @@ export default class RestController {
                     "Content-Type": "application/json",
                   },
                   method: "POST",
-                  body: JSON.stringify(ctx),
+                  body: JSON.stringify(delegateCtx),
                 },
                 30_000,
               );
@@ -988,14 +990,11 @@ export default class RestController {
               resultContext = {
                 __error: `Error: ${e}`,
                 errored: true,
-                ...ctx,
-                ...ctx.__metadata,
+                ...delegateCtx,
+                ...delegateCtx.__metadata,
               };
             } finally {
-              emit(
-                `meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`,
-                resultContext,
-              );
+              emit(`meta.fetch.delegated:${deputyExecId}`, resultContext);
             }
 
             return resultContext;

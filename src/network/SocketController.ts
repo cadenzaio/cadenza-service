@@ -5,6 +5,7 @@ import { io, Socket } from "socket.io-client";
 import { isBrowser } from "../utils/environment";
 import { waitForSocketConnection } from "./socketClientUtils";
 import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
+import { ensureDelegationContextMetadata } from "../utils/delegation";
 import { parseTransportOrigin } from "../utils/transport";
 
 const dynamicImport = new Function(
@@ -542,7 +543,8 @@ export default class SocketController {
               });
 
               ws.on("delegation", (ctx: AnyObject, callback: (context: AnyObject) => void) => {
-                const deputyExecId = ctx.__metadata.__deputyExecId;
+                const delegationCtx = ensureDelegationContextMetadata(ctx);
+                const deputyExecId = delegationCtx.__metadata.__deputyExecId;
 
                 Cadenza.createEphemeralMetaTask(
                   "Resolve delegation",
@@ -578,8 +580,8 @@ export default class SocketController {
                   .emitsOnFail(`meta.socket.progress_failed:${deputyExecId}`);
 
                 Cadenza.emit("meta.socket.delegation_requested", {
-                  ...ctx,
-                  __name: ctx.__remoteRoutineName,
+                  ...delegationCtx,
+                  __name: delegationCtx.__remoteRoutineName,
                 });
               });
 
@@ -1295,10 +1297,13 @@ export default class SocketController {
                 return;
               }
 
-              delete delegateCtx.__isSubMeta;
-              delete delegateCtx.__broadcast;
+              const normalizedDelegateCtx =
+                ensureDelegationContextMetadata(delegateCtx);
+              delete normalizedDelegateCtx.__isSubMeta;
+              delete normalizedDelegateCtx.__broadcast;
 
-              const deputyExecId = delegateCtx.__metadata?.__deputyExecId;
+              const deputyExecId =
+                normalizedDelegateCtx.__metadata?.__deputyExecId;
               const requestSentAt = Date.now();
               if (deputyExecId) {
                 runtimeHandle.pendingDelegationIds.add(deputyExecId);
@@ -1309,8 +1314,8 @@ export default class SocketController {
                 const resultContext =
                   ((await runtimeHandle.emitWhenReady?.(
                     "delegation",
-                    delegateCtx,
-                    delegateCtx.__timeout ?? 60_000,
+                    normalizedDelegateCtx,
+                    normalizedDelegateCtx.__timeout ?? 60_000,
                   )) as AnyObject | undefined) ??
                   ({
                     errored: true,

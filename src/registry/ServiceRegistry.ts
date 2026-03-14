@@ -24,6 +24,7 @@ import {
   normalizeServiceTransportDescriptor,
   transportSupportsProtocol,
 } from "../utils/transport";
+import { ensureDelegationContextMetadata } from "../utils/delegation";
 import {
   evaluateDependencyReadiness,
   resolveServiceReadinessState,
@@ -2506,6 +2507,10 @@ export default class ServiceRegistry {
     this.getBalancedInstance = Cadenza.createMetaTask(
       "Get balanced instance",
       (context, emit) => {
+        if (context.__remoteRoutineName !== undefined) {
+          context = ensureDelegationContextMetadata(context);
+        }
+
         const {
           __serviceName,
           __triedInstances,
