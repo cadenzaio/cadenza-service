@@ -11,6 +11,7 @@ import {
 } from "../src/database/DatabaseController";
 import DatabaseController from "../src/database/DatabaseController";
 import type { TableDefinition } from "../src/types/database";
+import type { AnyObject } from "@cadenza.io/core";
 
 describe("DatabaseController schema and intent helpers", () => {
   const table: TableDefinition = {
@@ -285,5 +286,67 @@ describe("DatabaseController schema and intent helpers", () => {
         default: "now()",
       }),
     ).toBe("created TIMESTAMP DEFAULT now()");
+  });
+
+  it("does not treat intent schema fragments as executable sub-operations", async () => {
+    const controller = Object.create(DatabaseController.prototype) as DatabaseController;
+    const resolveNestedData = (
+      controller as unknown as {
+        resolveNestedData: (
+          registration: AnyObject,
+          data: unknown,
+          tableName: string,
+        ) => Promise<unknown>;
+      }
+    ).resolveNestedData.bind(controller);
+
+    const registration = {
+      schema: {
+        tables: {
+          intent_registry: {
+            fields: {
+              name: { type: "varchar", primary: true },
+              input: { type: "jsonb" },
+            },
+          },
+        },
+      },
+    };
+
+    const inputSchema = {
+      type: "object",
+      properties: {
+        metric: {
+          value: {
+            type: "string",
+          },
+          subOperation: {
+            type: "object",
+            properties: {
+              subOperation: {
+                type: "string",
+              },
+              table: {
+                type: "string",
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await expect(
+      resolveNestedData(
+        registration,
+        {
+          name: "query-pg-example-service-metric",
+          input: inputSchema,
+        },
+        "intent_registry",
+      ),
+    ).resolves.toEqual({
+      name: "query-pg-example-service-metric",
+      input: inputSchema,
+    });
   });
 });

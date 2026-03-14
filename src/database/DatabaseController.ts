@@ -234,6 +234,19 @@ export function serializeFieldValueForQuery(
   return JSON.stringify(value);
 }
 
+function isSubOperationPayload(value: unknown): value is SubOperation {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<SubOperation>;
+  return (
+    typeof candidate.subOperation === "string" &&
+    typeof candidate.table === "string" &&
+    candidate.table.trim().length > 0
+  );
+}
+
 function readCustomIntentConfig(
   customIntent: string | { intent: string; description?: string; input?: SchemaDefinition },
 ): { intent: string; description?: string; input?: SchemaDefinition } {
@@ -2201,9 +2214,8 @@ export default class DatabaseController {
 
     const resolved = { ...data };
     for (const [key, value] of Object.entries(data)) {
-      if (typeof value === "object" && value !== null && "subOperation" in value) {
-        const subOperation = value as SubOperation;
-        resolved[key] = await this.executeSubOperation(registration, subOperation);
+      if (isSubOperationPayload(value)) {
+        resolved[key] = await this.executeSubOperation(registration, value);
       } else if (
         typeof value === "string" &&
         ["increment", "decrement", "set"].includes(value)
