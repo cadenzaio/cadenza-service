@@ -29,6 +29,25 @@ describe("bootstrap endpoint resolution", () => {
     );
   });
 
+  it("preserves explicitly declared default ports in bootstrap urls", () => {
+    const resolved = resolveBootstrapEndpoint({
+      runtime: "browser",
+      bootstrap: {
+        url: "http://cadenza-db.localhost:80",
+      },
+    });
+
+    expect(resolved).toEqual(
+      expect.objectContaining({
+        url: "http://cadenza-db.localhost:80",
+        protocol: "http",
+        address: "cadenza-db.localhost",
+        port: 80,
+        exposed: false,
+      }),
+    );
+  });
+
   it("resolves a bare CADENZA_DB_ADDRESS together with CADENZA_DB_PORT", () => {
     process.env.CADENZA_DB_ADDRESS = "localhost";
     process.env.CADENZA_DB_PORT = "5000";

@@ -67,6 +67,18 @@ function buildBootstrapUrl(
   return `${protocol}://${address}:${port}`;
 }
 
+function readExplicitPortFromOrigin(raw: string): number | undefined {
+  const match = raw.match(
+    /^[a-z]+:\/\/(?:\[[^\]]+\]|[^\/?#:]+):(\d+)(?:\/)?$/i,
+  );
+
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  return readConfiguredPort(match[1]);
+}
+
 function resolveInjectedBootstrapUrl(injectedGlobalKey: string): string | undefined {
   if (typeof globalThis === "undefined") {
     return undefined;
@@ -194,9 +206,8 @@ export function resolveBootstrapEndpoint(
       );
     }
 
-    const port = parsed.port
-      ? readConfiguredPort(parsed.port)
-      : fallbackPort;
+    const explicitPort = readExplicitPortFromOrigin(raw);
+    const port = explicitPort ?? (parsed.port ? readConfiguredPort(parsed.port) : fallbackPort);
     if (!port) {
       throw new Error(
         "Bootstrap URL must include a port or CADENZA_DB_PORT must be provided.",
