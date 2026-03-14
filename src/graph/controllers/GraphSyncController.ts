@@ -165,7 +165,7 @@ export default class GraphSyncController {
             },
             { concurrency: 30 },
           )
-        : Cadenza.get("dbInsertIntentRegistry");
+        : Cadenza.getLocalCadenzaDBInsertTask("intent_registry");
 
     this.splitRoutinesTask = Cadenza.createMetaTask(
       "Split routines for registration",
@@ -208,7 +208,7 @@ export default class GraphSyncController {
             },
             { concurrency: 30 },
           )
-        : Cadenza.get("dbInsertRoutine")
+        : Cadenza.getLocalCadenzaDBInsertTask("routine")
       )?.then(
         Cadenza.createMetaTask("Register routine", (ctx) => {
           if (!ctx.__syncing) {
@@ -290,7 +290,7 @@ export default class GraphSyncController {
             },
             { concurrency: 30 },
           )
-        : Cadenza.get("dbInsertTaskToRoutineMap")
+        : Cadenza.getLocalCadenzaDBInsertTask("task_to_routine_map")
       )?.then(
         Cadenza.createMetaTask("Register routine task", (ctx) => {
           if (!ctx.__syncing) {
@@ -353,7 +353,7 @@ export default class GraphSyncController {
             },
             { concurrency: 30 },
           )
-        : Cadenza.get("dbInsertSignalRegistry")
+        : Cadenza.getLocalCadenzaDBInsertTask("signal_registry")
       )?.then(
         Cadenza.createMetaTask("Process signal registration", (ctx) => {
           if (!ctx.__syncing) {
@@ -443,7 +443,7 @@ export default class GraphSyncController {
             },
             { concurrency: 30 },
           )
-        : Cadenza.get("dbInsertTask")
+        : Cadenza.getLocalCadenzaDBInsertTask("task")
       )?.then(
         Cadenza.createMetaTask("Record registration", (ctx) => {
           if (!ctx.__syncing) {
@@ -513,7 +513,7 @@ export default class GraphSyncController {
             },
             { concurrency: 30 },
           )
-        : Cadenza.get("dbInsertActor")
+        : Cadenza.getLocalCadenzaDBInsertTask("actor")
       )?.then(
         Cadenza.createMetaTask("Record actor registration", (ctx) => {
           if (!ctx.__syncing) {
@@ -591,7 +591,7 @@ export default class GraphSyncController {
             },
             { concurrency: 30 },
           )
-        : Cadenza.get("dbInsertActorTaskMap")
+        : Cadenza.getLocalCadenzaDBInsertTask("actor_task_map")
       )?.then(
         Cadenza.createMetaTask("Record actor task map registration", (ctx) => {
           if (!ctx.__syncing) {
@@ -669,7 +669,7 @@ export default class GraphSyncController {
             },
             { concurrency: 30 },
           )
-        : Cadenza.get("dbInsertSignalToTaskMap")
+        : Cadenza.getLocalCadenzaDBInsertTask("signal_to_task_map")
       )?.then(registerSignalTask),
     );
 
@@ -846,7 +846,7 @@ export default class GraphSyncController {
                   },
                   { concurrency: 30 },
                 )
-              : Cadenza.get("dbInsertIntentToTaskMap")
+              : Cadenza.getLocalCadenzaDBInsertTask("intent_to_task_map")
             )?.then(registerIntentTask),
           ),
         ),
@@ -912,7 +912,7 @@ export default class GraphSyncController {
             },
             { concurrency: 30 },
           )
-        : Cadenza.get("dbInsertDirectionalTaskGraphMap")
+        : Cadenza.getLocalCadenzaDBInsertTask("directional_task_graph_map")
       )?.then(
         Cadenza.createMetaTask("Record task map registration", (ctx) => {
           if (!ctx.__syncing) {
@@ -979,7 +979,7 @@ export default class GraphSyncController {
             },
             { concurrency: 30 },
           )
-        : Cadenza.get("dbInsertDirectionalTaskGraphMap")
+        : Cadenza.getLocalCadenzaDBInsertTask("directional_task_graph_map")
       )?.then(
         Cadenza.createMetaTask(
           "Record deputy relationship registration",

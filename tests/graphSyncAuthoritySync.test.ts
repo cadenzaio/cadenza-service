@@ -189,4 +189,50 @@ describe("graph sync authority rows", () => {
     expect(insertSequence[0]).toBe("intent_registry");
     expect(insertSequence).toContain("intent_to_task_map");
   });
+
+  it("uses exact local CadenzaDB task names when legacy dbInsert aliases are absent", async () => {
+    const insertSequence: string[] = [];
+
+    Cadenza.createMetaTask("Insert intent_registry", (ctx) => {
+      if (ctx.data?.name === "orders-local-lookup") {
+        insertSequence.push("intent_registry");
+      }
+      return ctx;
+    });
+    Cadenza.createMetaTask("Insert intent_to_task_map", (ctx) => {
+      if (ctx.data?.intentName === "orders-local-lookup") {
+        insertSequence.push("intent_to_task_map");
+      }
+      return ctx;
+    });
+
+    const lookupTask = Cadenza.createTask("Lookup local orders", () => {
+      return {
+        orders: [],
+      };
+    }).respondsTo("orders-local-lookup");
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.splitIntentsTask!, {
+      __syncing: true,
+      intents: Array.from(Cadenza.inquiryBroker.intents.values()),
+    });
+    Cadenza.run(GraphSyncController.instance.registerIntentToTaskMapTask!, {
+      __syncing: true,
+      task: lookupTask,
+    });
+
+    await waitForCondition(
+      () =>
+        insertSequence.includes("intent_registry") &&
+        insertSequence.includes("intent_to_task_map"),
+      1_500,
+    );
+
+    expect(insertSequence[0]).toBe("intent_registry");
+    expect(insertSequence).toContain("intent_to_task_map");
+  });
 });

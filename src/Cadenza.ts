@@ -32,7 +32,7 @@ import { DbOperationPayload, DbOperationType } from "./types/queryData";
 import GraphMetadataController from "./graph/controllers/GraphMetadataController";
 import { registerActorSessionPersistenceTasks } from "./graph/controllers/registerActorSessionPersistence";
 import { DatabaseSchemaDefinition } from "./types/database";
-import { snakeCase } from "lodash-es";
+import { camelCase, snakeCase } from "lodash-es";
 import DatabaseController from "@service-database-controller";
 import { v4 as uuid } from "uuid";
 import GraphSyncController from "./graph/controllers/GraphSyncController";
@@ -117,6 +117,26 @@ export default class CadenzaService {
   protected static warnedInvalidMetaIntentResponderKeys: Set<string> = new Set();
   protected static hydratedInquiryResults: Map<string, AnyObject> = new Map();
   protected static frontendSyncScheduled = false;
+
+  private static buildLegacyLocalCadenzaDBTaskName(
+    tableName: string,
+    operation: DbOperationType,
+  ): string {
+    const operationPrefix =
+      operation.charAt(0).toUpperCase() + operation.slice(1);
+    const helperSuffix = camelCase(String(tableName ?? "").trim());
+
+    return `db${operationPrefix}${helperSuffix.charAt(0).toUpperCase() + helperSuffix.slice(1)}`;
+  }
+
+  private static buildGeneratedLocalCadenzaDBTaskName(
+    tableName: string,
+    operation: DbOperationType,
+  ): string {
+    const operationPrefix =
+      operation.charAt(0).toUpperCase() + operation.slice(1);
+    return `${operationPrefix} ${String(tableName ?? "").trim()}`;
+  }
 
   /**
    * Initializes the application by setting up necessary components and configurations.
@@ -651,6 +671,34 @@ export default class CadenzaService {
 
   public static get(taskName: string): Task | undefined {
     return Cadenza.get(taskName);
+  }
+
+  public static getLocalCadenzaDBTask(
+    tableName: string,
+    operation: DbOperationType,
+  ): Task | undefined {
+    const generatedTaskName = this.buildGeneratedLocalCadenzaDBTaskName(
+      tableName,
+      operation,
+    );
+    const legacyTaskName = this.buildLegacyLocalCadenzaDBTaskName(
+      tableName,
+      operation,
+    );
+
+    return Cadenza.get(generatedTaskName) ?? Cadenza.get(legacyTaskName);
+  }
+
+  public static getLocalCadenzaDBInsertTask(
+    tableName: string,
+  ): Task | undefined {
+    return this.getLocalCadenzaDBTask(tableName, "insert");
+  }
+
+  public static getLocalCadenzaDBQueryTask(
+    tableName: string,
+  ): Task | undefined {
+    return this.getLocalCadenzaDBTask(tableName, "query");
   }
 
   public static getActor<

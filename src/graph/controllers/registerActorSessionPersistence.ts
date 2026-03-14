@@ -7,6 +7,7 @@ export function registerActorSessionPersistenceTasks(): void {
   }
 
   const actorSessionStateInsertTask =
+    Cadenza.getLocalCadenzaDBInsertTask("actor_session_state") ??
     Cadenza.get("dbInsertActorSessionState") ??
     Cadenza.get("Insert actor_session_state in CadenzaDB") ??
     Cadenza.createCadenzaDBInsertTask(
