@@ -302,6 +302,53 @@ export default class ServiceRegistry {
     return `${map.intentName}|${map.serviceName}|${map.taskName}|${map.taskVersion ?? 1}`;
   }
 
+  private readArrayPayload(
+    ctx: AnyObject,
+    keys: string[],
+  ): Array<Record<string, unknown>> {
+    for (const key of keys) {
+      const value = (ctx as any)?.[key];
+      if (Array.isArray(value)) {
+        return value as Array<Record<string, unknown>>;
+      }
+    }
+
+    if (Array.isArray((ctx as any)?.rows)) {
+      return (ctx as any).rows as Array<Record<string, unknown>>;
+    }
+
+    if (Array.isArray((ctx as any)?.data)) {
+      return (ctx as any).data as Array<Record<string, unknown>>;
+    }
+
+    return [];
+  }
+
+  private normalizeSignalMaps(ctx: AnyObject): Array<{
+    signalName: string;
+    serviceName: string;
+    isGlobal: boolean;
+    deleted?: boolean;
+  }> {
+    return this.readArrayPayload(ctx, [
+      "signalToTaskMaps",
+      "signal_to_task_maps",
+      "signalToTaskMap",
+      "signal_to_task_map",
+    ])
+      .map((map) => ({
+        signalName: String(
+          map.signalName ?? map.signal_name ?? "",
+        ).trim(),
+        serviceName: String(
+          map.serviceName ?? map.service_name ?? "",
+        ).trim(),
+        isGlobal: Boolean(map.isGlobal ?? map.is_global ?? false),
+        deleted: Boolean(map.deleted),
+      }))
+      .filter((map) => map.signalName && map.serviceName);
+  }
+
   private normalizeIntentMaps(ctx: AnyObject): Array<{
     intentName: string;
     serviceName: string;
@@ -309,8 +356,15 @@ export default class ServiceRegistry {
     taskVersion: number;
     deleted?: boolean;
   }> {
-    if (Array.isArray((ctx as any).intentToTaskMaps)) {
-      return (ctx as any).intentToTaskMaps
+    const arrayPayload = this.readArrayPayload(ctx, [
+      "intentToTaskMaps",
+      "intent_to_task_maps",
+      "intentToTaskMap",
+      "intent_to_task_map",
+    ]);
+
+    if (arrayPayload.length > 0) {
+      return arrayPayload
         .map((m: any) => ({
           intentName: m.intentName ?? m.intent_name,
           serviceName: m.serviceName ?? m.service_name,
@@ -323,6 +377,7 @@ export default class ServiceRegistry {
 
     const single =
       (ctx as any).intentToTaskMap ??
+      (ctx as any).intent_to_task_map ??
       (ctx as any).data ??
       ((ctx as any).intentName ? ctx : undefined);
 
@@ -340,6 +395,62 @@ export default class ServiceRegistry {
       return [];
 
     return [normalized];
+  }
+
+  private normalizeServiceInstancesFromSync(
+    ctx: AnyObject,
+  ): ServiceInstanceDescriptor[] {
+    const rawTransports = this.readArrayPayload(ctx, [
+      "serviceInstanceTransports",
+      "service_instance_transports",
+      "serviceInstanceTransport",
+      "service_instance_transport",
+    ])
+      .map((transport) => normalizeServiceTransportDescriptor(transport))
+      .filter(
+        (transport): transport is ServiceTransportDescriptor =>
+          !!transport && !transport.deleted,
+      );
+
+    const transportsByInstance = new Map<string, ServiceTransportDescriptor[]>();
+    for (const transport of rawTransports) {
+      if (!transportsByInstance.has(transport.serviceInstanceId)) {
+        transportsByInstance.set(transport.serviceInstanceId, []);
+      }
+
+      transportsByInstance.get(transport.serviceInstanceId)!.push(transport);
+    }
+
+    return this.readArrayPayload(ctx, [
+      "serviceInstances",
+      "service_instances",
+      "serviceInstance",
+      "service_instance",
+    ])
+      .map((instance: AnyObject) =>
+        normalizeServiceInstanceDescriptor({
+          ...instance,
+          transports:
+            Array.isArray((instance as any)?.transports) &&
+            (instance as any).transports.length > 0
+              ? (instance as any).transports
+              : transportsByInstance.get(
+                  String(
+                    (instance as any)?.uuid ??
+                      (instance as any)?.serviceInstanceId ??
+                      (instance as any)?.service_instance_id ??
+                      "",
+                  ).trim(),
+                ) ?? [],
+        }),
+      )
+      .filter(
+        (instance: ServiceInstanceDescriptor | null): instance is ServiceInstanceDescriptor =>
+          !!instance &&
+          !!instance.isActive &&
+          !instance.isNonResponsive &&
+          !instance.isBlocked,
+      );
   }
 
   private registerRemoteIntentDeputy(map: {
@@ -2087,8 +2198,7 @@ export default class ServiceRegistry {
     this.handleGlobalSignalRegistrationTask = Cadenza.createMetaTask(
       "Handle global Signal Registration",
       (ctx) => {
-        const { signalToTaskMaps } = ctx;
-        const sortedSignalToTaskMap = signalToTaskMaps.sort(
+        const sortedSignalToTaskMap = this.normalizeSignalMaps(ctx).sort(
           (a: any, b: any) => {
             if (a.deleted && !b.deleted) return -1;
             if (!a.deleted && b.deleted) return 1;
@@ -2382,33 +2492,17 @@ export default class ServiceRegistry {
           ctx.inquiryOptions ?? ctx.__inquiryOptions ?? {},
         );
 
-        const signalToTaskMaps = (inquiryResult.signalToTaskMaps ?? [])
-          .filter((m: any) => !!m.isGlobal)
-          .map((m: any) => ({
-            signalName: m.signalName,
-            serviceName: m.serviceName,
-            deleted: !!m.deleted,
-          }));
+        const signalToTaskMaps = this.normalizeSignalMaps(
+          inquiryResult as AnyObject,
+        ).filter((m) => !!m.isGlobal);
 
-        const intentToTaskMaps = (inquiryResult.intentToTaskMaps ?? []).map(
-          (m: any) => ({
-            intentName: m.intentName,
-            taskName: m.taskName,
-            taskVersion: m.taskVersion ?? 1,
-            serviceName: m.serviceName,
-            deleted: !!m.deleted,
-          }),
+        const intentToTaskMaps = this.normalizeIntentMaps(
+          inquiryResult as AnyObject,
         );
 
-        const serviceInstances = (inquiryResult.serviceInstances ?? [])
-        .map((instance: AnyObject) => normalizeServiceInstanceDescriptor(instance))
-        .filter(
-          (instance: ServiceInstanceDescriptor | null): instance is ServiceInstanceDescriptor =>
-            !!instance &&
-            !!instance.isActive &&
-            !instance.isNonResponsive &&
-              !instance.isBlocked,
-          );
+        const serviceInstances = this.normalizeServiceInstancesFromSync(
+          inquiryResult as AnyObject,
+        );
 
         return {
           ...ctx,

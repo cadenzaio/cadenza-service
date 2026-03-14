@@ -227,6 +227,128 @@ describe("frontend runtime mode", () => {
     );
   });
 
+  it("normalizes mixed full-sync payloads for remote intents and signals", async () => {
+    Cadenza.createCadenzaService("BrowserApp", "Frontend app", {
+      isFrontend: true,
+      useSocket: true,
+      cadenzaDB: {
+        connect: false,
+      },
+      customServiceId: "browser-app-3b",
+    });
+
+    await waitForCondition(
+      () => ServiceRegistry.instance.serviceInstanceId === "browser-app-3b",
+    );
+
+    const originalInquire = Cadenza.inquire.bind(Cadenza);
+    vi.spyOn(Cadenza, "inquire").mockImplementation(async (inquiry, ctx, options) => {
+      if (inquiry === "meta-service-registry-full-sync") {
+        return {
+          signal_to_task_maps: [
+            {
+              signal_name: "global.orders.updated",
+              service_name: "OrdersService",
+              is_global: true,
+              deleted: false,
+            },
+          ],
+          intent_to_task_maps: [
+            {
+              intent_name: "orders-lookup",
+              service_name: "OrdersService",
+              task_name: "LookupOrders",
+              task_version: 1,
+              deleted: false,
+            },
+          ],
+          service_instances: [
+            {
+              uuid: "orders-1b",
+              service_name: "OrdersService",
+              is_active: true,
+              is_non_responsive: false,
+              is_blocked: false,
+              is_frontend: false,
+              health: {},
+            },
+          ],
+          service_instance_transports: [
+            {
+              uuid: "orders-public-1b",
+              service_instance_id: "orders-1b",
+              role: "public",
+              origin: "http://orders.example:7000",
+              protocols: ["rest", "socket"],
+              deleted: false,
+            },
+          ],
+        };
+      }
+
+      return originalInquire(inquiry, ctx ?? {}, options ?? {});
+    });
+
+    const transmissions: AnyObject[] = [];
+
+    Cadenza.createMetaTask("Fake full sync fetch inquiry transport", (ctx, emit) => {
+      emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+        orders: [{ id: "order-1b" }],
+      });
+      return true;
+    }).doOn("meta.service_registry.selected_instance_for_fetch:orders-public-1b");
+
+    Cadenza.createMetaTask("Track mixed-shape socket signal transmission", (ctx, emit) => {
+      transmissions.push(ctx);
+      emit(`meta.socket_client.transmitted:${ctx.__routineExecId}`, {
+        __status: "success",
+      });
+      return true;
+    }).doOn("meta.service_registry.selected_instance_for_socket:orders-public-1b");
+
+    Cadenza.signalBroker.registerEmittedSignal("global.orders.updated");
+    Cadenza.createTask("Emit browser orders signal", (_ctx, emit) => {
+      emit("global.orders.updated", {
+        orderId: "order-1b",
+      });
+      return true;
+    }).doOn("browser.orders.updated");
+
+    Cadenza.emit("meta.sync_requested", {});
+
+    await waitForCondition(() => {
+      const observer =
+        Cadenza.inquiryBroker.inquiryObservers.get("orders-lookup");
+      return Boolean(observer && observer.tasks.size === 1);
+    });
+
+    const ordersInstance = (ServiceRegistry.instance as any).instances.get(
+      "OrdersService",
+    )?.[0];
+
+    expect(ordersInstance).toEqual(
+      expect.objectContaining({
+        uuid: "orders-1b",
+        serviceName: "OrdersService",
+      }),
+    );
+    expect(ordersInstance?.transports).toEqual([
+      expect.objectContaining({
+        uuid: "orders-public-1b",
+        role: "public",
+      }),
+    ]);
+
+    Cadenza.emit("browser.orders.updated", {});
+
+    await waitForCondition(() => transmissions.length === 1);
+    expect(transmissions[0]).toEqual(
+      expect.objectContaining({
+        __signalName: "global.orders.updated",
+      }),
+    );
+  });
+
   it("transmits remote signals in frontend mode through socket-selected instances", async () => {
     const transmissions: AnyObject[] = [];
     const fetchSelections: AnyObject[] = [];
