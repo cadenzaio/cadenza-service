@@ -1,3 +1,10 @@
+## [2.17.8](https://github.com/cadenzaio/cadenza-service/compare/v2.17.7...v2.17.8) (2026-03-14)
+
+
+### Bug Fixes
+
+* **bootstrap:** preserve explicit default ports ([68300b8](https://github.com/cadenzaio/cadenza-service/commit/68300b8ed4a1789b36bf4039cd91874622d70896))
+
 ## [2.17.7](https://github.com/cadenzaio/cadenza-service/compare/v2.17.6...v2.17.7) (2026-03-14)
 
 
