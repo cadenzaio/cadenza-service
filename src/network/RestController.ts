@@ -8,6 +8,7 @@ import http from "node:http";
 import fs from "node:fs";
 import https from "node:https";
 import fetch from "node-fetch";
+import { v4 as uuid } from "uuid";
 import { isBrowser } from "../utils/environment";
 import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
 import type { AnyObject } from "@cadenza.io/core";
@@ -752,7 +753,7 @@ export default class RestController {
                       const internalOrigin = httpOrigin ?? httpsOrigin;
                       if (internalOrigin) {
                         transportData.unshift({
-                          uuid: `${ctx.__serviceInstanceId}-internal-auto`,
+                          uuid: uuid(),
                           service_instance_id: ctx.__serviceInstanceId,
                           role: "internal",
                           origin: internalOrigin,

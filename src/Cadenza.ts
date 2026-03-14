@@ -198,9 +198,9 @@ export default class CadenzaService {
         ): transport is ServiceTransportConfig =>
           !!transport,
       )
-      .map((transport, index) => ({
+      .map((transport) => ({
         ...transport,
-        uuid: `${serviceId}-transport-${index + 1}`,
+        uuid: uuid(),
       }));
   }
 
