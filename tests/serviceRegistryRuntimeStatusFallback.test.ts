@@ -470,4 +470,91 @@ describe("service registry runtime status fallback", () => {
       ),
     ).toBe(true);
   });
+
+  it("adopts the handshake-reported instance id for bootstrap placeholders", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.serviceInstanceId = "orders-1";
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [],
+      },
+    ]);
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "cadenza-db",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        isBootstrapPlaceholder: true,
+        transports: [
+          {
+            uuid: "cadenza-db-internal-bootstrap",
+            serviceInstanceId: "cadenza-db",
+            role: "internal",
+            origin: "http://bootstrap.example:5000",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+          },
+        ],
+      },
+    ]);
+
+    (registry as { registerDependee: Function }).registerDependee(
+      "CadenzaDB",
+      "cadenza-db",
+      {
+        requiredForReadiness: true,
+      },
+    );
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "0541fea7-23e6-4ebf-aab7-06cbe0a8d52f",
+      serviceTransportId: "cadenza-db-internal-bootstrap",
+      serviceOrigin: "http://bootstrap.example:5000",
+      transportProtocols: ["rest", "socket"],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const instances = registry.instances.get("CadenzaDB");
+    expect(instances).toEqual([
+      expect.objectContaining({
+        uuid: "0541fea7-23e6-4ebf-aab7-06cbe0a8d52f",
+        isBootstrapPlaceholder: false,
+        transports: [
+          expect.objectContaining({
+            uuid: "cadenza-db-internal-bootstrap",
+            serviceInstanceId: "0541fea7-23e6-4ebf-aab7-06cbe0a8d52f",
+          }),
+        ],
+      }),
+    ]);
+    expect(registry.dependeeByInstance.has("cadenza-db")).toBe(false);
+    expect(
+      registry.dependeeByInstance.get("0541fea7-23e6-4ebf-aab7-06cbe0a8d52f"),
+    ).toBe("CadenzaDB");
+  });
 });

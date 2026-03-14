@@ -808,6 +808,91 @@ export default class ServiceRegistry {
     );
   }
 
+  private adoptBootstrapPlaceholderInstanceId(
+    serviceName: string,
+    placeholderInstanceId: string,
+    resolvedInstanceId: string,
+  ): ServiceInstanceDescriptor | undefined {
+    if (!serviceName || !placeholderInstanceId || !resolvedInstanceId) {
+      return undefined;
+    }
+
+    const instances = this.instances.get(serviceName);
+    if (!instances?.length) {
+      return undefined;
+    }
+
+    const resolvedInstance = instances.find(
+      (instance) => instance.uuid === resolvedInstanceId,
+    );
+    if (resolvedInstance) {
+      return resolvedInstance;
+    }
+
+    const placeholder = instances.find(
+      (instance) =>
+        instance.uuid === placeholderInstanceId && instance.isBootstrapPlaceholder,
+    );
+    if (!placeholder) {
+      return undefined;
+    }
+
+    const wasDependee = this.dependeeByInstance.has(placeholderInstanceId);
+    const dependeeServiceName =
+      this.dependeeByInstance.get(placeholderInstanceId) ?? serviceName;
+    const requiredForReadiness = this.readinessDependeeByInstance.has(
+      placeholderInstanceId,
+    );
+    const lastHeartbeatAt =
+      this.lastHeartbeatAtByInstance.get(placeholderInstanceId) ?? Date.now();
+    const missedHeartbeats =
+      this.missedHeartbeatsByInstance.get(placeholderInstanceId) ?? 0;
+    const inFlight = this.runtimeStatusFallbackInFlightByInstance.has(
+      placeholderInstanceId,
+    );
+
+    this.dependeeByInstance.delete(placeholderInstanceId);
+    this.readinessDependeeByInstance.delete(placeholderInstanceId);
+    this.lastHeartbeatAtByInstance.delete(placeholderInstanceId);
+    this.missedHeartbeatsByInstance.delete(placeholderInstanceId);
+    this.runtimeStatusFallbackInFlightByInstance.delete(placeholderInstanceId);
+
+    placeholder.uuid = resolvedInstanceId;
+    placeholder.isBootstrapPlaceholder = false;
+    placeholder.transports = placeholder.transports.map((transport) => ({
+      ...transport,
+      serviceInstanceId: resolvedInstanceId,
+    }));
+
+    if (wasDependee) {
+      this.dependeeByInstance.set(resolvedInstanceId, dependeeServiceName);
+      if (this.dependeesByService.has(dependeeServiceName)) {
+        this.dependeesByService.get(dependeeServiceName)!.delete(
+          placeholderInstanceId,
+        );
+        this.dependeesByService.get(dependeeServiceName)!.add(resolvedInstanceId);
+      }
+      this.lastHeartbeatAtByInstance.set(resolvedInstanceId, lastHeartbeatAt);
+      this.missedHeartbeatsByInstance.set(resolvedInstanceId, missedHeartbeats);
+    }
+
+    if (requiredForReadiness) {
+      this.readinessDependeeByInstance.set(resolvedInstanceId, serviceName);
+      if (this.readinessDependeesByService.has(serviceName)) {
+        this.readinessDependeesByService.get(serviceName)!.delete(
+          placeholderInstanceId,
+        );
+        this.readinessDependeesByService.get(serviceName)!.add(resolvedInstanceId);
+      }
+    }
+
+    if (inFlight) {
+      this.runtimeStatusFallbackInFlightByInstance.add(resolvedInstanceId);
+    }
+
+    return placeholder;
+  }
+
   private getHeartbeatMisses(serviceInstanceId: string, now = Date.now()): number {
     const observedMisses = this.missedHeartbeatsByInstance.get(serviceInstanceId) ?? 0;
     const lastHeartbeatAt = this.lastHeartbeatAtByInstance.get(serviceInstanceId) ?? 0;
@@ -2156,9 +2241,28 @@ export default class ServiceRegistry {
       (ctx, emit) => {
         const { serviceName, serviceInstanceId } = ctx;
         const serviceInstances = this.instances.get(serviceName);
-        const instance = serviceInstances?.find(
+        let instance = serviceInstances?.find(
           (i) => i.uuid === serviceInstanceId,
         );
+
+        if (!instance && serviceName && serviceInstanceId) {
+          const bootstrapPlaceholder = serviceInstances?.find(
+            (candidate) =>
+              candidate.isBootstrapPlaceholder &&
+              (!ctx.serviceTransportId ||
+                candidate.transports.some(
+                  (transport) => transport.uuid === ctx.serviceTransportId,
+                )),
+          );
+
+          if (bootstrapPlaceholder) {
+            instance = this.adoptBootstrapPlaceholderInstanceId(
+              serviceName,
+              bootstrapPlaceholder.uuid,
+              serviceInstanceId,
+            );
+          }
+        }
 
         if (!instance) {
           return false;
