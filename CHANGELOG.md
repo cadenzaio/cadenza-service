@@ -1,3 +1,10 @@
+## [2.17.9](https://github.com/cadenzaio/cadenza-service/compare/v2.17.8...v2.17.9) (2026-03-14)
+
+
+### Bug Fixes
+
+* **service:** stabilize authority sync metadata ([ecd441d](https://github.com/cadenzaio/cadenza-service/commit/ecd441dbbeae7d441607e887c9a0ff57ef3a6fc2))
+
 ## [2.17.8](https://github.com/cadenzaio/cadenza-service/compare/v2.17.7...v2.17.8) (2026-03-14)
 
 
