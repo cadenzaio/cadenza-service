@@ -1,3 +1,10 @@
+## [2.17.16](https://github.com/cadenzaio/cadenza-service/compare/v2.17.15...v2.17.16) (2026-03-14)
+
+
+### Bug Fixes
+
+* **sync:** restore local cadenzadb self sync ([e3dd0d1](https://github.com/cadenzaio/cadenza-service/commit/e3dd0d183ec0bdb48ec576e53072a1991ba9f334))
+
 ## [2.17.15](https://github.com/cadenzaio/cadenza-service/compare/v2.17.14...v2.17.15) (2026-03-14)
 
 
