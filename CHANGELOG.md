@@ -1,3 +1,10 @@
+## [2.17.4](https://github.com/cadenzaio/cadenza-service/compare/v2.17.3...v2.17.4) (2026-03-14)
+
+
+### Bug Fixes
+
+* **status:** resolve local status checks directly ([3da8480](https://github.com/cadenzaio/cadenza-service/commit/3da8480c6ca7a3101038ac240f595965644cbfc2))
+
 ## [2.17.3](https://github.com/cadenzaio/cadenza-service/compare/v2.17.2...v2.17.3) (2026-03-13)
 
 
