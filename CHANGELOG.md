@@ -1,3 +1,10 @@
+## [2.17.15](https://github.com/cadenzaio/cadenza-service/compare/v2.17.14...v2.17.15) (2026-03-14)
+
+
+### Bug Fixes
+
+* **registry:** normalize full sync payloads ([6271fa3](https://github.com/cadenzaio/cadenza-service/commit/6271fa3d0494ce02a078087f470022984211445f))
+
 ## [2.17.14](https://github.com/cadenzaio/cadenza-service/compare/v2.17.13...v2.17.14) (2026-03-14)
 
 
