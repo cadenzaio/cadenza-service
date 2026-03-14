@@ -225,6 +225,41 @@ describe("PostgresActor and database service separation", () => {
     expect(createServiceSpy).not.toHaveBeenCalled();
   });
 
+  it("routes default database tasks to the created database service", () => {
+    const controller = DatabaseController.instance;
+    const registration = {
+      actorName: "MetricsDBPostgresActor",
+      actorToken: "metrics-db-postgres-actor",
+      actorKey: "metrics_db",
+      databaseName: "metrics_db",
+      ownerServiceName: "MetricsDB",
+      setupSignal: "meta.postgres_actor.setup_requested.metrics-db-postgres-actor",
+      setupDoneSignal: "meta.postgres_actor.setup_done.metrics-db-postgres-actor",
+      setupFailedSignal: "meta.postgres_actor.setup_failed.metrics-db-postgres-actor",
+      actor: {} as any,
+      schema,
+      description: "Metrics DB actor",
+      options: {
+        databaseName: "metrics_db",
+        ownerServiceName: "MetricsDB",
+      },
+      tasksGenerated: false,
+      intentNames: new Set<string>(),
+    };
+
+    vi.spyOn(controller, "createPostgresActor").mockReturnValue(registration as any);
+    vi.spyOn(controller, "requestPostgresActorSetup").mockImplementation(
+      () => registration as any,
+    );
+    vi.spyOn(Cadenza, "createCadenzaService").mockImplementation(() => undefined);
+
+    Cadenza.createDatabaseService("MetricsDB", schema, "Metrics DB service");
+    const defaultInsertTask = Cadenza.createDatabaseInsertTask("telemetry");
+
+    expect((defaultInsertTask as any).serviceName).toBe("MetricsDB");
+    expect(defaultInsertTask.name).toBe("Insert telemetry in MetricsDB");
+  });
+
   it("allows one inquiry intent to fan out across multiple generated table tasks", () => {
     const controller = DatabaseController.instance;
     const syncSchema: DatabaseSchemaDefinition = {

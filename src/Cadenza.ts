@@ -113,6 +113,7 @@ export default class CadenzaService {
   public static serviceRegistry: ServiceRegistry;
   protected static isBootstrapped = false;
   protected static serviceCreated = false;
+  protected static defaultDatabaseServiceName: string | null = null;
   protected static warnedInvalidMetaIntentResponderKeys: Set<string> = new Set();
   protected static hydratedInquiryResults: Map<string, AnyObject> = new Map();
   protected static frontendSyncScheduled = false;
@@ -944,8 +945,12 @@ export default class CadenzaService {
     this.bootstrap();
     this.validateName(tableName);
     this.validateName(operation);
-    const name = `${operation.charAt(0).toUpperCase() + operation.slice(1)} ${tableName} in ${databaseServiceName ?? "default database service"}`;
-    const description = `Executes a ${operation} on table ${tableName} in ${databaseServiceName ?? "default database service"}`;
+    const resolvedDatabaseServiceName =
+      databaseServiceName ?? this.defaultDatabaseServiceName ?? undefined;
+    const targetDatabaseServiceName =
+      resolvedDatabaseServiceName ?? "default database service";
+    const name = `${operation.charAt(0).toUpperCase() + operation.slice(1)} ${tableName} in ${targetDatabaseServiceName}`;
+    const description = `Executes a ${operation} on table ${tableName} in ${targetDatabaseServiceName}`;
     const taskName = `${operation.charAt(0).toUpperCase() + operation.slice(1)} ${tableName}`;
 
     options = {
@@ -971,7 +976,7 @@ export default class CadenzaService {
     return new DatabaseTask(
       name,
       taskName,
-      databaseServiceName,
+      resolvedDatabaseServiceName,
       description,
       queryData,
       options.concurrency,
@@ -1433,6 +1438,7 @@ export default class CadenzaService {
     this.bootstrap();
     this.validateName(name);
     this.validateServiceName(name);
+    this.defaultDatabaseServiceName = name;
 
     const databaseController = DatabaseController.instance;
     const actorOptions = this.normalizePostgresActorOptions(name, {
@@ -2112,6 +2118,7 @@ export default class CadenzaService {
     this.serviceRegistry?.reset();
     this.isBootstrapped = false;
     this.serviceCreated = false;
+    this.defaultDatabaseServiceName = null;
     this.warnedInvalidMetaIntentResponderKeys = new Set();
     this.hydratedInquiryResults = new Map();
     this.frontendSyncScheduled = false;
