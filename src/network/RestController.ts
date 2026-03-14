@@ -598,16 +598,17 @@ export default class RestController {
                 });
 
                 app.get("/status", (req: any, res: any) => {
-                  Cadenza.createEphemeralMetaTask(
-                    "Resolve status check",
-                    (statusCtx) => res.json(statusCtx),
-                    "Resolves a status check request",
-                    { register: false },
-                  ).doAfter(Cadenza.serviceRegistry.getStatusTask);
+                  const statusCheckQuery =
+                    req?.body?.query && typeof req.body.query === "object"
+                      ? req.body.query
+                      : req?.query && typeof req.query === "object"
+                        ? { ...req.query }
+                        : {};
 
-                  Cadenza.emit(
-                    "meta.rest.status_check_requested",
-                    req.body.query,
+                  res.json(
+                    Cadenza.serviceRegistry.resolveLocalStatusCheck(
+                      statusCheckQuery,
+                    ),
                   );
                 });
 

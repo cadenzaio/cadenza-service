@@ -409,6 +409,54 @@ export default class ServiceRegistry {
     return this.getInstance(this.serviceName, this.serviceInstanceId);
   }
 
+  public resolveLocalStatusCheck(ctx: AnyObject = {}) {
+    if (!this.serviceName) {
+      return {
+        __status: "error",
+        __error: "No service name defined",
+        errored: true,
+      };
+    }
+
+    if (!this.serviceInstanceId) {
+      return {
+        __status: "error",
+        __error: "No service instance id defined",
+        errored: true,
+      };
+    }
+
+    const report = this.buildLocalRuntimeStatusReport("full");
+    if (!report) {
+      return {
+        ...ctx,
+        __status: "error",
+        __error: "No local service instance available for status check",
+        errored: true,
+      };
+    }
+
+    return {
+      ...ctx,
+      __status: "ok",
+      __serviceName: report.serviceName,
+      __serviceInstanceId: report.serviceInstanceId,
+      __numberOfRunningGraphs: report.numberOfRunningGraphs,
+      __health: report.health ?? {},
+      __active: report.isActive,
+      reportedAt: report.reportedAt,
+      serviceName: report.serviceName,
+      serviceInstanceId: report.serviceInstanceId,
+      numberOfRunningGraphs: report.numberOfRunningGraphs,
+      health: report.health ?? {},
+      isActive: report.isActive,
+      isNonResponsive: report.isNonResponsive,
+      isBlocked: report.isBlocked,
+      state: report.state,
+      acceptingWork: report.acceptingWork,
+    };
+  }
+
   private resolveTransportProtocolOrder(
     ctx: AnyObject,
   ): ServiceTransportProtocol[] {
@@ -2210,53 +2258,10 @@ export default class ServiceRegistry {
         "meta.service_registry.socket_failed",
       );
 
-    this.getStatusTask = Cadenza.createMetaTask("Get status", (ctx) => {
-      if (!this.serviceName) {
-        return {
-          __status: "error",
-          __error: "No service name defined",
-          errored: true,
-        };
-      }
-
-      if (!this.serviceInstanceId) {
-        return {
-          __status: "error",
-          __error: "No service instance id defined",
-          errored: true,
-        };
-      }
-
-      const report = this.buildLocalRuntimeStatusReport("full");
-      if (!report) {
-        return {
-          ...ctx,
-          __status: "error",
-          __error: "No local service instance available for status check",
-          errored: true,
-        };
-      }
-
-      return {
-        ...ctx,
-        __status: "ok",
-        __serviceName: report.serviceName,
-        __serviceInstanceId: report.serviceInstanceId,
-        __numberOfRunningGraphs: report.numberOfRunningGraphs,
-        __health: report.health ?? {},
-        __active: report.isActive,
-        reportedAt: report.reportedAt,
-        serviceName: report.serviceName,
-        serviceInstanceId: report.serviceInstanceId,
-        numberOfRunningGraphs: report.numberOfRunningGraphs,
-        health: report.health ?? {},
-        isActive: report.isActive,
-        isNonResponsive: report.isNonResponsive,
-        isBlocked: report.isBlocked,
-        state: report.state,
-        acceptingWork: report.acceptingWork,
-      };
-    }).doOn(
+    this.getStatusTask = Cadenza.createMetaTask(
+      "Get status",
+      (ctx) => this.resolveLocalStatusCheck(ctx),
+    ).doOn(
       "meta.socket.status_check_requested",
       "meta.rest.status_check_requested",
     );

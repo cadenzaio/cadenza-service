@@ -107,4 +107,87 @@ describe("RestController delegation resolution", () => {
       "No task or routine registered for delegation target Insert serviceInstance.",
     );
   }, 10_000);
+
+  it("serves status checks without requiring a request body", async () => {
+    (Cadenza.serviceRegistry as any).serviceName = "RestStatusRouteTest";
+    (Cadenza.serviceRegistry as any).serviceInstanceId =
+      "rest-status-route-test";
+
+    const networkConfiguredPromise = new Promise<AnyObject>((resolve) => {
+      Cadenza.createEphemeralMetaTask(
+        "Observe rest network configured for status test",
+        (ctx) => {
+          resolve(ctx);
+          return true;
+        },
+        "Observes REST network configuration during status route tests",
+        { register: false },
+      ).doOn("global.meta.rest.network_configured");
+    });
+
+    Cadenza.emit("meta.service_registry.service_inserted", {
+      __isDatabase: false,
+      __networkMode: "dev",
+      __port: 0,
+      __securityProfile: "low",
+      __serviceInstanceId: "rest-status-route-test",
+      __serviceName: "RestStatusRouteTest",
+    });
+
+    const networkContext = await networkConfiguredPromise;
+    const port = networkContext.httpServer?.address()?.port;
+    (Cadenza.serviceRegistry as any).instances.set("RestStatusRouteTest", [
+      {
+        uuid: "rest-status-route-test",
+        serviceName: "RestStatusRouteTest",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "rest-status-route-test-internal",
+            serviceInstanceId: "rest-status-route-test",
+            role: "internal",
+            origin: `http://localhost:${port}`,
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+          },
+        ],
+      },
+    ]);
+
+    const response = await fetch(`http://localhost:${port}/status`, {
+      method: "GET",
+      signal: AbortSignal.timeout(2_000),
+    });
+
+    const statusContext = await response.json();
+
+    expect(response.ok).toBe(true);
+    expect(statusContext).toEqual(
+      expect.objectContaining({
+        __status: "ok",
+        __serviceName: "RestStatusRouteTest",
+        __serviceInstanceId: "rest-status-route-test",
+        serviceName: "RestStatusRouteTest",
+        serviceInstanceId: "rest-status-route-test",
+        isActive: true,
+        state: "healthy",
+        health: expect.objectContaining({
+          runtimeStatus: expect.objectContaining({
+            state: "healthy",
+            acceptingWork: true,
+          }),
+        }),
+      }),
+    );
+  }, 10_000);
 });

@@ -608,14 +608,7 @@ export default class SocketController {
               ws.on(
                 "status_check",
                 (ctx: AnyObject, callback: (context: AnyObject) => void) => {
-                  Cadenza.createEphemeralMetaTask(
-                    "Resolve status check",
-                    callback,
-                    "Resolves a status check request",
-                    { register: false },
-                  ).doAfter(Cadenza.serviceRegistry.getStatusTask);
-
-                  Cadenza.emit("meta.socket.status_check_requested", ctx);
+                  callback(Cadenza.serviceRegistry.resolveLocalStatusCheck(ctx));
                 },
               );
 
