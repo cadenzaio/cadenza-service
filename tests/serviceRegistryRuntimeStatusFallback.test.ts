@@ -199,4 +199,160 @@ describe("service registry runtime status fallback", () => {
       }),
     );
   });
+
+  it("attaches diagnostics when direct status and inquiry fallback miss the target", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        __status: "ok",
+        serviceName: "WrongService",
+        serviceInstanceId: "wrong-1",
+        numberOfRunningGraphs: 0,
+        health: {},
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        state: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-14T12:32:04.000Z",
+      }),
+    }));
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.serviceInstanceId = "orders-1";
+    registry.useSocket = true;
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [],
+      },
+    ]);
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "cadenza-db",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "cadenza-db-internal-bootstrap",
+            serviceInstanceId: "cadenza-db",
+            role: "internal",
+            origin: "http://bootstrap.example:5000",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+            clientCreated: true,
+          },
+          {
+            uuid: "cadenza-db-transport-1",
+            serviceInstanceId: "cadenza-db",
+            role: "internal",
+            origin: "http://cadenza-db:5000",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+            clientCreated: true,
+          },
+        ],
+      },
+    ]);
+
+    vi.spyOn(Cadenza, "inquire").mockResolvedValue({
+      runtimeStatusReports: [
+        {
+          serviceName: "BillingService",
+          serviceInstanceId: "billing-1",
+          numberOfRunningGraphs: 0,
+          health: {},
+          isActive: true,
+          isNonResponsive: false,
+          isBlocked: false,
+          state: "healthy",
+          acceptingWork: true,
+          reportedAt: "2026-03-14T12:32:04.100Z",
+        },
+      ],
+      __inquiryMeta: {
+        inquiry: "meta-runtime-status",
+        responded: 1,
+        failed: 0,
+        timedOut: 0,
+        pending: 0,
+      },
+    } as any);
+
+    await expect(
+      (
+        registry as {
+          resolveRuntimeStatusFallbackInquiry: (
+            serviceName: string,
+            serviceInstanceId: string,
+          ) => Promise<{
+            report: Record<string, unknown>;
+            inquiryMeta: Record<string, unknown>;
+          }>;
+        }
+      ).resolveRuntimeStatusFallbackInquiry("CadenzaDB", "cadenza-db"),
+    ).rejects.toMatchObject({
+      message: "No runtime status report for CadenzaDB/cadenza-db",
+      runtimeStatusFallback: expect.objectContaining({
+        target: {
+          serviceName: "CadenzaDB",
+          serviceInstanceId: "cadenza-db",
+        },
+        instance: expect.objectContaining({
+          exists: true,
+          isDatabase: true,
+          transports: expect.arrayContaining([
+            expect.objectContaining({
+              uuid: "cadenza-db-transport-1",
+              origin: "http://cadenza-db:5000",
+            }),
+          ]),
+        }),
+        directStatusCheck: expect.objectContaining({
+          attempted: true,
+          outcome: "identity_mismatch",
+          payloadServiceName: "WrongService",
+          payloadServiceInstanceId: "wrong-1",
+        }),
+        inquiry: expect.objectContaining({
+          meta: expect.objectContaining({
+            responded: 1,
+          }),
+          reportTargets: expect.arrayContaining([
+            expect.objectContaining({
+              serviceName: "BillingService",
+              serviceInstanceId: "billing-1",
+            }),
+          ]),
+        }),
+      }),
+    });
+  });
 });

@@ -112,6 +112,66 @@ interface RuntimeStatusReport {
   health?: AnyObject;
 }
 
+interface RuntimeStatusFallbackRestDiagnostic {
+  attempted: boolean;
+  outcome:
+    | "instance_missing"
+    | "fetch_unavailable"
+    | "no_rest_transport"
+    | "http_error"
+    | "invalid_report"
+    | "identity_mismatch"
+    | "fetch_error"
+    | "matched";
+  transport?: {
+    uuid: string;
+    role: ServiceTransportRole;
+    origin: string;
+    protocols: ServiceTransportProtocol[];
+    clientCreated?: boolean;
+  };
+  responseStatus?: number;
+  responseStatusText?: string;
+  payloadServiceName?: string;
+  payloadServiceInstanceId?: string;
+  payloadKeys?: string[];
+  error?: string;
+}
+
+interface RuntimeStatusFallbackFailureDiagnostics {
+  target: {
+    serviceName: string;
+    serviceInstanceId: string;
+  };
+  instance: {
+    exists: boolean;
+    runtimeState?: RuntimeStatusState;
+    acceptingWork?: boolean;
+    reportedAt?: string | null;
+    isDatabase?: boolean;
+    isFrontend?: boolean;
+    transports: Array<{
+      uuid: string;
+      role: ServiceTransportRole;
+      origin: string;
+      protocols: ServiceTransportProtocol[];
+      clientCreated?: boolean;
+    }>;
+  };
+  directStatusCheck: RuntimeStatusFallbackRestDiagnostic;
+  inquiry: {
+    meta: AnyObject;
+    reportTargets: Array<{
+      serviceName?: string;
+      serviceInstanceId?: string;
+      transportId?: string;
+      state?: RuntimeStatusState;
+      acceptingWork?: boolean;
+      reportedAt?: string;
+    }>;
+  };
+}
+
 interface DependencyReadinessDetail {
   serviceName: string;
   serviceInstanceId: string;
@@ -407,6 +467,109 @@ export default class ServiceRegistry {
     }
 
     return this.getInstance(this.serviceName, this.serviceInstanceId);
+  }
+
+  private summarizeTransportForDebug(
+    transport: ServiceTransportDescriptor | undefined,
+  ) {
+    if (!transport) {
+      return undefined;
+    }
+
+    return {
+      uuid: transport.uuid,
+      role: transport.role,
+      origin: transport.origin,
+      protocols: transport.protocols,
+      clientCreated: transport.clientCreated,
+    };
+  }
+
+  private summarizeInstanceForRuntimeStatusFallback(
+    instance: ServiceInstanceDescriptor | undefined,
+  ): RuntimeStatusFallbackFailureDiagnostics["instance"] {
+    return {
+      exists: Boolean(instance),
+      runtimeState: instance?.runtimeState,
+      acceptingWork: instance?.acceptingWork,
+      reportedAt: instance?.reportedAt ?? null,
+      isDatabase: instance?.isDatabase,
+      isFrontend: instance?.isFrontend,
+      transports: (instance?.transports ?? []).map((transport) => ({
+        uuid: transport.uuid,
+        role: transport.role,
+        origin: transport.origin,
+        protocols: transport.protocols,
+        clientCreated: transport.clientCreated,
+      })),
+    };
+  }
+
+  private summarizeRuntimeStatusInquiryReports(inquiryResult: AnyObject) {
+    const reports = Array.isArray(inquiryResult.runtimeStatusReports)
+      ? inquiryResult.runtimeStatusReports
+      : [];
+
+    return reports.map((candidate) => {
+      const normalized = this.normalizeRuntimeStatusReport(candidate);
+      if (normalized) {
+        return {
+          serviceName: normalized.serviceName,
+          serviceInstanceId: normalized.serviceInstanceId,
+          transportId: normalized.transportId,
+          state: normalized.state,
+          acceptingWork: normalized.acceptingWork,
+          reportedAt: normalized.reportedAt,
+        };
+      }
+
+      const raw =
+        candidate && typeof candidate === "object"
+          ? (candidate as Record<string, unknown>)
+          : {};
+      const rawState: RuntimeStatusState | undefined =
+        raw.state === "healthy" ||
+        raw.state === "degraded" ||
+        raw.state === "overloaded" ||
+        raw.state === "unavailable"
+          ? raw.state
+          : undefined;
+
+      return {
+        serviceName:
+          typeof raw.serviceName === "string"
+            ? raw.serviceName
+            : typeof raw.__serviceName === "string"
+              ? raw.__serviceName
+              : undefined,
+        serviceInstanceId:
+          typeof raw.serviceInstanceId === "string"
+            ? raw.serviceInstanceId
+            : typeof raw.__serviceInstanceId === "string"
+              ? raw.__serviceInstanceId
+              : undefined,
+        transportId:
+          typeof raw.transportId === "string"
+            ? raw.transportId
+            : typeof raw.serviceTransportId === "string"
+              ? raw.serviceTransportId
+              : undefined,
+        state: rawState,
+        acceptingWork:
+          typeof raw.acceptingWork === "boolean" ? raw.acceptingWork : undefined,
+        reportedAt:
+          typeof raw.reportedAt === "string" ? raw.reportedAt : undefined,
+      };
+    });
+  }
+
+  private createRuntimeStatusFallbackError(
+    message: string,
+    diagnostics: RuntimeStatusFallbackFailureDiagnostics,
+  ): Error & { runtimeStatusFallback: RuntimeStatusFallbackFailureDiagnostics } {
+    return Object.assign(new Error(message), {
+      runtimeStatusFallback: diagnostics,
+    });
   }
 
   public resolveLocalStatusCheck(ctx: AnyObject = {}) {
@@ -893,35 +1056,53 @@ export default class ServiceRegistry {
     } = {},
   ): Promise<{ report: RuntimeStatusReport; inquiryMeta: AnyObject }> {
     const instance = this.getInstance(serviceName, serviceInstanceId);
-    if (instance) {
-      const directReport = await this.requestRuntimeStatusViaRest(
-        instance,
-        serviceName,
-        serviceInstanceId,
-      );
-
-      if (directReport) {
-        if (!this.applyRuntimeStatusReport(directReport)) {
-          throw new Error(
-            `No tracked instance for runtime fallback ${serviceName}/${serviceInstanceId}`,
-          );
-        }
-
-        this.lastHeartbeatAtByInstance.set(serviceInstanceId, Date.now());
-        this.missedHeartbeatsByInstance.set(serviceInstanceId, 0);
-
-        return {
-          report: directReport,
-          inquiryMeta: {
-            inquiry: META_RUNTIME_STATUS_INTENT,
-            responded: 1,
-            failed: 0,
-            timedOut: 0,
-            pending: 0,
-            directStatusCheck: true,
-          },
+    const directStatusCheck = instance
+      ? await this.requestRuntimeStatusViaRest(
+          instance,
+          serviceName,
+          serviceInstanceId,
+        )
+      : {
+          report: null,
+          diagnostic: {
+            attempted: false,
+            outcome: "instance_missing",
+          } satisfies RuntimeStatusFallbackRestDiagnostic,
         };
+
+    if (directStatusCheck.report) {
+      if (!this.applyRuntimeStatusReport(directStatusCheck.report)) {
+        throw this.createRuntimeStatusFallbackError(
+          `No tracked instance for runtime fallback ${serviceName}/${serviceInstanceId}`,
+          {
+            target: {
+              serviceName,
+              serviceInstanceId,
+            },
+            instance: this.summarizeInstanceForRuntimeStatusFallback(instance),
+            directStatusCheck: directStatusCheck.diagnostic,
+            inquiry: {
+              meta: {},
+              reportTargets: [],
+            },
+          },
+        );
       }
+
+      this.lastHeartbeatAtByInstance.set(serviceInstanceId, Date.now());
+      this.missedHeartbeatsByInstance.set(serviceInstanceId, 0);
+
+      return {
+        report: directStatusCheck.report,
+        inquiryMeta: {
+          inquiry: META_RUNTIME_STATUS_INTENT,
+          responded: 1,
+          failed: 0,
+          timedOut: 0,
+          pending: 0,
+          directStatusCheck: true,
+        },
+      };
     }
 
     const inquiryResult = await Cadenza.inquire(
@@ -949,14 +1130,46 @@ export default class ServiceRegistry {
     );
 
     if (!report) {
-      throw new Error(
+      throw this.createRuntimeStatusFallbackError(
         `No runtime status report for ${serviceName}/${serviceInstanceId}`,
+        {
+          target: {
+            serviceName,
+            serviceInstanceId,
+          },
+          instance: this.summarizeInstanceForRuntimeStatusFallback(instance),
+          directStatusCheck: directStatusCheck.diagnostic,
+          inquiry: {
+            meta:
+              inquiryResult.__inquiryMeta &&
+              typeof inquiryResult.__inquiryMeta === "object"
+                ? inquiryResult.__inquiryMeta
+                : {},
+            reportTargets: this.summarizeRuntimeStatusInquiryReports(inquiryResult),
+          },
+        },
       );
     }
 
     if (!this.applyRuntimeStatusReport(report)) {
-      throw new Error(
+      throw this.createRuntimeStatusFallbackError(
         `No tracked instance for runtime fallback ${serviceName}/${serviceInstanceId}`,
+        {
+          target: {
+            serviceName,
+            serviceInstanceId,
+          },
+          instance: this.summarizeInstanceForRuntimeStatusFallback(instance),
+          directStatusCheck: directStatusCheck.diagnostic,
+          inquiry: {
+            meta:
+              inquiryResult.__inquiryMeta &&
+              typeof inquiryResult.__inquiryMeta === "object"
+                ? inquiryResult.__inquiryMeta
+                : {},
+            reportTargets: this.summarizeRuntimeStatusInquiryReports(inquiryResult),
+          },
+        },
       );
     }
 
@@ -973,14 +1186,29 @@ export default class ServiceRegistry {
     instance: ServiceInstanceDescriptor,
     serviceName: string,
     serviceInstanceId: string,
-  ): Promise<RuntimeStatusReport | null> {
+  ): Promise<{
+    report: RuntimeStatusReport | null;
+    diagnostic: RuntimeStatusFallbackRestDiagnostic;
+  }> {
     if (typeof globalThis.fetch !== "function") {
-      return null;
+      return {
+        report: null,
+        diagnostic: {
+          attempted: false,
+          outcome: "fetch_unavailable",
+        },
+      };
     }
 
     const transport = this.getRouteableTransport(instance, "rest");
     if (!transport) {
-      return null;
+      return {
+        report: null,
+        diagnostic: {
+          attempted: false,
+          outcome: "no_rest_transport",
+        },
+      };
     }
 
     const controller =
@@ -996,7 +1224,20 @@ export default class ServiceRegistry {
       });
 
       if ("ok" in response && response.ok === false) {
-        return null;
+        return {
+          report: null,
+          diagnostic: {
+            attempted: true,
+            outcome: "http_error",
+            transport: this.summarizeTransportForDebug(transport),
+            responseStatus:
+              typeof response.status === "number" ? response.status : undefined,
+            responseStatusText:
+              typeof response.statusText === "string"
+                ? response.statusText
+                : undefined,
+          },
+        };
       }
 
       const payload =
@@ -1009,19 +1250,54 @@ export default class ServiceRegistry {
       });
 
       if (!report) {
-        return null;
+        return {
+          report: null,
+          diagnostic: {
+            attempted: true,
+            outcome: "invalid_report",
+            transport: this.summarizeTransportForDebug(transport),
+            payloadKeys:
+              payload && typeof payload === "object"
+                ? Object.keys(payload as Record<string, unknown>).sort()
+                : [],
+          },
+        };
       }
 
       if (
         report.serviceName !== serviceName ||
         report.serviceInstanceId !== serviceInstanceId
       ) {
-        return null;
+        return {
+          report: null,
+          diagnostic: {
+            attempted: true,
+            outcome: "identity_mismatch",
+            transport: this.summarizeTransportForDebug(transport),
+            payloadServiceName: report.serviceName,
+            payloadServiceInstanceId: report.serviceInstanceId,
+          },
+        };
       }
 
-      return report;
-    } catch {
-      return null;
+      return {
+        report,
+        diagnostic: {
+          attempted: true,
+          outcome: "matched",
+          transport: this.summarizeTransportForDebug(transport),
+        },
+      };
+    } catch (error) {
+      return {
+        report: null,
+        diagnostic: {
+          attempted: true,
+          outcome: "fetch_error",
+          transport: this.summarizeTransportForDebug(transport),
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
     } finally {
       if (timeoutId) {
         clearTimeout(timeoutId);
@@ -2522,6 +2798,14 @@ export default class ServiceRegistry {
             : undefined;
           const message =
             error instanceof Error ? error.message : String(error);
+          const diagnostics =
+            error &&
+            typeof error === "object" &&
+            "runtimeStatusFallback" in error &&
+            (error as AnyObject).runtimeStatusFallback &&
+            typeof (error as AnyObject).runtimeStatusFallback === "object"
+              ? (error as AnyObject).runtimeStatusFallback
+              : undefined;
 
           Cadenza.log(
             "Runtime status fallback inquiry failed.",
@@ -2529,6 +2813,7 @@ export default class ServiceRegistry {
               serviceName,
               serviceInstanceId,
               error: message,
+              diagnostics,
             },
             "warning",
           );
