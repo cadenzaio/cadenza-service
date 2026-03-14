@@ -128,4 +128,45 @@ describe("Actor metadata signal contracts", () => {
     expect(readField(data, "description")).toBe("Actor task map contract test");
     expect(readField(data, "is_meta")).toBe(false);
   });
+
+  it("waits for both tasks to register before emitting task relationship metadata", async () => {
+    let payload: AnyObject | undefined;
+
+    Cadenza.createMetaTask("Capture task relationship signal", (ctx) => {
+      payload = ctx;
+      return true;
+    }).doOn("global.meta.graph_metadata.task_relationship_created");
+
+    const predecessor = Cadenza.createTask("Registered predecessor", () => true);
+    const successor = Cadenza.createTask("Pending successor", () => true);
+    predecessor.registered = true;
+    successor.registered = false;
+
+    Cadenza.emit("meta.task.relationship_added", {
+      data: {
+        predecessorTaskName: "Registered predecessor",
+        taskName: "Pending successor",
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(payload).toBeUndefined();
+
+    successor.registered = true;
+
+    Cadenza.emit("meta.task.relationship_added", {
+      data: {
+        predecessorTaskName: "Registered predecessor",
+        taskName: "Pending successor",
+      },
+    });
+
+    await waitForCondition(() => Boolean(payload?.data));
+
+    const data = payload?.data as AnyObject;
+    expect(readField(data, "predecessor_task_name")).toBe("Registered predecessor");
+    expect(readField(data, "task_name")).toBe("Pending successor");
+    expect(readField(data, "service_name")).toBe("ActorMetadataService");
+    expect(readField(data, "predecessor_service_name")).toBe("ActorMetadataService");
+  });
 });

@@ -7,6 +7,7 @@ import {
   resolveTableOperationIntents,
   resolveTableQueryIntents,
   serializeInitialDataValueForSql,
+  serializeFieldValueForQuery,
 } from "../src/database/DatabaseController";
 import DatabaseController from "../src/database/DatabaseController";
 import type { TableDefinition } from "../src/types/database";
@@ -230,6 +231,37 @@ describe("DatabaseController schema and intent helpers", () => {
     );
     expect(serializeFieldDefaultForSql("'{}'", { type: "jsonb" })).toBe("'{}'");
     expect(serializeFieldDefaultForSql(null, { type: "jsonb" })).toBe("NULL");
+  });
+
+  it("serializes runtime jsonb values for parameterized queries", () => {
+    expect(
+      serializeFieldValueForQuery(["rest", "socket"], {
+        type: "jsonb",
+      }),
+    ).toBe('["rest","socket"]');
+
+    expect(
+      serializeFieldValueForQuery(
+        {
+          runtimeState: "healthy",
+        },
+        {
+          type: "jsonb",
+        },
+      ),
+    ).toBe('{"runtimeState":"healthy"}');
+
+    expect(
+      serializeFieldValueForQuery("'[\"rest\",\"socket\"]'::jsonb", {
+        type: "jsonb",
+      }),
+    ).toBe('["rest","socket"]');
+
+    expect(
+      serializeFieldValueForQuery("plain-text", {
+        type: "jsonb",
+      }),
+    ).toBe('"plain-text"');
   });
 
   it("uses the default serializer when generating column DDL", () => {

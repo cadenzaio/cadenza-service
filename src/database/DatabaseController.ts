@@ -118,6 +118,15 @@ function isExplicitSqlLiteral(value: string): boolean {
   return /^'.*'::[a-z_][a-z0-9_]*(\[\])?$/i.test(value.trim());
 }
 
+function extractExplicitJsonLiteral(value: string): string | null {
+  const match = /^'(.*)'::jsonb$/i.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+
+  return match[1].replace(/''/g, "'");
+}
+
 function isExplicitSqlExpression(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -198,6 +207,31 @@ export function serializeInitialDataValueForSql(
   }
 
   return `'${stringValue.replace(/'/g, "''")}'`;
+}
+
+export function serializeFieldValueForQuery(
+  value: unknown,
+  field?: FieldDefinition,
+): unknown {
+  if (value === undefined || value === null || field?.type !== "jsonb") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const explicitJsonLiteral = extractExplicitJsonLiteral(value);
+    if (explicitJsonLiteral !== null) {
+      return explicitJsonLiteral;
+    }
+
+    try {
+      JSON.parse(value);
+      return value;
+    } catch {
+      return JSON.stringify(value);
+    }
+  }
+
+  return JSON.stringify(value);
 }
 
 function readCustomIntentConfig(
@@ -1118,6 +1152,7 @@ export default class DatabaseController {
             }
 
             const keys = Object.keys(rows[0]);
+            const tableFields = registration.schema.tables[tableName]?.fields ?? {};
             const sqlPrefix = `INSERT INTO ${tableName} (${keys
               .map((key) => snakeCase(key))
               .join(", ")}) VALUES `;
@@ -1127,7 +1162,12 @@ export default class DatabaseController {
               .map((row) => {
                 const tuple = keys
                   .map((key) => {
-                    params.push(row[key]);
+                    params.push(
+                      serializeFieldValueForQuery(
+                        row[key],
+                        this.getFieldDefinitionForKey(tableFields, key),
+                      ),
+                    );
                     return `$${params.length}`;
                   })
                   .join(", ");
@@ -1137,7 +1177,11 @@ export default class DatabaseController {
 
             let onConflictSql = "";
             if (onConflict) {
-              onConflictSql = this.buildOnConflictClause(onConflict, params);
+              onConflictSql = this.buildOnConflictClause(
+                onConflict,
+                params,
+                tableFields,
+              );
             }
 
             const sql = `${sqlPrefix}${placeholders}${onConflictSql} RETURNING ${
@@ -1201,30 +1245,29 @@ export default class DatabaseController {
               data,
               tableName,
             );
-            const params = Object.values(resolvedData);
+            const tableFields = registration.schema.tables[tableName]?.fields ?? {};
+            const params: any[] = [];
 
-            let offset = 0;
             const setClause = Object.keys(resolvedData)
-              .map((key, index) => {
+              .map((key) => {
                 const value: any = (resolvedData as AnyObject)[key];
-                const offsetIndex = index - offset;
                 if (value?.__effect === "increment") {
-                  params.splice(offsetIndex, 1);
-                  offset += 1;
                   return `${snakeCase(key)} = ${snakeCase(key)} + 1`;
                 }
                 if (value?.__effect === "decrement") {
-                  params.splice(offsetIndex, 1);
-                  offset += 1;
                   return `${snakeCase(key)} = ${snakeCase(key)} - 1`;
                 }
                 if (value?.__effect === "set") {
-                  params.splice(offsetIndex, 1);
-                  offset += 1;
                   return `${snakeCase(key)} = ${value.__value}`;
                 }
 
-                return `${snakeCase(key)} = $${offsetIndex + 1}`;
+                params.push(
+                  serializeFieldValueForQuery(
+                    value,
+                    this.getFieldDefinitionForKey(tableFields, key),
+                  ),
+                );
+                return `${snakeCase(key)} = $${params.length}`;
               })
               .join(", ");
 
@@ -1336,6 +1379,7 @@ export default class DatabaseController {
   private buildOnConflictClause(
     onConflict: { target: string[]; action: OnConflictAction },
     params: any[],
+    tableFields: TableDefinition["fields"],
   ): string {
     const { target, action } = onConflict;
     let sql = ` ON CONFLICT (${target.map(snakeCase).join(", ")})`;
@@ -1350,7 +1394,12 @@ export default class DatabaseController {
           return `${snakeCase(field)} = excluded.${snakeCase(field)}`;
         }
 
-        params.push(value);
+        params.push(
+          serializeFieldValueForQuery(
+            value,
+            this.getFieldDefinitionForKey(tableFields, field),
+          ),
+        );
         return `${snakeCase(field)} = $${params.length}`;
       });
 
@@ -1363,6 +1412,13 @@ export default class DatabaseController {
 
     sql += " DO NOTHING";
     return sql;
+  }
+
+  private getFieldDefinitionForKey(
+    fields: TableDefinition["fields"],
+    key: string,
+  ): FieldDefinition | undefined {
+    return fields[key] ?? fields[snakeCase(key)];
   }
 
   /**
@@ -2185,7 +2241,13 @@ export default class DatabaseController {
         const row = ensurePlainObject(resolvedData, "sub-operation insert data");
 
         const keys = Object.keys(row);
-        const params = Object.values(row);
+        const tableFields = registration.schema.tables[operation.table]?.fields ?? {};
+        const params = keys.map((key) =>
+          serializeFieldValueForQuery(
+            row[key],
+            this.getFieldDefinitionForKey(tableFields, key),
+          ),
+        );
         const sql = `INSERT INTO ${operation.table} (${keys
           .map((key) => snakeCase(key))
           .join(", ")}) VALUES (${params

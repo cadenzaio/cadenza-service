@@ -35,6 +35,18 @@ export default class GraphMetadataController {
       .emits("global.meta.graph_metadata.task_updated");
 
     Cadenza.createMetaTask("Handle task relationship creation", (ctx) => {
+      const taskName = ctx.data?.taskName ?? ctx.data?.task_name;
+      const predecessorTaskName =
+        ctx.data?.predecessorTaskName ?? ctx.data?.predecessor_task_name;
+      const task = taskName ? Cadenza.get(taskName) : undefined;
+      const predecessorTask = predecessorTaskName
+        ? Cadenza.get(predecessorTaskName)
+        : undefined;
+
+      if (!task?.registered || !predecessorTask?.registered) {
+        return false;
+      }
+
       return {
         data: {
           ...ctx.data,
