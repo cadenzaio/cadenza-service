@@ -1,3 +1,10 @@
+## [2.17.6](https://github.com/cadenzaio/cadenza-service/compare/v2.17.5...v2.17.6) (2026-03-14)
+
+
+### Bug Fixes
+
+* **runtime:** reconcile bootstrap service instances ([89e6589](https://github.com/cadenzaio/cadenza-service/commit/89e6589e7e15c0a0604d2148fc91db60d697edec))
+
 ## [2.17.5](https://github.com/cadenzaio/cadenza-service/compare/v2.17.4...v2.17.5) (2026-03-14)
 
 
