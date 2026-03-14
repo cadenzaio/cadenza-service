@@ -1,3 +1,10 @@
+## [2.17.17](https://github.com/cadenzaio/cadenza-service/compare/v2.17.16...v2.17.17) (2026-03-14)
+
+
+### Bug Fixes
+
+* **sync:** emit intent maps after task sync ([c3149d5](https://github.com/cadenzaio/cadenza-service/commit/c3149d5479724c9b74bc905d23e2333f1c6f73c2))
+
 ## [2.17.16](https://github.com/cadenzaio/cadenza-service/compare/v2.17.15...v2.17.16) (2026-03-14)
 
 
