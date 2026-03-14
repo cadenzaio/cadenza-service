@@ -1,3 +1,10 @@
+## [2.17.13](https://github.com/cadenzaio/cadenza-service/compare/v2.17.12...v2.17.13) (2026-03-14)
+
+
+### Bug Fixes
+
+* **database:** resolve default database service target ([5693a9b](https://github.com/cadenzaio/cadenza-service/commit/5693a9b115387adc3fa884e7055053e70f7533b7))
+
 ## [2.17.12](https://github.com/cadenzaio/cadenza-service/compare/v2.17.11...v2.17.12) (2026-03-14)
 
 
