@@ -1,3 +1,10 @@
+## [2.17.7](https://github.com/cadenzaio/cadenza-service/compare/v2.17.6...v2.17.7) (2026-03-14)
+
+
+### Bug Fixes
+
+* **runtime:** adopt handshake service ids ([ca66178](https://github.com/cadenzaio/cadenza-service/commit/ca66178637af70eb7f139c3c171f6b518025f830))
+
 ## [2.17.6](https://github.com/cadenzaio/cadenza-service/compare/v2.17.5...v2.17.6) (2026-03-14)
 
 
