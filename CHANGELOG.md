@@ -1,3 +1,10 @@
+## [2.17.10](https://github.com/cadenzaio/cadenza-service/compare/v2.17.9...v2.17.10) (2026-03-14)
+
+
+### Bug Fixes
+
+* **database:** normalize authority sync payloads ([7b830fc](https://github.com/cadenzaio/cadenza-service/commit/7b830fc64d5157cd853f2986b1d80aa78b5a37b7))
+
 ## [2.17.9](https://github.com/cadenzaio/cadenza-service/compare/v2.17.8...v2.17.9) (2026-03-14)
 
 
