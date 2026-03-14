@@ -235,4 +235,58 @@ describe("graph sync authority rows", () => {
     expect(insertSequence[0]).toBe("intent_registry");
     expect(insertSequence).toContain("intent_to_task_map");
   });
+
+  it("registers intent-to-task maps immediately after task rows are synced", async () => {
+    const insertSequence: string[] = [];
+
+    Cadenza.createMetaTask("Insert task", (ctx) => {
+      if (ctx.data?.name === "Lookup staged orders") {
+        insertSequence.push("task");
+      }
+      return ctx;
+    });
+    Cadenza.createMetaTask("Insert intent_registry", (ctx) => {
+      if (ctx.data?.name === "orders-staged-lookup") {
+        insertSequence.push("intent_registry");
+      }
+      return ctx;
+    });
+    Cadenza.createMetaTask("Insert intent_to_task_map", (ctx) => {
+      if (ctx.data?.intentName === "orders-staged-lookup") {
+        insertSequence.push("intent_to_task_map");
+      }
+      return ctx;
+    });
+
+    const lookupTask = Cadenza.createTask("Lookup staged orders", () => {
+      return {
+        orders: [],
+      };
+    }).respondsTo("orders-staged-lookup");
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.splitTasksForRegistration!, {
+      __syncing: true,
+      tasks: [lookupTask],
+    });
+    Cadenza.run(GraphSyncController.instance.splitIntentsTask!, {
+      __syncing: true,
+      intents: Array.from(Cadenza.inquiryBroker.intents.values()),
+    });
+
+    await waitForCondition(
+      () =>
+        insertSequence.includes("task") &&
+        insertSequence.includes("intent_registry") &&
+        insertSequence.includes("intent_to_task_map"),
+      1_500,
+    );
+
+    expect(insertSequence[0]).toBe("task");
+    expect(insertSequence).toContain("intent_registry");
+    expect(insertSequence).toContain("intent_to_task_map");
+  });
 });

@@ -445,7 +445,7 @@ export default class GraphSyncController {
           )
         : Cadenza.getLocalCadenzaDBInsertTask("task")
       )?.then(
-        Cadenza.createMetaTask("Record registration", (ctx) => {
+        Cadenza.createMetaTask("Record registration", (ctx, emit) => {
           if (!ctx.__syncing) {
             return;
           }
@@ -455,6 +455,10 @@ export default class GraphSyncController {
           });
 
           Cadenza.get(ctx.__taskName)!.registered = true;
+          emit("meta.sync_controller.task_registered", {
+            ...ctx,
+            task: Cadenza.get(ctx.__taskName),
+          });
 
           return true;
         }).then(
@@ -1047,6 +1051,20 @@ export default class GraphSyncController {
     Cadenza.registry
       .doForEachTask!.clone()
       .doOn("meta.sync_controller.synced_tasks", "meta.sync_controller.synced_intents")
+      .then(this.registerIntentToTaskMapTask);
+
+    Cadenza.createMetaTask("Get registered task for intent sync", (ctx) => {
+      const task = ctx.task ?? (ctx.__taskName ? Cadenza.get(ctx.__taskName) : undefined);
+      if (!task) {
+        return false;
+      }
+
+      return {
+        ...ctx,
+        task,
+      };
+    })
+      .doOn("meta.sync_controller.task_registered")
       .then(this.registerIntentToTaskMapTask);
 
     Cadenza.registry
