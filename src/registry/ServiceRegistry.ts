@@ -150,6 +150,7 @@ interface RuntimeStatusFallbackFailureDiagnostics {
     reportedAt?: string | null;
     isDatabase?: boolean;
     isFrontend?: boolean;
+    isBootstrapPlaceholder?: boolean;
     transports: Array<{
       uuid: string;
       role: ServiceTransportRole;
@@ -495,6 +496,7 @@ export default class ServiceRegistry {
       reportedAt: instance?.reportedAt ?? null,
       isDatabase: instance?.isDatabase,
       isFrontend: instance?.isFrontend,
+      isBootstrapPlaceholder: instance?.isBootstrapPlaceholder,
       transports: (instance?.transports ?? []).map((transport) => ({
         uuid: transport.uuid,
         role: transport.role,
@@ -758,6 +760,52 @@ export default class ServiceRegistry {
     this.lastHeartbeatAtByInstance.delete(serviceInstanceId);
     this.missedHeartbeatsByInstance.delete(serviceInstanceId);
     this.runtimeStatusFallbackInFlightByInstance.delete(serviceInstanceId);
+  }
+
+  private reconcileBootstrapPlaceholderInstance(
+    serviceName: string,
+    resolvedInstanceId: string,
+    emit: (signalName: string, ctx: AnyObject) => void,
+  ) {
+    const instances = this.instances.get(serviceName);
+    if (!instances?.length) {
+      return;
+    }
+
+    const placeholders = instances.filter(
+      (instance) =>
+        instance.uuid !== resolvedInstanceId && instance.isBootstrapPlaceholder,
+    );
+
+    if (!placeholders.length) {
+      return;
+    }
+
+    for (const placeholder of placeholders) {
+      const wasDependee = this.dependeeByInstance.has(placeholder.uuid);
+      const requiredForReadiness = this.readinessDependeeByInstance.has(
+        placeholder.uuid,
+      );
+
+      for (const transport of placeholder.transports) {
+        const transportKey = buildTransportClientKey(transport);
+        emit(`meta.socket_shutdown_requested:${transportKey}`, {});
+        emit(`meta.fetch.destroy_requested:${transportKey}`, {});
+      }
+
+      this.unregisterDependee(placeholder.uuid, serviceName);
+
+      if (wasDependee) {
+        this.registerDependee(serviceName, resolvedInstanceId, {
+          requiredForReadiness,
+        });
+      }
+    }
+
+    this.instances.set(
+      serviceName,
+      instances.filter((instance) => !instance.isBootstrapPlaceholder),
+    );
   }
 
   private getHeartbeatMisses(serviceInstanceId: string, now = Date.now()): number {
@@ -1665,6 +1713,7 @@ export default class ServiceRegistry {
                   numberOfRunningGraphs:
                     ctx.numberOfRunningGraphs ?? ctx.__numberOfRunningGraphs ?? 0,
                   isPrimary: false,
+                  isBootstrapPlaceholder: !!ctx.isBootstrapPlaceholder,
                   transports: ctx.transports ?? [],
                 }
               : undefined),
@@ -1734,6 +1783,10 @@ export default class ServiceRegistry {
           trackedInstance.acceptingWork = snapshot.acceptingWork;
           trackedInstance.reportedAt =
             trackedInstance.reportedAt ?? new Date().toISOString();
+        }
+
+        if (!serviceInstance.isBootstrapPlaceholder) {
+          this.reconcileBootstrapPlaceholderInstance(serviceName, uuid, emit);
         }
 
         if (this.serviceName === serviceName) {

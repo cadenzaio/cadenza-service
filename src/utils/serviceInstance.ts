@@ -84,6 +84,9 @@ export function normalizeServiceInstanceDescriptor(
     health: (raw.health ?? {}) as AnyObject,
     isFrontend: Boolean(raw.isFrontend ?? raw.is_frontend ?? false),
     isDatabase: Boolean(raw.isDatabase ?? raw.is_database ?? false),
+    isBootstrapPlaceholder: Boolean(
+      raw.isBootstrapPlaceholder ?? raw.is_bootstrap_placeholder ?? false,
+    ),
     transports,
     clientCreatedTransportIds: Array.isArray(raw.clientCreatedTransportIds)
       ? raw.clientCreatedTransportIds

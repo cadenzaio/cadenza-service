@@ -16,6 +16,7 @@ export interface ServiceInstanceDescriptor {
   health: AnyObject;
   isFrontend: boolean;
   isDatabase?: boolean;
+  isBootstrapPlaceholder?: boolean;
   transports: ServiceTransportDescriptor[];
   clientCreatedTransportIds?: string[];
 }

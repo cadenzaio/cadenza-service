@@ -1195,6 +1195,7 @@ export default class CadenzaService {
           isBlocked: false,
           health: {},
           isFrontend: false,
+          isBootstrapPlaceholder: true,
           transports: resolvedBootstrapEndpoint
             ? [
                 this.createBootstrapTransport(
@@ -1224,6 +1225,7 @@ export default class CadenzaService {
           isBlocked: false,
           health: {},
           isFrontend: false,
+          isBootstrapPlaceholder: true,
           transports: relatedTransport
             ? [
                 {
