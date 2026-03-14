@@ -1,3 +1,10 @@
+## [2.17.5](https://github.com/cadenzaio/cadenza-service/compare/v2.17.4...v2.17.5) (2026-03-14)
+
+
+### Bug Fixes
+
+* **runtime:** add status fallback diagnostics ([70e2c2e](https://github.com/cadenzaio/cadenza-service/commit/70e2c2e6efa9089b615f3a853694edad77a6794c))
+
 ## [2.17.4](https://github.com/cadenzaio/cadenza-service/compare/v2.17.3...v2.17.4) (2026-03-14)
 
 
