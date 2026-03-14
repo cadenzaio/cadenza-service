@@ -1,3 +1,10 @@
+## [2.17.11](https://github.com/cadenzaio/cadenza-service/compare/v2.17.10...v2.17.11) (2026-03-14)
+
+
+### Bug Fixes
+
+* **database:** tighten sub-operation detection ([994d047](https://github.com/cadenzaio/cadenza-service/commit/994d0473ae3ee4946d43685baf0c06c7a9d01188))
+
 ## [2.17.10](https://github.com/cadenzaio/cadenza-service/compare/v2.17.9...v2.17.10) (2026-03-14)
 
 
