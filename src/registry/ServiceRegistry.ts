@@ -3278,7 +3278,7 @@ export default class ServiceRegistry {
             } = ctx;
             const normalizedLocalInstance = normalizeServiceInstanceDescriptor({
               ...(serviceInstance ?? data ?? queryData?.data ?? {}),
-              transports: ctx.transportData ?? [],
+              transports: ctx.__transportData ?? ctx.transportData ?? [],
             });
 
             if (
@@ -3309,8 +3309,10 @@ export default class ServiceRegistry {
             Cadenza.createMetaTask(
               "Prepare service transport inserts",
               function* (ctx: AnyObject, emit) {
-                const transportData = Array.isArray(ctx.transportData)
-                  ? ctx.transportData
+                const transportData = Array.isArray(ctx.__transportData)
+                  ? ctx.__transportData
+                  : Array.isArray(ctx.transportData)
+                    ? ctx.transportData
                   : [];
 
                 for (const transport of transportData) {

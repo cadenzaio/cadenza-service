@@ -473,4 +473,91 @@ describe("graph sync authority rows", () => {
     expect(insertSequence).toContain("intent_registry");
     expect(insertSequence).toContain("intent_to_task_map");
   });
+
+  it("skips task-to-routine sync until both routines and tasks are registered", async () => {
+    const routineTask = Cadenza.createMetaTask("Sync routine dependency", () => true);
+    const syncRoutine = {
+      name: "Sync services",
+      version: 1,
+      registered: false,
+      tasks: [routineTask],
+      registeredTasks: new Set<string>(),
+    };
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    const splitTask = GraphSyncController.instance.splitTasksInRoutines as any;
+
+    const beforeRows: Array<Record<string, unknown>> = [];
+    for await (const row of splitTask.taskFunction({
+      __syncing: true,
+      routines: [syncRoutine],
+    })) {
+      beforeRows.push(row.data);
+    }
+    expect(beforeRows).toHaveLength(0);
+
+    syncRoutine.registered = true;
+    routineTask.registered = true;
+
+    const afterRows: Array<Record<string, unknown>> = [];
+    for await (const row of splitTask.taskFunction({
+      __syncing: true,
+      routines: [syncRoutine],
+    })) {
+      afterRows.push(row.data);
+    }
+
+    expect(afterRows.length).toBeGreaterThan(0);
+    expect(
+      afterRows.every((row) =>
+        row.taskName === "Sync routine dependency" &&
+        row.routineName === "Sync services" &&
+        row.serviceName === "OrdersApi",
+      ),
+    ).toBe(true);
+  });
+
+  it("skips signal-to-task sync until the observed signal is registered", async () => {
+    const signalToTaskRows: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Insert signal_to_task_map", (ctx) => {
+      signalToTaskRows.push(ctx.data);
+      return ctx;
+    });
+
+    const observedTask = Cadenza.createMetaTask("Observe orders updated", () => true);
+    observedTask.doOn("orders.updated");
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.registerSignalToTaskMapTask!, {
+      __syncing: true,
+      task: observedTask,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(signalToTaskRows).toHaveLength(0);
+
+    Cadenza.run(Cadenza.signalBroker.registerSignalTask!, {
+      signalName: "orders.updated",
+    });
+
+    Cadenza.run(GraphSyncController.instance.registerSignalToTaskMapTask!, {
+      __syncing: true,
+      task: observedTask,
+    });
+
+    await waitForCondition(() => signalToTaskRows.length === 1, 1_500);
+
+    expect(signalToTaskRows[0]).toMatchObject({
+      signalName: "orders.updated",
+      taskName: "Observe orders updated",
+      serviceName: "OrdersApi",
+    });
+  });
 });

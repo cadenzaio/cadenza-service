@@ -354,7 +354,7 @@ export default class RestController {
                   is_blocked: false,
                   health: {},
                 },
-                transportData: [],
+                __transportData: [],
                 ...ctx,
               });
               return;
@@ -774,7 +774,7 @@ export default class RestController {
                       is_blocked: false,
                       health: {},
                     };
-                    ctx.transportData = transportData;
+                    ctx.__transportData = transportData;
 
                     delete ctx.__app;
 

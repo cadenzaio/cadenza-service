@@ -1363,7 +1363,7 @@ export default class CadenzaService {
             is_blocked: false,
             health: {},
           },
-          transportData: [],
+          __transportData: [],
           __serviceName: serviceName,
           __serviceInstanceId: serviceId,
           __useSocket: options.useSocket,

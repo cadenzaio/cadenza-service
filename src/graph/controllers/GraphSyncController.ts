@@ -395,6 +395,8 @@ export default class GraphSyncController {
           delayMs: 3000,
         });
         for (const routine of routines) {
+          if (!routine.registered) continue;
+
           for (const task of routine.tasks) {
             if (!task) {
               console.log("task is null", routine, task);
@@ -407,6 +409,9 @@ export default class GraphSyncController {
 
             while (tasks.hasNext()) {
               const nextTask = tasks.next();
+              if (!nextTask?.registered) {
+                continue;
+              }
               yield {
                 data: {
                   taskName: nextTask.name,
@@ -780,6 +785,12 @@ export default class GraphSyncController {
         for (const signal of task.observedSignals) {
           const _signal = signal.split(":")[0];
           if (task.registeredSignals.has(signal)) continue;
+          if (
+            !(Cadenza.signalBroker as any).signalObservers?.get(_signal)
+              ?.registered
+          ) {
+            continue;
+          }
 
           const { isGlobal } = decomposeSignalName(_signal);
 
@@ -1234,9 +1245,16 @@ export default class GraphSyncController {
       .doOn("meta.sync_controller.synced_tasks")
       .then(
         this.registerTaskMapTask,
-        this.registerSignalToTaskMapTask,
         this.registerDeputyRelationshipTask,
       );
+
+    Cadenza.registry
+      .doForEachTask!.clone()
+      .doOn(
+        "meta.sync_controller.synced_tasks",
+        "meta.sync_controller.synced_signals",
+      )
+      .then(this.registerSignalToTaskMapTask);
 
     Cadenza.registry
       .doForEachTask!.clone()
@@ -1264,7 +1282,10 @@ export default class GraphSyncController {
 
     Cadenza.registry
       .getAllRoutines!.clone()
-      .doOn("meta.sync_controller.synced_routines")
+      .doOn(
+        "meta.sync_controller.synced_tasks",
+        "meta.sync_controller.synced_routines",
+      )
       .then(this.splitTasksInRoutines);
 
     Cadenza.createMetaTask("Finish sync", (ctx, emit) => {

@@ -285,7 +285,7 @@ export default class RestController {
             is_blocked: false,
             health: {},
           },
-          transportData: [],
+          __transportData: [],
           ...ctx,
         });
 
