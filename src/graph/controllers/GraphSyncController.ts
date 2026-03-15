@@ -3,6 +3,7 @@ import { Task } from "@cadenza.io/core";
 import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 import { DeputyTask } from "../../index";
 import { isMetaIntentName } from "../../utils/inquiry";
+import type { TaskFunction } from "@cadenza.io/core";
 
 type ActorTaskRuntimeMetadata = {
   actorName: string;
@@ -13,6 +14,12 @@ type ActorTaskRuntimeMetadata = {
 };
 
 const ACTOR_TASK_METADATA = Symbol.for("@cadenza.io/core/actor-task-meta");
+const LOCAL_SYNC_QUERY_DATA = Symbol.for(
+  "@cadenza.io/service/local-sync-query-data",
+);
+const LOCAL_SYNC_ORIGINAL_TASK_FUNCTION = Symbol.for(
+  "@cadenza.io/service/local-sync-original-task-function",
+);
 
 function getActorTaskRuntimeMetadata(
   taskFunction: unknown,
@@ -131,11 +138,59 @@ function resolveSyncInsertTask(
   queryData: Record<string, unknown> = {},
   options: Record<string, unknown> = {},
 ): Task | undefined {
+  const localInsertTask = Cadenza.getLocalCadenzaDBInsertTask(tableName);
+  if (localInsertTask) {
+    const taskWithSyncQueryData = localInsertTask as Task & {
+      [LOCAL_SYNC_QUERY_DATA]?: Record<string, unknown>;
+      [LOCAL_SYNC_ORIGINAL_TASK_FUNCTION]?: TaskFunction;
+      taskFunction: TaskFunction;
+    };
+
+    taskWithSyncQueryData[LOCAL_SYNC_QUERY_DATA] = {
+      ...(taskWithSyncQueryData[LOCAL_SYNC_QUERY_DATA] ?? {}),
+      ...queryData,
+    };
+
+    if (!taskWithSyncQueryData[LOCAL_SYNC_ORIGINAL_TASK_FUNCTION]) {
+      taskWithSyncQueryData[LOCAL_SYNC_ORIGINAL_TASK_FUNCTION] =
+        taskWithSyncQueryData.taskFunction;
+      taskWithSyncQueryData.taskFunction = (
+        ctx,
+        emit,
+        inquire,
+        progressCallback,
+      ) => {
+        const existingQueryData =
+          ctx.queryData && typeof ctx.queryData === "object"
+            ? ctx.queryData
+            : {};
+        const syncQueryData = taskWithSyncQueryData[LOCAL_SYNC_QUERY_DATA] ?? {};
+        const nextContext = ctx.__syncing
+          ? {
+              ...ctx,
+              queryData: {
+                ...existingQueryData,
+                ...syncQueryData,
+              },
+            }
+          : ctx;
+
+        return taskWithSyncQueryData[LOCAL_SYNC_ORIGINAL_TASK_FUNCTION]!(
+          nextContext,
+          emit,
+          inquire,
+          progressCallback,
+        );
+      };
+    }
+
+    return localInsertTask;
+  }
+
   return (
-    Cadenza.getLocalCadenzaDBInsertTask(tableName) ??
-    (isCadenzaDBReady
+    isCadenzaDBReady
       ? Cadenza.createCadenzaDBInsertTask(tableName, queryData, options)
-      : undefined)
+      : undefined
   );
 }
 

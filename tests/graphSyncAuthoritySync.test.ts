@@ -294,6 +294,80 @@ describe("graph sync authority rows", () => {
     expect(insertSequence).toContain("intent_to_task_map");
   });
 
+  it("preserves sync queryData when exact local CadenzaDB insert tasks are used", async () => {
+    const observedQueryData: Record<string, Array<Record<string, unknown>>> = {
+      intent_registry: [],
+      intent_to_task_map: [],
+    };
+
+    Cadenza.createMetaTask("Insert intent_registry", (ctx) => {
+      if (ctx.data?.name === "orders-self-sync-query-data") {
+        observedQueryData.intent_registry.push(ctx.queryData ?? {});
+      }
+      return ctx;
+    });
+    Cadenza.createMetaTask("Insert intent_to_task_map", (ctx) => {
+      if (ctx.data?.intentName === "orders-self-sync-query-data") {
+        observedQueryData.intent_to_task_map.push(ctx.queryData ?? {});
+      }
+      return ctx;
+    });
+    for (const tableName of [
+      "routine",
+      "task_to_routine_map",
+      "signal_registry",
+      "task",
+      "actor",
+      "actor_task_map",
+      "signal_to_task_map",
+      "directional_task_graph_map",
+    ]) {
+      Cadenza.createMetaTask(`Insert ${tableName}`, (ctx) => ctx);
+    }
+
+    const lookupTask = Cadenza.createMetaTask(
+      "Lookup self-synced orders with query data",
+      () => {
+        return {
+          orders: [],
+        };
+      },
+    ).respondsTo("orders-self-sync-query-data");
+
+    ServiceRegistry.instance.serviceName = "CadenzaDB";
+    GraphSyncController.instance.isCadenzaDBReady = true;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.splitIntentsTask!, {
+      __syncing: true,
+      intents: Array.from(Cadenza.inquiryBroker.intents.values()),
+    });
+    Cadenza.run(GraphSyncController.instance.registerIntentToTaskMapTask!, {
+      __syncing: true,
+      task: lookupTask,
+    });
+
+    await waitForCondition(
+      () =>
+        observedQueryData.intent_registry.length > 0 &&
+        observedQueryData.intent_to_task_map.length > 0,
+      1_500,
+    );
+
+    expect(observedQueryData.intent_registry[0]?.onConflict).toEqual({
+      target: ["name"],
+      action: {
+        do: "nothing",
+      },
+    });
+    expect(observedQueryData.intent_to_task_map[0]?.onConflict).toEqual({
+      target: ["intent_name", "task_name", "task_version", "service_name"],
+      action: {
+        do: "nothing",
+      },
+    });
+  });
+
   it("retries CadenzaDB sync init until local authority insert tasks exist", async () => {
     const originalGetLocalInsertTask =
       Cadenza.getLocalCadenzaDBInsertTask.bind(Cadenza);
