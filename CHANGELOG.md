@@ -1,3 +1,10 @@
+## [2.17.29](https://github.com/cadenzaio/cadenza-service/compare/v2.17.28...v2.17.29) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** use task execution for authority inserts ([44b55e3](https://github.com/cadenzaio/cadenza-service/commit/44b55e392ea3982e82dee8dbe61f8c61e8c2156e))
+
 ## [2.17.28](https://github.com/cadenzaio/cadenza-service/compare/v2.17.27...v2.17.28) (2026-03-15)
 
 
