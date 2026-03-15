@@ -1,3 +1,10 @@
+## [2.17.22](https://github.com/cadenzaio/cadenza-service/compare/v2.17.21...v2.17.22) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** carry local insert rows in query data ([9c32b0f](https://github.com/cadenzaio/cadenza-service/commit/9c32b0ff407d6269dd3e43fc7d3d75dd2bcfb7b5))
+
 ## [2.17.21](https://github.com/cadenzaio/cadenza-service/compare/v2.17.20...v2.17.21) (2026-03-15)
 
 
