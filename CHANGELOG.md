@@ -1,3 +1,10 @@
+## [2.17.20](https://github.com/cadenzaio/cadenza-service/compare/v2.17.19...v2.17.20) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** defer cadenzadb self-sync init ([827c9cb](https://github.com/cadenzaio/cadenza-service/commit/827c9cbfa0269854fc787eae4cbdb139b89cd6bd))
+
 ## [2.17.19](https://github.com/cadenzaio/cadenza-service/compare/v2.17.18...v2.17.19) (2026-03-15)
 
 
