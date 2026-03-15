@@ -1,3 +1,10 @@
+## [2.17.25](https://github.com/cadenzaio/cadenza-service/compare/v2.17.24...v2.17.25) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** clean up authority self-sync flow ([98a27bd](https://github.com/cadenzaio/cadenza-service/commit/98a27bdbd279eb7bb13e0887c2ecf8476b017e7a))
+
 ## [2.17.24](https://github.com/cadenzaio/cadenza-service/compare/v2.17.23...v2.17.24) (2026-03-15)
 
 
