@@ -1,3 +1,10 @@
+## [2.17.21](https://github.com/cadenzaio/cadenza-service/compare/v2.17.20...v2.17.21) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** preserve local cadenzadb insert query data ([03a3f08](https://github.com/cadenzaio/cadenza-service/commit/03a3f086b3c229c9b8136a4537844d3a52ba4da6))
+
 ## [2.17.20](https://github.com/cadenzaio/cadenza-service/compare/v2.17.19...v2.17.20) (2026-03-15)
 
 
