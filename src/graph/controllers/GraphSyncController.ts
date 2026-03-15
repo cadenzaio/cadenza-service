@@ -305,6 +305,7 @@ export default class GraphSyncController {
   registeredActorTaskMaps: Set<string> = new Set();
   registeredIntentDefinitions: Set<string> = new Set();
   tasksSynced: boolean = false;
+  actorsSynced: boolean = false;
   signalsSynced: boolean = false;
   intentsSynced: boolean = false;
   routinesSynced: boolean = false;
@@ -831,7 +832,10 @@ export default class GraphSyncController {
 
     Cadenza.createUniqueMetaTask(
       "Gather actor registration",
-      () => true,
+      () => {
+        this.actorsSynced = true;
+        return true;
+      },
     )
       .doOn("meta.sync_controller.actor_registration_settled")
       .emits("meta.sync_controller.synced_actors");
@@ -840,7 +844,11 @@ export default class GraphSyncController {
       "Split actor task maps",
       function* (this: GraphSyncController, ctx: any) {
         const task = ctx.task;
-        if (task.hidden || !task.register) {
+        if (!this.tasksSynced || !this.actorsSynced) {
+          return;
+        }
+
+        if (task.hidden || !task.register || !task.registered) {
           return;
         }
 
@@ -924,7 +932,7 @@ export default class GraphSyncController {
       "Split observed signals of task",
       (ctx, emit) => {
         const task = ctx.task;
-        if (task.hidden || !task.register) return false;
+        if (task.hidden || !task.register || !task.registered) return false;
 
         const serviceName = resolveSyncServiceName(task);
         if (!serviceName) {
@@ -1074,7 +1082,7 @@ export default class GraphSyncController {
       "Split intents of task",
       function (this: GraphSyncController, ctx: any, emit: any) {
         const task = ctx.task as any;
-        if (task.hidden || !task.register) return false;
+        if (task.hidden || !task.register || !task.registered) return false;
 
         const serviceName = resolveSyncServiceName(task);
         if (!serviceName) {
@@ -1403,6 +1411,7 @@ export default class GraphSyncController {
       .doForEachTask!.clone()
       .doOn(
         "meta.sync_controller.synced_signals",
+        "meta.sync_controller.synced_tasks",
       )
       .then(
         Cadenza.createMetaTask(
@@ -1444,7 +1453,10 @@ export default class GraphSyncController {
 
     Cadenza.registry
       .doForEachTask!.clone()
-      .doOn("meta.sync_controller.synced_intents")
+      .doOn(
+        "meta.sync_controller.synced_intents",
+        "meta.sync_controller.synced_tasks",
+      )
       .then(
         Cadenza.createMetaTask(
           "Ensure intent and task sync ready",
@@ -1485,7 +1497,10 @@ export default class GraphSyncController {
 
     Cadenza.registry
       .doForEachTask!.clone()
-      .doOn("meta.sync_controller.synced_actors")
+      .doOn(
+        "meta.sync_controller.synced_actors",
+        "meta.sync_controller.synced_tasks",
+      )
       .then(this.registerActorTaskMapTask);
 
     Cadenza.createMetaTask("Get registered task for actor sync", (ctx) => {
@@ -1500,12 +1515,24 @@ export default class GraphSyncController {
       };
     })
       .doOn("meta.sync_controller.task_registered")
-      .then(this.registerActorTaskMapTask);
+      .then(
+        Cadenza.createMetaTask(
+          "Ensure actor and task sync ready from task registration",
+          (ctx) => {
+            if (!this.tasksSynced || !this.actorsSynced) {
+              return false;
+            }
+
+            return ctx;
+          },
+        ).then(this.registerActorTaskMapTask),
+      );
 
     Cadenza.registry
       .getAllRoutines!.clone()
       .doOn(
         "meta.sync_controller.synced_routines",
+        "meta.sync_controller.synced_tasks",
         "meta.sync_controller.task_registered",
       )
       .then(

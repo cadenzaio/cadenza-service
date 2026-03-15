@@ -329,6 +329,7 @@ describe("graph sync authority rows", () => {
 
     const observedTask = Cadenza.createMetaTask("Observe orders updated", () => true);
     observedTask.doOn("orders.updated");
+    observedTask.registered = true;
 
     ServiceRegistry.instance.serviceName = "OrdersApi";
     GraphSyncController.instance.isCadenzaDBReady = false;
@@ -358,5 +359,23 @@ describe("graph sync authority rows", () => {
       taskName: "Observe orders updated",
       serviceName: "OrdersApi",
     });
+  });
+
+  it("wires synced_tasks to retry relationship sync observers", () => {
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    const syncedTasksObserver = (Cadenza.signalBroker as any).signalObservers.get(
+      "meta.sync_controller.synced_tasks",
+    );
+    const taskNames = Array.from(syncedTasksObserver?.tasks ?? []).map(
+      (task: any) => task.name as string,
+    );
+
+    expect(taskNames.filter((name) => name.startsWith("Do for each task"))).toHaveLength(3);
+    expect(taskNames.some((name) => name.startsWith("Get all routines"))).toBe(
+      true,
+    );
   });
 });
