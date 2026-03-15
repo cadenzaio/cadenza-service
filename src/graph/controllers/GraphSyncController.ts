@@ -147,7 +147,30 @@ function getJoinedContextValue(
 }
 
 function didSyncInsertSucceed(ctx: Record<string, any>): boolean {
-  return !ctx.errored && ctx.__success !== false;
+  if (ctx.errored || ctx.__success === false) {
+    return false;
+  }
+
+  const inquiryMeta =
+    ctx.__inquiryMeta && typeof ctx.__inquiryMeta === "object"
+      ? (ctx.__inquiryMeta as Record<string, unknown>)
+      : null;
+
+  if (!inquiryMeta) {
+    return true;
+  }
+
+  const eligibleResponders = Number(inquiryMeta.eligibleResponders);
+  if (Number.isFinite(eligibleResponders) && eligibleResponders === 0) {
+    return false;
+  }
+
+  const responded = Number(inquiryMeta.responded);
+  if (Number.isFinite(responded) && responded === 0) {
+    return false;
+  }
+
+  return true;
 }
 
 function buildSyncInsertQueryData(
@@ -1528,6 +1551,11 @@ export default class GraphSyncController {
         "meta.sync_controller.sync_tick",
         { __syncing: true },
         180000,
+      );
+      Cadenza.schedule(
+        "meta.sync_controller.sync_tick",
+        { __syncing: true },
+        250,
       );
       Cadenza.schedule("meta.sync_requested", { __syncing: true }, 2000);
     }

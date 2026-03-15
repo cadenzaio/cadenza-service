@@ -436,20 +436,30 @@ export default class CadenzaService {
     });
 
     if (responders.length === 0) {
+      const inquiryMeta = {
+        inquiry,
+        isMetaInquiry,
+        totalResponders: allResponders.length,
+        eligibleResponders: 0,
+        filteredOutResponders: allResponders.length,
+        responded: 0,
+        failed: 0,
+        timedOut: 0,
+        pending: 0,
+        durationMs: 0,
+        responders: [],
+      } as DistributedInquiryMeta;
+
+      if (options.requireComplete) {
+        throw {
+          __inquiryMeta: inquiryMeta,
+          __error: `Inquiry '${inquiry}' had no eligible responders`,
+          errored: true,
+        };
+      }
+
       return {
-        __inquiryMeta: {
-          inquiry,
-          isMetaInquiry,
-          totalResponders: allResponders.length,
-          eligibleResponders: 0,
-          filteredOutResponders: allResponders.length,
-          responded: 0,
-          failed: 0,
-          timedOut: 0,
-          pending: 0,
-          durationMs: 0,
-          responders: [],
-        } as DistributedInquiryMeta,
+        __inquiryMeta: inquiryMeta,
       };
     }
 

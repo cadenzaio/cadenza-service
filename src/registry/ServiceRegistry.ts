@@ -132,6 +132,74 @@ function buildServiceRegistryInsertQueryData(
   return nextQueryData;
 }
 
+function normalizeServiceRegistryInsertResult(
+  tableName: string,
+  ctx: AnyObject,
+  queryData: Record<string, unknown>,
+  rawResult: unknown,
+): unknown {
+  if (!rawResult || typeof rawResult !== "object") {
+    return rawResult;
+  }
+
+  const result = { ...(rawResult as AnyObject) };
+  const normalizedQueryData =
+    result.queryData && typeof result.queryData === "object"
+      ? { ...(result.queryData as AnyObject) }
+      : { ...queryData };
+  const resolvedData =
+    result.data ??
+    normalizedQueryData.data ??
+    queryData.data ??
+    ctx.data ??
+    ctx.__registrationData;
+
+  if (resolvedData !== undefined && result.data === undefined) {
+    result.data = resolvedData;
+  }
+
+  if (
+    resolvedData !== undefined &&
+    (normalizedQueryData.data === undefined || normalizedQueryData.data === null)
+  ) {
+    normalizedQueryData.data = resolvedData;
+  }
+
+  result.queryData = normalizedQueryData;
+
+  if (tableName === "service") {
+    const resolvedServiceName = String(
+      result.__serviceName ??
+        (resolvedData as AnyObject | undefined)?.name ??
+        (resolvedData as AnyObject | undefined)?.service_name ??
+        ctx.__serviceName ??
+        "",
+    ).trim();
+
+    if (resolvedServiceName) {
+      result.__serviceName = resolvedServiceName;
+    }
+  }
+
+  if (
+    tableName === "service_instance" ||
+    tableName === "service_instance_transport"
+  ) {
+    const resolvedUuid = String(
+      result.uuid ??
+        (resolvedData as AnyObject | undefined)?.uuid ??
+        ctx.__serviceInstanceId ??
+        "",
+    ).trim();
+
+    if (resolvedUuid) {
+      result.uuid = resolvedUuid;
+    }
+  }
+
+  return result;
+}
+
 function resolveServiceRegistryInsertTask(
   tableName: string,
   queryData: Record<string, unknown> = {},
@@ -174,15 +242,36 @@ function resolveServiceRegistryInsertTask(
 
       const targetTask =
         Cadenza.getLocalCadenzaDBInsertTask(tableName) ?? remoteInsertTask;
+      const delegationContext = ensureDelegationContextMetadata({
+        ...ctx,
+        queryData: nextQueryData,
+      }) as AnyObject & {
+        __deputyExecId: string;
+        __metadata: AnyObject;
+      };
+      delegationContext.__metadata.__skipRemoteExecution =
+        delegationContext.__metadata.__skipRemoteExecution ??
+        delegationContext.__skipRemoteExecution ??
+        false;
+      delegationContext.__metadata.__blockRemoteExecution =
+        delegationContext.__metadata.__blockRemoteExecution ??
+        delegationContext.__blockRemoteExecution ??
+        false;
 
-      return (targetTask.taskFunction as TaskFunction)(
-        {
-          ...ctx,
-          queryData: nextQueryData,
-        },
-        emit,
-        inquire,
-        progressCallback,
+      return Promise.resolve(
+        (targetTask.taskFunction as TaskFunction)(
+          delegationContext,
+          emit,
+          inquire,
+          progressCallback,
+        ),
+      ).then((result) =>
+        normalizeServiceRegistryInsertResult(
+          tableName,
+          ctx,
+          nextQueryData,
+          result,
+        ),
       );
     },
     `Resolves ${tableName} inserts through the local CadenzaDB task when available.`,

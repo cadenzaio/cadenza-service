@@ -227,6 +227,28 @@ describe("frontend runtime mode", () => {
     );
   });
 
+  it("rejects requireComplete inquiries when no eligible responders exist", async () => {
+    await expect(
+      Cadenza.inquire(
+        "missing-intent",
+        {
+          requestId: "req-1",
+        },
+        {
+          requireComplete: true,
+        },
+      ),
+    ).rejects.toMatchObject({
+      errored: true,
+      __error: "Inquiry 'missing-intent' had no eligible responders",
+      __inquiryMeta: expect.objectContaining({
+        inquiry: "missing-intent",
+        eligibleResponders: 0,
+        responded: 0,
+      }),
+    });
+  });
+
   it("normalizes mixed full-sync payloads for remote intents and signals", async () => {
     Cadenza.createCadenzaService("BrowserApp", "Frontend app", {
       isFrontend: true,

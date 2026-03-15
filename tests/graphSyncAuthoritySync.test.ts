@@ -214,6 +214,63 @@ describe("graph sync authority rows", () => {
     expect(GraphSyncController.instance.registerIntentToTaskMapTask).toBeDefined();
   });
 
+  it("schedules an immediate sync tick for connected services", () => {
+    const scheduleSpy = vi.spyOn(Cadenza, "schedule");
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = true;
+    GraphSyncController.instance.init();
+
+    expect(scheduleSpy).toHaveBeenCalledWith(
+      "meta.sync_controller.sync_tick",
+      { __syncing: true },
+      250,
+    );
+    expect(scheduleSpy).toHaveBeenCalledWith(
+      "meta.sync_requested",
+      { __syncing: true },
+      2000,
+    );
+  });
+
+  it("does not mark intent definitions as registered when delegated inserts have zero responders", async () => {
+    Cadenza.createMetaTask("Insert intent_registry", (ctx) => {
+      return {
+        ...ctx,
+        __success: true,
+        __inquiryMeta: {
+          inquiry: "insert-intent-registry",
+          eligibleResponders: 0,
+          responded: 0,
+          failed: 0,
+          timedOut: 0,
+          pending: 0,
+        },
+      };
+    });
+
+    Cadenza.createTask("Lookup missing responders", () => ({ ok: true })).respondsTo(
+      "orders-missing-responders",
+    );
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.splitIntentsTask!, {
+      __syncing: true,
+      intents: Array.from(Cadenza.inquiryBroker.intents.values()),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(
+      GraphSyncController.instance.registeredIntentDefinitions.has(
+        "orders-missing-responders",
+      ),
+    ).toBe(false);
+  });
+
   it("skips task-to-routine sync until both routines and tasks are registered", async () => {
     const taskToRoutineRows: Array<Record<string, unknown>> = [];
 
