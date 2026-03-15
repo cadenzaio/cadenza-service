@@ -225,7 +225,7 @@ describe("service registry transport registration", () => {
       };
     });
 
-    const result = registry.insertServiceInstanceTask.taskFunction({
+    const result = await registry.insertServiceInstanceTask.taskFunction({
       data: {
         uuid: "orders-3",
         process_pid: 1,
@@ -245,6 +245,53 @@ describe("service registry transport registration", () => {
     ]);
     expect(result).toMatchObject({
       uuid: "orders-3",
+    });
+  });
+
+  it("routes remote service inserts through task execution", async () => {
+    resetRuntimeState();
+
+    const executeSpy = vi.fn((context: any) => ({
+      ...context.getContext(),
+      __serviceName: "OrdersService",
+      queryData: context.getContext().queryData,
+    }));
+    const taskFunctionSpy = vi.fn(() => {
+      throw new Error("taskFunction should not be called directly");
+    });
+
+    vi.spyOn(Cadenza, "createCadenzaDBInsertTask").mockImplementation(
+      () =>
+        ({
+          execute: executeSpy,
+          taskFunction: taskFunctionSpy,
+        }) as any,
+    );
+
+    Cadenza.bootstrap();
+    Cadenza.setMode("production");
+
+    const registry = ServiceRegistry.instance as any;
+    const result = await registry.insertServiceTask.taskFunction({
+      data: {
+        name: "OrdersService",
+        description: "Orders",
+      },
+      __serviceName: "OrdersService",
+    });
+
+    expect(taskFunctionSpy).not.toHaveBeenCalled();
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    expect(executeSpy.mock.calls[0]?.[0]?.getContext()).toMatchObject({
+      queryData: expect.objectContaining({
+        data: expect.objectContaining({
+          name: "OrdersService",
+          description: "Orders",
+        }),
+      }),
+    });
+    expect(result).toMatchObject({
+      __serviceName: "OrdersService",
     });
   });
 

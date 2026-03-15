@@ -1,5 +1,4 @@
-import { GraphRoutine, Task } from "@cadenza.io/core";
-import type { TaskFunction } from "@cadenza.io/core";
+import { GraphContext, GraphRoutine, Task } from "@cadenza.io/core";
 import type { AnyObject } from "@cadenza.io/core";
 import Cadenza from "../Cadenza";
 import { isBrowser } from "../utils/environment";
@@ -259,11 +258,22 @@ function resolveServiceRegistryInsertTask(
         false;
 
       return Promise.resolve(
-        (targetTask.taskFunction as TaskFunction)(
-          delegationContext,
+        targetTask.execute(
+          new GraphContext(delegationContext),
           emit,
           inquire,
           progressCallback,
+          {
+            nodeId:
+              delegationContext.__previousTaskExecutionId ??
+              delegationContext.__metadata?.__previousTaskExecutionId ??
+              `service-registry-${tableName}`,
+            routineExecId:
+              delegationContext.__routineExecId ??
+              delegationContext.__metadata?.__routineExecId ??
+              delegationContext.__metadata?.__localRoutineExecId ??
+              "service-registry",
+          },
         ),
       ).then((result) =>
         normalizeServiceRegistryInsertResult(
