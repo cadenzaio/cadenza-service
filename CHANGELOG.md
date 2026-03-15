@@ -1,3 +1,10 @@
+## [2.17.30](https://github.com/cadenzaio/cadenza-service/compare/v2.17.29...v2.17.30) (2026-03-15)
+
+
+### Bug Fixes
+
+* **service-registry:** execute authority inserts as tasks ([fa61666](https://github.com/cadenzaio/cadenza-service/commit/fa61666371ff0e741b2c9f699f7ea4c03459a686))
+
 ## [2.17.29](https://github.com/cadenzaio/cadenza-service/compare/v2.17.28...v2.17.29) (2026-03-15)
 
 
