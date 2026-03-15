@@ -139,6 +139,19 @@ function resolveSyncInsertTask(
   );
 }
 
+const CADENZA_DB_REQUIRED_LOCAL_SYNC_INSERT_TABLES = [
+  "intent_registry",
+  "routine",
+  "task_to_routine_map",
+  "signal_registry",
+  "task",
+  "actor",
+  "actor_task_map",
+  "signal_to_task_map",
+  "intent_to_task_map",
+  "directional_task_graph_map",
+] as const;
+
 export default class GraphSyncController {
   private static _instance: GraphSyncController;
   public static get instance(): GraphSyncController {
@@ -161,10 +174,80 @@ export default class GraphSyncController {
   registeredActors: Set<string> = new Set();
   registeredActorTaskMaps: Set<string> = new Set();
   registeredIntentDefinitions: Set<string> = new Set();
+  loggedAuthorityTaskIntentDiagnostics: Set<string> = new Set();
 
   isCadenzaDBReady: boolean = false;
+  initialized: boolean = false;
+  initRetryScheduled: boolean = false;
+  initRetryTask: Task | undefined;
+  loggedCadenzaDBIntentSweep: boolean = false;
+  lastMissingLocalCadenzaDBInsertTablesKey: string = "";
+
+  private getMissingLocalCadenzaDBInsertTables(): string[] {
+    return CADENZA_DB_REQUIRED_LOCAL_SYNC_INSERT_TABLES.filter(
+      (tableName) => !Cadenza.getLocalCadenzaDBInsertTask(tableName),
+    );
+  }
+
+  private ensureRetryInitTask(): Task {
+    if (this.initRetryTask) {
+      return this.initRetryTask;
+    }
+
+    this.initRetryTask =
+      Cadenza.get("Retry graph sync init") ??
+      Cadenza.createUniqueMetaTask(
+        "Retry graph sync init",
+        () => {
+          this.initRetryScheduled = false;
+          this.init();
+          return true;
+        },
+        "Retries graph sync controller initialization once local authority tasks exist.",
+      ).doOn("meta.sync_controller.init_retry");
+
+    return this.initRetryTask;
+  }
 
   init() {
+    if (this.initialized) {
+      return;
+    }
+
+    const serviceName = resolveSyncServiceName();
+    if (serviceName === "CadenzaDB") {
+      const missingLocalInsertTables = this.getMissingLocalCadenzaDBInsertTables();
+      if (missingLocalInsertTables.length > 0) {
+        this.ensureRetryInitTask();
+        const missingKey = missingLocalInsertTables.join(",");
+        if (missingKey !== this.lastMissingLocalCadenzaDBInsertTablesKey) {
+          this.lastMissingLocalCadenzaDBInsertTablesKey = missingKey;
+          Cadenza.log(
+            "Waiting for local CadenzaDB sync insert tasks before initializing graph sync controller.",
+            {
+              missingLocalInsertTables,
+            },
+            "info",
+          );
+        }
+
+        if (!this.initRetryScheduled) {
+          this.initRetryScheduled = true;
+          Cadenza.schedule(
+            "meta.sync_controller.init_retry",
+            {
+              __missingLocalInsertTables: missingLocalInsertTables,
+            },
+            250,
+          );
+        }
+        return;
+      }
+
+      this.lastMissingLocalCadenzaDBInsertTablesKey = "";
+    }
+
+    this.initialized = true;
     const insertIntentRegistryTask = resolveSyncInsertTask(
       this.isCadenzaDBReady,
       "intent_registry",
@@ -686,7 +769,10 @@ export default class GraphSyncController {
           ? ctx.intents
           : Array.from(Cadenza.inquiryBroker.intents.values());
 
-        if (resolveSyncServiceName() === "CadenzaDB") {
+        if (
+          resolveSyncServiceName() === "CadenzaDB" &&
+          !this.loggedCadenzaDBIntentSweep
+        ) {
           const intentNames = intents
             .map((intent: any) => String(intent?.name ?? "").trim())
             .filter(Boolean);
@@ -710,6 +796,7 @@ export default class GraphSyncController {
             },
             "info",
           );
+          this.loggedCadenzaDBIntentSweep = true;
         }
 
         for (const intent of intents) {
@@ -770,7 +857,7 @@ export default class GraphSyncController {
 
     this.registerIntentToTaskMapTask = Cadenza.createMetaTask(
       "Split intents of task",
-      function* (ctx) {
+      function* (this: GraphSyncController, ctx: any) {
         const task = ctx.task as any;
         if (task.hidden || !task.register) return;
 
@@ -792,17 +879,21 @@ export default class GraphSyncController {
             "Query signal_to_task_map",
           ].includes(task.name)
         ) {
-          Cadenza.log(
-            "CadenzaDB authority task intent diagnostics.",
-            {
-              taskName: task.name,
-              taskVersion: task.version,
-              isMeta: task.isMeta,
-              handlesIntents: Array.from(task.handlesIntents ?? []),
-              registeredIntents: Array.from(task.__registeredIntents ?? []),
-            },
-            "info",
-          );
+          const authorityTaskKey = `${task.name}:${task.version}`;
+          if (!this.loggedAuthorityTaskIntentDiagnostics.has(authorityTaskKey)) {
+            this.loggedAuthorityTaskIntentDiagnostics.add(authorityTaskKey);
+            Cadenza.log(
+              "CadenzaDB authority task intent diagnostics.",
+              {
+                taskName: task.name,
+                taskVersion: task.version,
+                isMeta: task.isMeta,
+                handlesIntents: Array.from(task.handlesIntents ?? []),
+                registeredIntents: Array.from(task.__registeredIntents ?? []),
+              },
+              "info",
+            );
+          }
         }
 
         for (const intent of task.handlesIntents as Set<string>) {
@@ -849,7 +940,7 @@ export default class GraphSyncController {
             },
           };
         }
-      },
+      }.bind(this),
     ).then(
       Cadenza.createMetaTask(
         "Prepare intent definition for intent-to-task map",

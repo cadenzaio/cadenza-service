@@ -251,6 +251,18 @@ describe("graph sync authority rows", () => {
       }
       return ctx;
     });
+    for (const tableName of [
+      "routine",
+      "task_to_routine_map",
+      "signal_registry",
+      "task",
+      "actor",
+      "actor_task_map",
+      "signal_to_task_map",
+      "directional_task_graph_map",
+    ]) {
+      Cadenza.createMetaTask(`Insert ${tableName}`, (ctx) => ctx);
+    }
 
     const lookupTask = Cadenza.createMetaTask("Lookup self-synced orders", () => {
       return {
@@ -280,6 +292,51 @@ describe("graph sync authority rows", () => {
 
     expect(insertSequence[0]).toBe("intent_registry");
     expect(insertSequence).toContain("intent_to_task_map");
+  });
+
+  it("retries CadenzaDB sync init until local authority insert tasks exist", async () => {
+    const originalGetLocalInsertTask =
+      Cadenza.getLocalCadenzaDBInsertTask.bind(Cadenza);
+    let localTasksAvailable = false;
+
+    vi.spyOn(Cadenza, "getLocalCadenzaDBInsertTask").mockImplementation(
+      (tableName: string) =>
+        localTasksAvailable ? originalGetLocalInsertTask(tableName) : undefined,
+    );
+
+    ServiceRegistry.instance.serviceName = "CadenzaDB";
+    (Cadenza as any).serviceRegistry = ServiceRegistry.instance;
+    GraphSyncController.instance.isCadenzaDBReady = true;
+    GraphSyncController.instance.init();
+
+    expect(GraphSyncController.instance.splitIntentsTask).toBeUndefined();
+
+    for (const tableName of [
+      "intent_registry",
+      "routine",
+      "task_to_routine_map",
+      "signal_registry",
+      "task",
+      "actor",
+      "actor_task_map",
+      "signal_to_task_map",
+      "intent_to_task_map",
+      "directional_task_graph_map",
+    ]) {
+      Cadenza.createMetaTask(`Insert ${tableName}`, (ctx) => ctx);
+    }
+
+    localTasksAvailable = true;
+    Cadenza.emit("meta.sync_controller.init_retry", {});
+
+    await waitForCondition(
+      () => GraphSyncController.instance.splitIntentsTask !== undefined,
+      1_500,
+    );
+
+    expect(GraphSyncController.instance.splitTasksInRoutines).toBeDefined();
+    expect(GraphSyncController.instance.registerSignalToTaskMapTask).toBeDefined();
+    expect(GraphSyncController.instance.registerIntentToTaskMapTask).toBeDefined();
   });
 
   it("registers intent-to-task maps immediately after task rows are synced", async () => {
