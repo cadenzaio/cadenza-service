@@ -1,3 +1,10 @@
+## [2.17.24](https://github.com/cadenzaio/cadenza-service/compare/v2.17.23...v2.17.24) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** preserve self-registration context ([6a3cd97](https://github.com/cadenzaio/cadenza-service/commit/6a3cd97f353363b2f28838206e1e2a61a2dce210))
+
 ## [2.17.23](https://github.com/cadenzaio/cadenza-service/compare/v2.17.22...v2.17.23) (2026-03-15)
 
 
