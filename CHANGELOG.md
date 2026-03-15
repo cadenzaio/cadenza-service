@@ -1,3 +1,10 @@
+## [2.17.18](https://github.com/cadenzaio/cadenza-service/compare/v2.17.17...v2.17.18) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** prefer local cadenzadb tasks ([1de4306](https://github.com/cadenzaio/cadenza-service/commit/1de43061124084163339c51535f3242a0c912b89))
+
 ## [2.17.17](https://github.com/cadenzaio/cadenza-service/compare/v2.17.16...v2.17.17) (2026-03-14)
 
 
