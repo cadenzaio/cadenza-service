@@ -171,6 +171,10 @@ function resolveSyncInsertTask(
               queryData: {
                 ...existingQueryData,
                 ...syncQueryData,
+                data:
+                  ctx.data && typeof ctx.data === "object"
+                    ? { ...ctx.data }
+                    : ctx.data,
               },
             }
           : ctx;

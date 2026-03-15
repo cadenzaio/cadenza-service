@@ -360,11 +360,18 @@ describe("graph sync authority rows", () => {
         do: "nothing",
       },
     });
+    expect(observedQueryData.intent_registry[0]?.data).toMatchObject({
+      name: "orders-self-sync-query-data",
+    });
     expect(observedQueryData.intent_to_task_map[0]?.onConflict).toEqual({
       target: ["intent_name", "task_name", "task_version", "service_name"],
       action: {
         do: "nothing",
       },
+    });
+    expect(observedQueryData.intent_to_task_map[0]?.data).toMatchObject({
+      intentName: "orders-self-sync-query-data",
+      taskName: "Lookup self-synced orders with query data",
     });
   });
 
