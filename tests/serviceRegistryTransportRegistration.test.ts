@@ -154,4 +154,56 @@ describe("service registry transport registration", () => {
       }),
     ]);
   });
+
+  it("preserves chained transport metadata through setup service", async () => {
+    const registrations: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture chained transport registration request", (ctx) => {
+      registrations.push(ctx.data);
+      return true;
+    }).doOn("meta.service_registry.transport_registration_requested");
+
+    const setupServiceTask = Cadenza.get("Setup service") as any;
+    const prepareTransportsTask = Cadenza.get("Prepare service transport inserts");
+
+    expect(setupServiceTask).toBeDefined();
+    expect(prepareTransportsTask).toBeDefined();
+
+    const setupResult = setupServiceTask.taskFunction({
+      serviceInstance: {
+        uuid: "orders-2",
+        serviceName: "OrdersService",
+        isFrontend: false,
+        isDatabase: false,
+      },
+      data: {
+        uuid: "orders-2",
+        service_name: "OrdersService",
+      },
+      __transportData: [
+        {
+          uuid: "transport-3",
+          role: "public",
+          origin: "http://orders-2.localhost",
+          protocols: ["rest", "socket"],
+        },
+      ],
+      __useSocket: true,
+      __retryCount: 3,
+      __isFrontend: false,
+    });
+
+    Cadenza.run(prepareTransportsTask!, setupResult);
+
+    await waitForCondition(() => registrations.length === 1, 1_500);
+
+    expect(registrations[0]).toEqual(
+      expect.objectContaining({
+        uuid: "transport-3",
+        role: "public",
+        origin: "http://orders-2.localhost",
+        service_instance_id: "orders-2",
+      }),
+    );
+  });
 });

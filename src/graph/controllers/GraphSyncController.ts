@@ -1223,12 +1223,18 @@ export default class GraphSyncController {
         intents: Array.from(Cadenza.inquiryBroker.intents.values()),
       };
     })
-      .doOn("meta.sync_controller.synced_tasks")
+      .doOn(
+        "meta.sync_controller.synced_tasks",
+        "meta.sync_controller.task_registered",
+      )
       .then(this.splitIntentsTask);
 
     Cadenza.registry
       .getAllRoutines!.clone()
-      .doOn("meta.sync_controller.synced_tasks")
+      .doOn(
+        "meta.sync_controller.synced_tasks",
+        "meta.sync_controller.task_registered",
+      )
       .then(this.splitRoutinesTask);
 
     Cadenza.createMetaTask("Get all actors", (ctx) => {
@@ -1237,7 +1243,10 @@ export default class GraphSyncController {
         actors: Cadenza.getAllActors(),
       };
     })
-      .doOn("meta.sync_controller.synced_tasks")
+      .doOn(
+        "meta.sync_controller.synced_tasks",
+        "meta.sync_controller.task_registered",
+      )
       .then(this.splitActorsForRegistration);
 
     Cadenza.registry
@@ -1251,9 +1260,22 @@ export default class GraphSyncController {
     Cadenza.registry
       .doForEachTask!.clone()
       .doOn(
-        "meta.sync_controller.synced_tasks",
         "meta.sync_controller.synced_signals",
       )
+      .then(this.registerSignalToTaskMapTask);
+
+    Cadenza.createMetaTask("Get registered task for signal sync", (ctx) => {
+      const task = ctx.task ?? (ctx.__taskName ? Cadenza.get(ctx.__taskName) : undefined);
+      if (!task) {
+        return false;
+      }
+
+      return {
+        ...ctx,
+        task,
+      };
+    })
+      .doOn("meta.sync_controller.task_registered")
       .then(this.registerSignalToTaskMapTask);
 
     Cadenza.registry
@@ -1277,13 +1299,27 @@ export default class GraphSyncController {
 
     Cadenza.registry
       .doForEachTask!.clone()
-      .doOn("meta.sync_controller.synced_tasks", "meta.sync_controller.synced_actors")
+      .doOn("meta.sync_controller.synced_actors")
+      .then(this.registerActorTaskMapTask);
+
+    Cadenza.createMetaTask("Get registered task for actor sync", (ctx) => {
+      const task = ctx.task ?? (ctx.__taskName ? Cadenza.get(ctx.__taskName) : undefined);
+      if (!task) {
+        return false;
+      }
+
+      return {
+        ...ctx,
+        task,
+      };
+    })
+      .doOn("meta.sync_controller.task_registered")
       .then(this.registerActorTaskMapTask);
 
     Cadenza.registry
       .getAllRoutines!.clone()
       .doOn(
-        "meta.sync_controller.synced_tasks",
+        "meta.sync_controller.task_registered",
         "meta.sync_controller.synced_routines",
       )
       .then(this.splitTasksInRoutines);

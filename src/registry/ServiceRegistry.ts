@@ -3300,7 +3300,17 @@ export default class ServiceRegistry {
                 ? __isFrontend
                 : !!normalizedLocalInstance.isFrontend;
             console.log("SETUP SERVICE", this.serviceInstanceId);
-            return true;
+            return {
+              ...ctx,
+              serviceInstance: normalizedLocalInstance,
+              data: {
+                ...(ctx.data ?? {}),
+                uuid: normalizedLocalInstance.uuid,
+                service_name: normalizedLocalInstance.serviceName,
+              },
+              __serviceName: normalizedLocalInstance.serviceName,
+              __serviceInstanceId: normalizedLocalInstance.uuid,
+            };
           },
           "Sets service instance id after insertion",
         )
