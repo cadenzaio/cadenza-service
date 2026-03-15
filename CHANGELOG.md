@@ -1,3 +1,10 @@
+## [2.17.28](https://github.com/cadenzaio/cadenza-service/compare/v2.17.27...v2.17.28) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** retry relationship sync after task milestones ([3ad4db9](https://github.com/cadenzaio/cadenza-service/commit/3ad4db988d3e6bad158cb472618220830b0d479a))
+
 ## [2.17.27](https://github.com/cadenzaio/cadenza-service/compare/v2.17.26...v2.17.27) (2026-03-15)
 
 
