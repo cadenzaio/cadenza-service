@@ -271,6 +271,55 @@ describe("graph sync authority rows", () => {
     ).toBe(false);
   });
 
+  it("routes local sync inserts through task execution so queryData survives", async () => {
+    let capturedQueryData: Record<string, unknown> | undefined;
+
+    const localInsertTask = Cadenza.createMetaTask("Insert signal_registry", () => {
+      return {
+        __success: false,
+        __error: "raw taskFunction path should not be used for local sync inserts",
+      };
+    });
+
+    vi.spyOn(localInsertTask, "execute").mockImplementation((context) => {
+      capturedQueryData = context.getFullContext().queryData as
+        | Record<string, unknown>
+        | undefined;
+
+      return {
+        __success: true,
+        __syncing: true,
+        __taskName: "Insert signal_registry",
+        __signal: "orders.updated",
+      } as any;
+    });
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.splitSignalsTask!, {
+      __syncing: true,
+      signals: [
+        {
+          signal: "orders.updated",
+          data: { registered: false },
+        },
+      ],
+    });
+
+    await waitForCondition(() => capturedQueryData !== undefined, 1_500);
+
+    expect(capturedQueryData).toMatchObject({
+      onConflict: {
+        target: ["name"],
+        action: {
+          do: "nothing",
+        },
+      },
+    });
+  });
+
   it("skips task-to-routine sync until both routines and tasks are registered", async () => {
     const taskToRoutineRows: Array<Record<string, unknown>> = [];
 

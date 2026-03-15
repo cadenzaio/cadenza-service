@@ -1,9 +1,8 @@
 import Cadenza from "../../Cadenza";
-import { Task } from "@cadenza.io/core";
+import { GraphContext, Task } from "@cadenza.io/core";
 import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 import { DeputyTask } from "../../index";
 import { isMetaIntentName } from "../../utils/inquiry";
-import type { TaskFunction } from "@cadenza.io/core";
 
 type ActorTaskRuntimeMetadata = {
   actorName: string;
@@ -247,17 +246,28 @@ function resolveSyncInsertTask(
         return false;
       }
 
-      return (targetTask.taskFunction as TaskFunction)(
-        {
+      return targetTask.execute(
+        new GraphContext({
           ...ctx,
           queryData: buildSyncInsertQueryData(
             ctx as Record<string, any>,
             queryData,
           ),
-        },
+        }),
         emit,
         inquire,
         progressCallback,
+        {
+          nodeId:
+            ctx.__previousTaskExecutionId ??
+            ctx.__metadata?.__previousTaskExecutionId ??
+            `graph-sync-${tableName}`,
+          routineExecId:
+            ctx.__routineExecId ??
+            ctx.__metadata?.__routineExecId ??
+            ctx.__metadata?.__localRoutineExecId ??
+            "graph-sync",
+        },
       );
     },
     `Routes graph sync inserts for ${tableName} through the local authority task when available.`,
