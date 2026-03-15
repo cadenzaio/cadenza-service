@@ -1,3 +1,10 @@
+## [2.17.32](https://github.com/cadenzaio/cadenza-service/compare/v2.17.31...v2.17.32) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** keep actor session persistence local ([ed39436](https://github.com/cadenzaio/cadenza-service/commit/ed39436b017f0abb6e9233ffae57d977f692abae))
+
 ## [2.17.31](https://github.com/cadenzaio/cadenza-service/compare/v2.17.30...v2.17.31) (2026-03-15)
 
 
