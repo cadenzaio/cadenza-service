@@ -1,5 +1,9 @@
 import Cadenza from "../../Cadenza";
-import { GraphContext, Task } from "@cadenza.io/core";
+import {
+  GraphContext,
+  META_ACTOR_SESSION_STATE_PERSIST_INTENT,
+  Task,
+} from "@cadenza.io/core";
 import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 import { DeputyTask } from "../../index";
 import { isMetaIntentName } from "../../utils/inquiry";
@@ -101,6 +105,10 @@ function resolveSyncServiceName(task?: { serviceName?: string } | null):
       : "";
 
   return taskServiceName || registryServiceName || undefined;
+}
+
+function isLocalOnlySyncIntent(intentName: string): boolean {
+  return intentName === META_ACTOR_SESSION_STATE_PERSIST_INTENT;
 }
 
 function buildIntentRegistryData(intent: any): Record<string, unknown> | null {
@@ -1105,6 +1113,10 @@ export default class GraphSyncController {
 
         for (const intent of task.handlesIntents as Set<string>) {
           if (task.__registeredIntents.has(intent)) continue;
+
+          if (isLocalOnlySyncIntent(intent)) {
+            continue;
+          }
 
           if (isMetaIntentName(intent) && !task.isMeta) {
             if (!task.__invalidMetaIntentWarnings.has(intent)) {

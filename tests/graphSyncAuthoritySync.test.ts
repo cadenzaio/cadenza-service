@@ -1,3 +1,4 @@
+import { META_ACTOR_SESSION_STATE_PERSIST_INTENT } from "@cadenza.io/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import Cadenza from "../src/Cadenza";
@@ -426,5 +427,35 @@ describe("graph sync authority rows", () => {
     expect(taskNames.some((name) => name.startsWith("Get all routines"))).toBe(
       true,
     );
+  });
+
+  it("keeps actor session persistence local by skipping intent-to-task sync", async () => {
+    const intentMapRows: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Insert intent_to_task_map", (ctx) => {
+      intentMapRows.push(getInsertRow(ctx));
+      return {
+        ...ctx,
+        __success: true,
+      };
+    });
+
+    const localOnlyTask = Cadenza.createMetaTask(
+      "Persist actor session state",
+      (ctx) => ctx,
+    ).respondsTo(META_ACTOR_SESSION_STATE_PERSIST_INTENT);
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.registerIntentToTaskMapTask!, {
+      __syncing: true,
+      task: localOnlyTask,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(intentMapRows).toHaveLength(0);
   });
 });
