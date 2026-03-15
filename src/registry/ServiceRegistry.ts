@@ -1,4 +1,5 @@
 import { GraphRoutine, Task } from "@cadenza.io/core";
+import type { TaskFunction } from "@cadenza.io/core";
 import type { AnyObject } from "@cadenza.io/core";
 import Cadenza from "../Cadenza";
 import { isBrowser } from "../utils/environment";
@@ -58,6 +59,136 @@ const INTERNAL_RUNTIME_STATUS_TASK_NAMES = new Set([
   "Collect distributed readiness",
   "Get status",
 ]);
+
+function buildServiceRegistryInsertQueryData(
+  ctx: AnyObject,
+  queryData: Record<string, unknown>,
+): Record<string, unknown> {
+  const joinedContexts = Array.isArray((ctx as AnyObject).joinedContexts)
+    ? ((ctx as AnyObject).joinedContexts as AnyObject[])
+    : [];
+  const getJoinedValue = (key: "data" | "batch" | "__registrationData") => {
+    for (let index = joinedContexts.length - 1; index >= 0; index -= 1) {
+      const joinedContext = joinedContexts[index];
+      if (
+        joinedContext &&
+        typeof joinedContext === "object" &&
+        (Object.prototype.hasOwnProperty.call(joinedContext, key) ||
+          joinedContext[key] !== undefined)
+      ) {
+        return joinedContext[key];
+      }
+    }
+
+    return undefined;
+  };
+  const registrationData =
+    Object.prototype.hasOwnProperty.call(ctx, "__registrationData") &&
+    ctx.__registrationData !== undefined
+      ? ctx.__registrationData
+      : getJoinedValue("__registrationData");
+  const existingQueryData =
+    ctx.queryData && typeof ctx.queryData === "object" ? ctx.queryData : {};
+  const nextQueryData: Record<string, unknown> = {
+    ...existingQueryData,
+    ...queryData,
+  };
+  const resolvedData =
+    Object.prototype.hasOwnProperty.call(ctx, "data") || ctx.data !== undefined
+      ? ctx.data
+      : getJoinedValue("data");
+  const resolvedBatch =
+    Object.prototype.hasOwnProperty.call(ctx, "batch") || ctx.batch !== undefined
+      ? ctx.batch
+      : getJoinedValue("batch");
+
+  if (
+    !("data" in nextQueryData) &&
+    (resolvedData !== undefined || registrationData !== undefined)
+  ) {
+    nextQueryData.data =
+      resolvedData !== undefined
+        ? resolvedData && typeof resolvedData === "object"
+          ? { ...resolvedData }
+          : resolvedData
+        : registrationData &&
+            typeof registrationData === "object" &&
+            !Array.isArray(registrationData)
+          ? { ...registrationData }
+          : registrationData;
+  }
+
+  if (
+    !("batch" in nextQueryData) &&
+    resolvedBatch !== undefined
+  ) {
+    nextQueryData.batch = Array.isArray(resolvedBatch)
+      ? resolvedBatch.map((row) =>
+          row && typeof row === "object" ? { ...row } : row,
+        )
+      : resolvedBatch;
+  }
+
+  return nextQueryData;
+}
+
+function resolveServiceRegistryInsertTask(
+  tableName: string,
+  queryData: Record<string, unknown> = {},
+  options: Record<string, unknown> = {},
+): Task {
+  const remoteInsertTask = Cadenza.createCadenzaDBInsertTask(
+    tableName,
+    queryData,
+    options,
+  );
+
+  return Cadenza.createUniqueMetaTask(
+    `Resolve service registry insert for ${tableName}`,
+    (ctx, emit, inquire, progressCallback) => {
+      const nextQueryData = buildServiceRegistryInsertQueryData(ctx, queryData);
+      if (tableName === "service" && nextQueryData.data === undefined) {
+        Cadenza.log(
+          "Service registry insert resolver missing service payload.",
+          {
+            ctxKeys:
+              ctx && typeof ctx === "object" ? Object.keys(ctx).sort() : [],
+            hasData:
+              !!ctx &&
+              typeof ctx === "object" &&
+              (Object.prototype.hasOwnProperty.call(ctx, "data") ||
+                (ctx as AnyObject).data !== undefined),
+            hasRegistrationData:
+              !!ctx &&
+              typeof ctx === "object" &&
+              (Object.prototype.hasOwnProperty.call(ctx, "__registrationData") ||
+                (ctx as AnyObject).__registrationData !== undefined),
+            serviceName:
+              (ctx as AnyObject)?.__serviceName ??
+              (ctx as AnyObject)?.data?.name ??
+              null,
+          },
+          "warning",
+        );
+      }
+
+      const targetTask =
+        Cadenza.getLocalCadenzaDBInsertTask(tableName) ?? remoteInsertTask;
+
+      return (targetTask.taskFunction as TaskFunction)(
+        {
+          ...ctx,
+          queryData: nextQueryData,
+        },
+        emit,
+        inquire,
+        progressCallback,
+      );
+    },
+    `Resolves ${tableName} inserts through the local CadenzaDB task when available.`,
+    options,
+  );
+}
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   if (typeof process === "undefined") {
@@ -3150,7 +3281,7 @@ export default class ServiceRegistry {
       .emits("meta.service_registry.transport_diagnostics_collected")
       .emitsOnFail("meta.service_registry.transport_diagnostics_failed");
 
-    this.insertServiceTask = Cadenza.createCadenzaDBInsertTask(
+    this.insertServiceTask = resolveServiceRegistryInsertTask(
       "service",
       {
         onConflict: {
@@ -3204,7 +3335,7 @@ export default class ServiceRegistry {
       .emits("meta.service_registry.service_inserted")
       .emitsOnFail("meta.service_registry.service_insertion_failed");
 
-    this.insertServiceInstanceTask = Cadenza.createCadenzaDBInsertTask(
+    this.insertServiceInstanceTask = resolveServiceRegistryInsertTask(
       "service_instance",
       {},
       {
@@ -3262,9 +3393,7 @@ export default class ServiceRegistry {
         retryCount: 5,
         retryDelay: 1000,
       },
-    )
-      .doOn("meta.service_registry.instance_registration_requested")
-      .then(
+    ).then(
         Cadenza.createMetaTask(
           "Setup service",
           (ctx) => {
@@ -3299,7 +3428,6 @@ export default class ServiceRegistry {
               typeof __isFrontend === "boolean"
                 ? __isFrontend
                 : !!normalizedLocalInstance.isFrontend;
-            console.log("SETUP SERVICE", this.serviceInstanceId);
             return {
               ...ctx,
               serviceInstance: normalizedLocalInstance,
@@ -3333,6 +3461,11 @@ export default class ServiceRegistry {
                       service_instance_id:
                         transport.service_instance_id ?? ctx.__serviceInstanceId,
                     },
+                    __registrationData: {
+                      ...transport,
+                      service_instance_id:
+                        transport.service_instance_id ?? ctx.__serviceInstanceId,
+                    },
                   };
                   emit(
                     "meta.service_registry.transport_registration_requested",
@@ -3346,7 +3479,33 @@ export default class ServiceRegistry {
           ),
       );
 
-    this.insertServiceTransportTask = Cadenza.createCadenzaDBInsertTask(
+    Cadenza.createMetaTask(
+      "Prepare service instance registration",
+      (ctx) => {
+        const serviceName = String(
+          ctx.data?.service_name ?? ctx.__serviceName ?? this.serviceName ?? "",
+        ).trim();
+
+        if (
+          serviceName === "CadenzaDB" &&
+          !Cadenza.getLocalCadenzaDBInsertTask("service_instance")
+        ) {
+          Cadenza.schedule(
+            "meta.service_registry.instance_registration_requested",
+            { ...ctx },
+            250,
+          );
+          return false;
+        }
+
+        return ctx;
+      },
+      "Waits for the exact local CadenzaDB service instance insert task during self-bootstrap.",
+    )
+      .doOn("meta.service_registry.instance_registration_requested")
+      .then(this.insertServiceInstanceTask);
+
+    this.insertServiceTransportTask = resolveServiceRegistryInsertTask(
       "service_instance_transport",
       {
         onConflict: {
@@ -3412,9 +3571,34 @@ export default class ServiceRegistry {
         retryDelay: 1000,
       },
     )
-      .doOn("meta.service_registry.transport_registration_requested")
       .emits("meta.service_registry.transport_registered")
       .emitsOnFail("meta.service_registry.transport_registration_failed");
+
+    Cadenza.createMetaTask(
+      "Prepare service transport registration",
+      (ctx) => {
+        const serviceName = String(
+          ctx.__serviceName ?? this.serviceName ?? "",
+        ).trim();
+
+        if (
+          serviceName === "CadenzaDB" &&
+          !Cadenza.getLocalCadenzaDBInsertTask("service_instance_transport")
+        ) {
+          Cadenza.schedule(
+            "meta.service_registry.transport_registration_requested",
+            { ...ctx },
+            250,
+          );
+          return false;
+        }
+
+        return ctx;
+      },
+      "Waits for the exact local CadenzaDB service transport insert task during self-bootstrap.",
+    )
+      .doOn("meta.service_registry.transport_registration_requested")
+      .then(this.insertServiceTransportTask);
 
     Cadenza.createMetaTask(
       "Handle service creation",

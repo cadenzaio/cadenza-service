@@ -354,6 +354,16 @@ export default class RestController {
                   is_blocked: false,
                   health: {},
                 },
+                __registrationData: {
+                  uuid: ctx.__serviceInstanceId,
+                  process_pid: 1,
+                  service_name: ctx.__serviceName,
+                  is_frontend: true,
+                  is_active: true,
+                  is_non_responsive: false,
+                  is_blocked: false,
+                  health: {},
+                },
                 __transportData: [],
                 ...ctx,
               });
@@ -773,6 +783,9 @@ export default class RestController {
                       is_non_responsive: false,
                       is_blocked: false,
                       health: {},
+                    };
+                    ctx.__registrationData = {
+                      ...ctx.data,
                     };
                     ctx.__transportData = transportData;
 

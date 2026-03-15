@@ -206,4 +206,46 @@ describe("service registry transport registration", () => {
       }),
     );
   });
+
+  it("resolves the local service instance insert task at execution time", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const capturedQueryData: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Insert service_instance", (ctx) => {
+      capturedQueryData.push(
+        (ctx.queryData as Record<string, unknown>) ?? {},
+      );
+
+      return {
+        ...ctx,
+        uuid:
+          (ctx.queryData as any)?.data?.uuid ??
+          (ctx.data as any)?.uuid ??
+          "missing-uuid",
+      };
+    });
+
+    const result = registry.insertServiceInstanceTask.taskFunction({
+      data: {
+        uuid: "orders-3",
+        process_pid: 1,
+        service_name: "OrdersService",
+        is_active: true,
+      },
+    });
+
+    expect(capturedQueryData).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "orders-3",
+          process_pid: 1,
+          service_name: "OrdersService",
+        }),
+      }),
+    ]);
+    expect(result).toMatchObject({
+      uuid: "orders-3",
+    });
+  });
+
 });

@@ -1305,6 +1305,12 @@ export default class CadenzaService {
         displayName: options.displayName ?? "",
         isMeta: options.isMeta,
       },
+      __registrationData: {
+        name: serviceName,
+        description: description,
+        displayName: options.displayName ?? "",
+        isMeta: options.isMeta,
+      },
       __serviceName: serviceName,
       __serviceInstanceId: serviceId,
       __port: options.port,
@@ -1354,6 +1360,16 @@ export default class CadenzaService {
         "meta.service_registry.instance_registration_requested",
         {
           data: {
+            uuid: serviceId,
+            process_pid: 1,
+            service_name: serviceName,
+            is_frontend: true,
+            is_active: true,
+            is_non_responsive: false,
+            is_blocked: false,
+            health: {},
+          },
+          __registrationData: {
             uuid: serviceId,
             process_pid: 1,
             service_name: serviceName,
