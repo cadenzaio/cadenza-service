@@ -686,6 +686,32 @@ export default class GraphSyncController {
           ? ctx.intents
           : Array.from(Cadenza.inquiryBroker.intents.values());
 
+        if (resolveSyncServiceName() === "CadenzaDB") {
+          const intentNames = intents
+            .map((intent: any) => String(intent?.name ?? "").trim())
+            .filter(Boolean);
+          const authorityIntentNames = intentNames.filter(
+            (intentName: string) =>
+              intentName === "meta-service-registry-full-sync" ||
+              intentName.includes("service_instance") ||
+              intentName.includes("service_instance_transport") ||
+              intentName.includes("intent_to_task_map") ||
+              intentName.includes("signal_to_task_map"),
+          );
+
+          Cadenza.log(
+            "CadenzaDB intent sweep diagnostics.",
+            {
+              totalIntents: intentNames.length,
+              hasMetaServiceRegistryFullSync: intentNames.includes(
+                "meta-service-registry-full-sync",
+              ),
+              authorityIntentNames,
+            },
+            "info",
+          );
+        }
+
         for (const intent of intents) {
           const intentData = buildIntentRegistryData(intent);
           if (!intentData) {
@@ -756,6 +782,28 @@ export default class GraphSyncController {
         task.__registeredIntents = task.__registeredIntents ?? new Set<string>();
         task.__invalidMetaIntentWarnings =
           task.__invalidMetaIntentWarnings ?? new Set<string>();
+
+        if (
+          serviceName === "CadenzaDB" &&
+          [
+            "Query service_instance",
+            "Query service_instance_transport",
+            "Query intent_to_task_map",
+            "Query signal_to_task_map",
+          ].includes(task.name)
+        ) {
+          Cadenza.log(
+            "CadenzaDB authority task intent diagnostics.",
+            {
+              taskName: task.name,
+              taskVersion: task.version,
+              isMeta: task.isMeta,
+              handlesIntents: Array.from(task.handlesIntents ?? []),
+              registeredIntents: Array.from(task.__registeredIntents ?? []),
+            },
+            "info",
+          );
+        }
 
         for (const intent of task.handlesIntents as Set<string>) {
           if (task.__registeredIntents.has(intent)) continue;
