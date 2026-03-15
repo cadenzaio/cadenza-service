@@ -1,3 +1,10 @@
+## [2.17.23](https://github.com/cadenzaio/cadenza-service/compare/v2.17.22...v2.17.23) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** preserve authority transport metadata ([95ecb94](https://github.com/cadenzaio/cadenza-service/commit/95ecb94ce59b0a254665896d41a39833784afb78))
+
 ## [2.17.22](https://github.com/cadenzaio/cadenza-service/compare/v2.17.21...v2.17.22) (2026-03-15)
 
 
