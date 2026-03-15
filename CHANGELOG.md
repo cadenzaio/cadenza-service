@@ -1,3 +1,10 @@
+## [2.17.27](https://github.com/cadenzaio/cadenza-service/compare/v2.17.26...v2.17.27) (2026-03-15)
+
+
+### Bug Fixes
+
+* **database:** make constraint ddl idempotent ([1badef1](https://github.com/cadenzaio/cadenza-service/commit/1badef1c314b46dd7390981aa16ee298ee7796ed))
+
 ## [2.17.26](https://github.com/cadenzaio/cadenza-service/compare/v2.17.25...v2.17.26) (2026-03-15)
 
 
