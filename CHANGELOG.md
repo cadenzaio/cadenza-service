@@ -1,3 +1,10 @@
+## [2.17.31](https://github.com/cadenzaio/cadenza-service/compare/v2.17.30...v2.17.31) (2026-03-15)
+
+
+### Bug Fixes
+
+* **frontend:** preserve browser instance registration payload ([543957c](https://github.com/cadenzaio/cadenza-service/commit/543957c3e3b5c80617d29fa9bfb6cdf19f4c47ec))
+
 ## [2.17.30](https://github.com/cadenzaio/cadenza-service/compare/v2.17.29...v2.17.30) (2026-03-15)
 
 
