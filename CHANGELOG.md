@@ -1,3 +1,10 @@
+## [2.17.19](https://github.com/cadenzaio/cadenza-service/compare/v2.17.18...v2.17.19) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** add authority intent diagnostics ([d80075e](https://github.com/cadenzaio/cadenza-service/commit/d80075e3207428d2f149d66ce208bdc49e96d8e7))
+
 ## [2.17.18](https://github.com/cadenzaio/cadenza-service/compare/v2.17.17...v2.17.18) (2026-03-15)
 
 
