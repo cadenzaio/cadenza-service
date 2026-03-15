@@ -1,3 +1,10 @@
+## [2.17.33](https://github.com/cadenzaio/cadenza-service/compare/v2.17.32...v2.17.33) (2026-03-15)
+
+
+### Bug Fixes
+
+* **service-registry:** preserve local identity on remote inserts ([b783e8c](https://github.com/cadenzaio/cadenza-service/commit/b783e8c1a4ca6cee77bb20aa307de11ee69ea949))
+
 ## [2.17.32](https://github.com/cadenzaio/cadenza-service/compare/v2.17.31...v2.17.32) (2026-03-15)
 
 
