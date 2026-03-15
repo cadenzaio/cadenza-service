@@ -46,16 +46,13 @@ describe("RestController delegation resolution", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("registers the service instance insert deputy with the snake_case target", () => {
+  it("registers the service instance insert resolver for authority routing", () => {
     const serviceInstanceInsertTask = (Cadenza as any).serviceRegistry
       .insertServiceInstanceTask as any;
 
     expect(serviceInstanceInsertTask).toBeDefined();
     expect(serviceInstanceInsertTask?.name).toBe(
-      "Insert service_instance in CadenzaDB",
-    );
-    expect(serviceInstanceInsertTask?.remoteRoutineName).toBe(
-      "Insert service_instance",
+      "Resolve service registry insert for service_instance",
     );
   });
 

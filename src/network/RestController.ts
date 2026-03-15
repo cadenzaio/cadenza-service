@@ -344,6 +344,7 @@ export default class RestController {
           (ctx, emit) => {
             if (isBrowser || ctx.__isFrontend) {
               emit("meta.service_registry.instance_registration_requested", {
+                ...ctx,
                 data: {
                   uuid: ctx.__serviceInstanceId,
                   process_pid: 1,
@@ -365,7 +366,6 @@ export default class RestController {
                   health: {},
                 },
                 __transportData: [],
-                ...ctx,
               });
               return;
             }
