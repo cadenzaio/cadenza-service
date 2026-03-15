@@ -1,3 +1,10 @@
+## [2.17.26](https://github.com/cadenzaio/cadenza-service/compare/v2.17.25...v2.17.26) (2026-03-15)
+
+
+### Bug Fixes
+
+* **sync:** restore live authority registration ([c8f338e](https://github.com/cadenzaio/cadenza-service/commit/c8f338e80fd8f717d6af01b00bdaa7631404308a))
+
 ## [2.17.25](https://github.com/cadenzaio/cadenza-service/compare/v2.17.24...v2.17.25) (2026-03-15)
 
 
