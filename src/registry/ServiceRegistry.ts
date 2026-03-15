@@ -168,16 +168,27 @@ function normalizeServiceRegistryInsertResult(
 
   if (tableName === "service") {
     const resolvedServiceName = String(
-      result.__serviceName ??
+      ctx.__serviceName ??
+        result.__serviceName ??
         (resolvedData as AnyObject | undefined)?.name ??
         (resolvedData as AnyObject | undefined)?.service_name ??
-        ctx.__serviceName ??
         "",
     ).trim();
 
     if (resolvedServiceName) {
       result.__serviceName = resolvedServiceName;
     }
+  }
+
+  const resolvedLocalServiceInstanceId = String(
+    ctx.__serviceInstanceId ??
+      (resolvedData as AnyObject | undefined)?.uuid ??
+      (resolvedData as AnyObject | undefined)?.service_instance_id ??
+      "",
+  ).trim();
+
+  if (resolvedLocalServiceInstanceId) {
+    result.__serviceInstanceId = resolvedLocalServiceInstanceId;
   }
 
   if (

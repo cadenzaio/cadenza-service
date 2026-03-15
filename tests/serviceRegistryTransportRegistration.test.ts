@@ -295,4 +295,47 @@ describe("service registry transport registration", () => {
     });
   });
 
+  it("preserves local instance identity when remote service inserts return authority metadata", async () => {
+    resetRuntimeState();
+
+    const executeSpy = vi.fn((context: any) => ({
+      ...context.getContext(),
+      __serviceName: "CadenzaDB",
+      __serviceInstanceId: "authority-1",
+      queryData: context.getContext().queryData,
+    }));
+
+    vi.spyOn(Cadenza, "createCadenzaDBInsertTask").mockImplementation(
+      () =>
+        ({
+          execute: executeSpy,
+          taskFunction: vi.fn(),
+        }) as any,
+    );
+
+    Cadenza.bootstrap();
+    Cadenza.setMode("production");
+
+    const registry = ServiceRegistry.instance as any;
+    const result = await registry.insertServiceTask.taskFunction({
+      data: {
+        name: "OrdersService",
+        description: "Orders",
+      },
+      __serviceName: "OrdersService",
+      __serviceInstanceId: "orders-4",
+    });
+
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      __serviceName: "OrdersService",
+      __serviceInstanceId: "orders-4",
+      queryData: expect.objectContaining({
+        data: expect.objectContaining({
+          name: "OrdersService",
+        }),
+      }),
+    });
+  });
+
 });
