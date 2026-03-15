@@ -431,6 +431,17 @@ function resolveDataRows(data: unknown): Record<string, any>[] {
   return [ensurePlainObject(data, "data")];
 }
 
+function buildAddConstraintIfMissingStatement(
+  tableName: string,
+  constraintName: string,
+  constraintDefinition: string,
+): string {
+  const escapedConstraintName = constraintName.replace(/'/g, "''");
+  const escapedTableName = tableName.replace(/'/g, "''");
+
+  return `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '${escapedConstraintName}' AND conrelid = '${escapedTableName}'::regclass) THEN ALTER TABLE ${tableName} ADD CONSTRAINT ${constraintName} ${constraintDefinition}; END IF; END $$;`;
+}
+
 /**
  * DatabaseController now acts as a PostgresActor plugin coordinator.
  *
@@ -1581,32 +1592,39 @@ export default class DatabaseController {
       }
 
       if (table.primaryKey) {
+        const primaryKeyName = `pk_${tableName}_${table.primaryKey.join("_")}`;
         ddl.push(
-          `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS pk_${tableName}_${table.primaryKey.join("_")};`,
-          `ALTER TABLE ${tableName} ADD CONSTRAINT pk_${tableName}_${table.primaryKey.join("_")} PRIMARY KEY (${table.primaryKey
-            .map(snakeCase)
-            .join(", ")});`,
+          buildAddConstraintIfMissingStatement(
+            tableName,
+            primaryKeyName,
+            `PRIMARY KEY (${table.primaryKey.map(snakeCase).join(", ")})`,
+          ),
         );
       }
 
       for (const uniqueFields of table.uniqueConstraints ?? []) {
+        const uniqueConstraintName = `uq_${tableName}_${uniqueFields.join("_")}`;
         ddl.push(
-          `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS uq_${tableName}_${uniqueFields.join("_")};`,
-          `ALTER TABLE ${tableName} ADD CONSTRAINT uq_${tableName}_${uniqueFields.join("_")} UNIQUE (${uniqueFields
-            .map(snakeCase)
-            .join(", ")});`,
+          buildAddConstraintIfMissingStatement(
+            tableName,
+            uniqueConstraintName,
+            `UNIQUE (${uniqueFields.map(snakeCase).join(", ")})`,
+          ),
         );
       }
 
       for (const foreignKey of table.foreignKeys ?? []) {
         const fkName = `fk_${tableName}_${foreignKey.fields.join("_")}`;
         ddl.push(
-          `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS ${fkName};`,
-          `ALTER TABLE ${tableName} ADD CONSTRAINT ${fkName} FOREIGN KEY (${foreignKey.fields
-            .map(snakeCase)
-            .join(", ")}) REFERENCES ${foreignKey.tableName} (${foreignKey.referenceFields
-            .map(snakeCase)
-            .join(", ")});`,
+          buildAddConstraintIfMissingStatement(
+            tableName,
+            fkName,
+            `FOREIGN KEY (${foreignKey.fields
+              .map(snakeCase)
+              .join(", ")}) REFERENCES ${foreignKey.tableName} (${foreignKey.referenceFields
+              .map(snakeCase)
+              .join(", ")})`,
+          ),
         );
       }
 

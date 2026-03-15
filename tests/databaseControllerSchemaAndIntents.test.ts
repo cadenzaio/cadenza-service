@@ -349,4 +349,58 @@ describe("DatabaseController schema and intent helpers", () => {
       input: inputSchema,
     });
   });
+
+  it("builds idempotent constraint DDL without dropping existing constraints", () => {
+    const controller = Object.create(DatabaseController.prototype) as DatabaseController;
+    const buildSchemaDdlStatements = (
+      controller as unknown as {
+        buildSchemaDdlStatements: (
+          schema: AnyObject,
+          sortedTables: string[],
+        ) => string[];
+      }
+    ).buildSchemaDdlStatements.bind(controller);
+
+    const ddl = buildSchemaDdlStatements(
+      {
+        tables: {
+          routine: {
+            fields: {
+              name: { type: "varchar", required: true },
+              service_name: { type: "varchar", required: true },
+              version: { type: "int", default: 1 },
+            },
+            primaryKey: ["name", "service_name", "version"],
+            uniqueConstraints: [["name", "service_name"]],
+          },
+          task_to_routine_map: {
+            fields: {
+              routine_name: { type: "varchar", required: true },
+              routine_version: { type: "int", default: 1 },
+              service_name: { type: "varchar", required: true },
+            },
+            foreignKeys: [
+              {
+                tableName: "routine",
+                fields: ["routine_name", "routine_version", "service_name"],
+                referenceFields: ["name", "version", "service_name"],
+              },
+            ],
+          },
+        },
+      },
+      ["routine", "task_to_routine_map"],
+    );
+
+    expect(ddl.some((statement) => statement.includes("DROP CONSTRAINT"))).toBe(false);
+    expect(ddl).toContain(
+      "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pk_routine_name_service_name_version' AND conrelid = 'routine'::regclass) THEN ALTER TABLE routine ADD CONSTRAINT pk_routine_name_service_name_version PRIMARY KEY (name, service_name, version); END IF; END $$;",
+    );
+    expect(ddl).toContain(
+      "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_routine_name_service_name' AND conrelid = 'routine'::regclass) THEN ALTER TABLE routine ADD CONSTRAINT uq_routine_name_service_name UNIQUE (name, service_name); END IF; END $$;",
+    );
+    expect(ddl).toContain(
+      "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_task_to_routine_map_routine_name_routine_version_service_name' AND conrelid = 'task_to_routine_map'::regclass) THEN ALTER TABLE task_to_routine_map ADD CONSTRAINT fk_task_to_routine_map_routine_name_routine_version_service_name FOREIGN KEY (routine_name, routine_version, service_name) REFERENCES routine (name, version, service_name); END IF; END $$;",
+    );
+  });
 });
