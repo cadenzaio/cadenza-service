@@ -305,7 +305,21 @@ describe("graph sync authority rows", () => {
   it("does not mark intent definitions as registered when delegated inserts have zero responders", async () => {
     vi.spyOn(Cadenza, "getLocalCadenzaDBInsertTask").mockReturnValue(undefined);
     vi.spyOn(Cadenza, "getLocalCadenzaDBQueryTask").mockReturnValue(undefined);
-    vi.spyOn(Cadenza, "createCadenzaDBQueryTask").mockReturnValue(undefined as any);
+    vi.spyOn(Cadenza, "createCadenzaDBQueryTask").mockImplementation((tableName) =>
+      Cadenza.createMetaTask(
+        `Delegated query ${tableName}`,
+        (ctx) => ({
+          ...ctx,
+          __success: true,
+        }),
+        "",
+        {
+          register: false,
+          isHidden: true,
+          isMeta: true,
+        },
+      ),
+    );
     vi.spyOn(Cadenza, "createCadenzaDBInsertTask").mockImplementation(() =>
       Cadenza.createMetaTask(
         "Delegated zero-responder intent insert",
@@ -624,22 +638,31 @@ describe("graph sync authority rows", () => {
     let insertedIntentMap: Record<string, unknown> | undefined;
 
     vi.spyOn(Cadenza, "getLocalCadenzaDBInsertTask").mockReturnValue(undefined);
+    vi.spyOn(Cadenza, "createCadenzaDBInsertTask").mockImplementation(
+      (tableName) =>
+        Cadenza.createMetaTask(
+          `Remote insert ${tableName}`,
+          (ctx) => {
+            if (tableName === "intent_registry") {
+              insertedIntentDefinition = getInsertRow(ctx);
+            }
 
-    Cadenza.createMetaTask("Remote insert intent registry", (ctx) => {
-      insertedIntentDefinition = getInsertRow(ctx);
-      return {
-        ...ctx,
-        __success: true,
-      };
-    }).respondsTo("insert-pg-cadenza-db-postgres-actor-intent_registry");
+            if (tableName === "intent_to_task_map") {
+              insertedIntentMap = getInsertRow(ctx);
+            }
 
-    Cadenza.createMetaTask("Remote insert intent map", (ctx) => {
-      insertedIntentMap = getInsertRow(ctx);
-      return {
-        ...ctx,
-        __success: true,
-      };
-    }).respondsTo("insert-pg-cadenza-db-postgres-actor-intent_to_task_map");
+            return {
+              __success: true,
+            };
+          },
+          "",
+          {
+            register: false,
+            isHidden: true,
+            isMeta: true,
+          },
+        ),
+    );
 
     const task = Cadenza.createMetaTask("Handle remote order sync", (ctx) => ctx).respondsTo(
       "orders-remote-sync",
