@@ -228,4 +228,58 @@ describe("SocketController delegation cleanup", () => {
         "No task or routine registered for delegation target Missing frontend delegation target.",
     });
   }, 10_000);
+
+  it("ignores non-function trailing signal event arguments on the frontend socket client", async () => {
+    SocketController.instance;
+    Cadenza.serviceRegistry.serviceName = "DemoFrontend";
+    Cadenza.serviceRegistry.serviceInstanceId = "frontend-1";
+    Cadenza.serviceRegistry.isFrontend = true;
+
+    let receivedSignalCtx: any = null;
+    Cadenza.createTask(
+      "Observe frontend socket signal",
+      (ctx: any) => {
+        receivedSignalCtx = ctx;
+        return ctx;
+      },
+      "Captures server-pushed frontend signal payloads during socket tests.",
+    ).doOn("demo.frontend.signal");
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceInstanceId: "remote-cadenza-db",
+      communicationTypes: ["socket"],
+      serviceName: "CadenzaDB",
+      serviceTransportId: "cadenza-db-public-1",
+      serviceOrigin: "http://cadenza-db.localhost",
+      transportProtocols: ["socket"],
+    });
+
+    await waitForCondition(() => Boolean(__getLastSocket()?.connected), 1_000);
+    await waitForCondition(
+      () => (__getLastSocket() as any)?.listenerCount?.("signal") > 0,
+      1_000,
+    );
+
+    expect(() =>
+      __getLastSocket()?.emit(
+        "signal",
+        {
+          __signalName: "demo.frontend.signal",
+          payload: {
+            deviceId: "device-7",
+          },
+        },
+        {
+          not: "an-ack-callback",
+        },
+      ),
+    ).not.toThrow();
+
+    await waitForCondition(() => Boolean(receivedSignalCtx), 1_000);
+    expect(receivedSignalCtx).toMatchObject({
+      payload: {
+        deviceId: "device-7",
+      },
+    });
+  });
 });

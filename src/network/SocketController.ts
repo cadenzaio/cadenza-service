@@ -87,6 +87,12 @@ type SocketEmitWhenReady = <T>(
   ack?: (response: T) => void,
 ) => Promise<T>;
 
+function isSocketAckCallback<T = AnyObject>(
+  value: unknown,
+): value is (context: T) => void {
+  return typeof value === "function";
+}
+
 interface SocketClientRuntimeHandle {
   url: string;
   socket: Socket;
@@ -685,12 +691,14 @@ export default class SocketController {
                 });
               });
 
-              ws.on("signal", (ctx: AnyObject, callback: (context: AnyObject) => void) => {
+              ws.on("signal", (ctx: AnyObject, callback: unknown) => {
                 if (Cadenza.signalBroker.listObservedSignals().includes(ctx.__signalName)) {
-                  callback({
-                    __status: "success",
-                    __signalName: ctx.__signalName,
-                  });
+                  if (isSocketAckCallback(callback)) {
+                    callback({
+                      __status: "success",
+                      __signalName: ctx.__signalName,
+                    });
+                  }
 
                   Cadenza.emit(ctx.__signalName, ctx);
                 } else {
@@ -698,12 +706,14 @@ export default class SocketController {
                     `No such signal ${ctx.__signalName} on ${ctx.__serviceName}`,
                     "warning",
                   );
-                  callback({
-                    ...ctx,
-                    __status: "error",
-                    __error: `No such signal: ${ctx.__signalName}`,
-                    errored: true,
-                  });
+                  if (isSocketAckCallback(callback)) {
+                    callback({
+                      ...ctx,
+                      __status: "error",
+                      __error: `No such signal: ${ctx.__signalName}`,
+                      errored: true,
+                    });
+                  }
                 }
               });
 
@@ -1219,22 +1229,26 @@ export default class SocketController {
             });
           });
 
-          socket.on("signal", (signalCtx, callback?: (context: AnyObject) => void) => {
+          socket.on("signal", (signalCtx, callback?: unknown) => {
             if (Cadenza.signalBroker.listObservedSignals().includes(signalCtx.__signalName)) {
-              callback?.({
-                __status: "success",
-                __signalName: signalCtx.__signalName,
-              });
+              if (isSocketAckCallback(callback)) {
+                callback({
+                  __status: "success",
+                  __signalName: signalCtx.__signalName,
+                });
+              }
               Cadenza.emit(signalCtx.__signalName, signalCtx);
               return;
             }
 
-            callback?.({
-              ...signalCtx,
-              __status: "error",
-              __error: `No such signal: ${signalCtx.__signalName}`,
-              errored: true,
-            });
+            if (isSocketAckCallback(callback)) {
+              callback({
+                ...signalCtx,
+                __status: "error",
+                __error: `No such signal: ${signalCtx.__signalName}`,
+                errored: true,
+              });
+            }
           });
 
           socket.on("status_check", (statusCtx, callback) => {
