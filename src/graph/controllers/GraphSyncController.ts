@@ -537,7 +537,7 @@ export default class GraphSyncController {
           { concurrency: 30 },
         )?.then(
           Cadenza.createMetaTask("Register routine", (ctx) => {
-            if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+            if (!didSyncInsertSucceed(ctx)) {
               return;
             }
 
@@ -639,7 +639,7 @@ export default class GraphSyncController {
           { concurrency: 30 },
         )?.then(
           Cadenza.createMetaTask("Register routine task", (ctx) => {
-            if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+            if (!didSyncInsertSucceed(ctx)) {
               return;
             }
 
@@ -706,7 +706,7 @@ export default class GraphSyncController {
           { concurrency: 30 },
         )?.then(
           Cadenza.createMetaTask("Process signal registration", (ctx) => {
-            if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+            if (!didSyncInsertSucceed(ctx)) {
               return;
             }
 
@@ -809,7 +809,7 @@ export default class GraphSyncController {
           { concurrency: 30 },
         )?.then(
           Cadenza.createMetaTask("Record registration", (ctx, emit) => {
-            if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+            if (!didSyncInsertSucceed(ctx)) {
               return;
             }
 
@@ -891,7 +891,7 @@ export default class GraphSyncController {
         { concurrency: 30 },
       )?.then(
         Cadenza.createMetaTask("Record actor registration", (ctx) => {
-          if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+          if (!didSyncInsertSucceed(ctx)) {
             return;
           }
 
@@ -981,7 +981,7 @@ export default class GraphSyncController {
         { concurrency: 30 },
       )?.then(
         Cadenza.createMetaTask("Record actor task map registration", (ctx) => {
-          if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+          if (!didSyncInsertSucceed(ctx)) {
             return;
           }
           Cadenza.debounce("meta.sync_controller.synced_resource", {
@@ -995,7 +995,7 @@ export default class GraphSyncController {
     const registerSignalTask = Cadenza.createMetaTask(
       "Record signal registration",
       (ctx) => {
-        if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+        if (!didSyncInsertSucceed(ctx)) {
           return;
         }
 
@@ -1110,7 +1110,7 @@ export default class GraphSyncController {
       .then(
         insertIntentRegistryTask?.then(
           Cadenza.createMetaTask("Record intent definition registration", (ctx) => {
-            if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+            if (!didSyncInsertSucceed(ctx)) {
               return;
             }
 
@@ -1143,7 +1143,7 @@ export default class GraphSyncController {
     const registerIntentTask = Cadenza.createMetaTask(
       "Record intent registration",
       (ctx) => {
-        if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+        if (!didSyncInsertSucceed(ctx)) {
           return;
         }
 
@@ -1343,7 +1343,7 @@ export default class GraphSyncController {
         { concurrency: 30 },
       )?.then(
         Cadenza.createMetaTask("Record task map registration", (ctx) => {
-          if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+          if (!didSyncInsertSucceed(ctx)) {
             return;
           }
 
@@ -1410,7 +1410,7 @@ export default class GraphSyncController {
         Cadenza.createMetaTask(
           "Record deputy relationship registration",
           (ctx) => {
-            if (!ctx.__syncing || !didSyncInsertSucceed(ctx)) {
+            if (!didSyncInsertSucceed(ctx)) {
               return;
             }
 
