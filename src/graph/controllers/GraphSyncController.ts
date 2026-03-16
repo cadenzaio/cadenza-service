@@ -738,9 +738,26 @@ function getRegistrableRoutines() {
   return Array.from(Cadenza.registry.routines.values());
 }
 
-function getRegistrableSignalObservers(): Array<{ registered?: boolean }> {
-  const signalObservers = (Cadenza.signalBroker as any).signalObservers;
-  return signalObservers ? Array.from(signalObservers.values()) : [];
+function isAuthoritySyncSignal(signalName: string): boolean {
+  return decomposeSignalName(signalName).isGlobal;
+}
+
+function getRegistrableSignalObservers(): Array<{
+  signalName: string;
+  registered?: boolean;
+}> {
+  const signalObservers = (Cadenza.signalBroker as any)
+    .signalObservers as Map<string, { registered?: boolean }> | undefined;
+  if (!signalObservers) {
+    return [];
+  }
+
+  return Array.from(signalObservers.entries())
+    .filter(([signalName]) => isAuthoritySyncSignal(signalName))
+    .map(([signalName, observer]) => ({
+      signalName,
+      ...observer,
+    }));
 }
 
 function getRegistrableIntentNames(): string[] {
@@ -1004,7 +1021,7 @@ export default class GraphSyncController {
     };
     const finalizeSignalSync = (emit: any, ctx: Record<string, unknown>) => {
       const pendingSignals = getRegistrableSignalObservers().filter(
-        (observer) => observer?.registered !== true,
+        (observer) => observer.registered !== true,
       );
       if (pendingSignals.length > 0) {
         this.signalsSynced = false;
@@ -1294,9 +1311,13 @@ export default class GraphSyncController {
         if (!signals) return;
 
         const filteredSignals = signals
-          .filter(
-            (signal: { signal: string; data: any }) => !signal.data.registered,
-          )
+          .filter((signal: { signal: string; data: any }) => {
+            if (signal.data.registered) {
+              return false;
+            }
+
+            return isAuthoritySyncSignal(signal.signal);
+          })
           .map((signal: { signal: string; data: any }) => signal.signal);
 
         for (const signal of filteredSignals) {
@@ -1718,6 +1739,9 @@ export default class GraphSyncController {
           }
 
           const { isGlobal } = decomposeSignalName(_signal);
+          if (!isGlobal) {
+            continue;
+          }
 
           if (shouldDebugSyncTaskName(task.name)) {
             logSyncDebug("signal_to_task_map_split", {

@@ -473,7 +473,7 @@ describe("graph sync authority rows", () => {
       __success: true,
       __signal: undefined,
       data: {
-        name: "orders.updated",
+        name: "global.orders.updated",
       },
     }));
 
@@ -485,7 +485,7 @@ describe("graph sync authority rows", () => {
       __syncing: true,
       signals: [
         {
-          signal: "orders.updated",
+          signal: "global.orders.updated",
           data: { registered: false },
         },
       ],
@@ -493,15 +493,18 @@ describe("graph sync authority rows", () => {
 
     await waitForCondition(
       () =>
-        (Cadenza.signalBroker as any).signalObservers?.get("orders.updated")
+        (Cadenza.signalBroker as any).signalObservers?.get("global.orders.updated")
           ?.registered === true,
       1_500,
     );
 
-    expect((Cadenza.signalBroker as any).signalObservers?.get("orders.updated"))
-      .toMatchObject({
-        registered: true,
-      });
+    expect(
+      (Cadenza.signalBroker as any).signalObservers?.get(
+        "global.orders.updated",
+      ),
+    ).toMatchObject({
+      registered: true,
+    });
   });
 
   it("skips task-to-routine sync until both routines and tasks are registered", async () => {
@@ -552,7 +555,7 @@ describe("graph sync authority rows", () => {
     ).toBe(true);
   });
 
-  it("skips signal-to-task sync until the observed signal is registered", async () => {
+  it("skips signal-to-task sync until the observed global signal is registered", async () => {
     const signalToTaskRows: Array<Record<string, unknown>> = [];
 
     createLocalAuthorityInsertTask("signal_to_task_map", (ctx) => {
@@ -561,7 +564,7 @@ describe("graph sync authority rows", () => {
     });
 
     const observedTask = Cadenza.createMetaTask("Observe orders updated", () => true);
-    observedTask.doOn("orders.updated");
+    observedTask.doOn("global.orders.updated");
     observedTask.registered = true;
 
     ServiceRegistry.instance.serviceName = "OrdersApi";
@@ -577,7 +580,7 @@ describe("graph sync authority rows", () => {
     expect(signalToTaskRows).toHaveLength(0);
 
     Cadenza.run(Cadenza.signalBroker.registerSignalTask!, {
-      signalName: "orders.updated",
+      signalName: "global.orders.updated",
     });
 
     Cadenza.run(GraphSyncController.instance.registerSignalToTaskMapTask!, {
@@ -588,13 +591,13 @@ describe("graph sync authority rows", () => {
     await waitForCondition(() => signalToTaskRows.length === 1, 1_500);
 
     expect(signalToTaskRows[0]).toMatchObject({
-      signalName: "orders.updated",
+      signalName: "global.orders.updated",
       taskName: "Observe orders updated",
       serviceName: "OrdersApi",
     });
   });
 
-  it("does not require global sync flags before registering signal-to-task maps", async () => {
+  it("does not require global sync flags before registering global signal-to-task maps", async () => {
     const signalToTaskRows: Array<Record<string, unknown>> = [];
 
     createLocalAuthorityInsertTask("signal_to_task_map", (ctx) => {
@@ -606,7 +609,7 @@ describe("graph sync authority rows", () => {
     });
 
     const observedTask = Cadenza.createMetaTask("Observe invoice paid", () => true);
-    observedTask.doOn("billing.invoice.paid");
+    observedTask.doOn("global.billing.invoice.paid");
     observedTask.registered = true;
 
     ServiceRegistry.instance.serviceName = "OrdersApi";
@@ -616,7 +619,7 @@ describe("graph sync authority rows", () => {
     GraphSyncController.instance.signalsSynced = false;
 
     Cadenza.run(Cadenza.signalBroker.registerSignalTask!, {
-      signalName: "billing.invoice.paid",
+      signalName: "global.billing.invoice.paid",
     });
 
     Cadenza.run(GraphSyncController.instance.registerSignalToTaskMapTask!, {
@@ -627,10 +630,51 @@ describe("graph sync authority rows", () => {
     await waitForCondition(() => signalToTaskRows.length === 1, 1_500);
 
     expect(signalToTaskRows[0]).toMatchObject({
-      signalName: "billing.invoice.paid",
+      signalName: "global.billing.invoice.paid",
       taskName: "Observe invoice paid",
       serviceName: "OrdersApi",
     });
+  });
+
+  it("ignores non-global signals for authority signal sync", async () => {
+    const signalToTaskRows: Array<Record<string, unknown>> = [];
+
+    createLocalAuthorityInsertTask("signal_registry", (ctx) => ctx);
+    createLocalAuthorityInsertTask("signal_to_task_map", (ctx) => {
+      signalToTaskRows.push(getInsertRow(ctx));
+      return ctx;
+    });
+
+    const observedTask = Cadenza.createMetaTask("Observe local invoice paid", () => true);
+    observedTask.doOn("billing.invoice.paid");
+    observedTask.registered = true;
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(Cadenza.signalBroker.registerSignalTask!, {
+      signalName: "billing.invoice.paid",
+    });
+
+    Cadenza.run(GraphSyncController.instance.splitSignalsTask!, {
+      __syncing: true,
+      signals: [
+        {
+          signal: "billing.invoice.paid",
+          data: { registered: false },
+        },
+      ],
+    });
+
+    Cadenza.run(GraphSyncController.instance.registerSignalToTaskMapTask!, {
+      __syncing: true,
+      task: observedTask,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(signalToTaskRows).toHaveLength(0);
   });
 
   it("keeps signal transmission task split payloads owned by the local service", () => {
