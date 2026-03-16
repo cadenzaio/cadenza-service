@@ -621,4 +621,5 @@ describe("graph sync authority rows", () => {
 
     expect(task.registered).toBe(true);
   });
+
 });

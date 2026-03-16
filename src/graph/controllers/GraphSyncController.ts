@@ -361,6 +361,58 @@ const CADENZA_DB_REQUIRED_LOCAL_SYNC_INSERT_TABLES = [
   "directional_task_graph_map",
 ] as const;
 
+const AUTHORITY_QUERY_RESULT_KEYS = {
+  task: "tasks",
+  routine: "routines",
+  signal_registry: "signalRegistrys",
+  intent_registry: "intentRegistrys",
+} as const;
+
+type AuthorityQueryTableName = keyof typeof AUTHORITY_QUERY_RESULT_KEYS;
+
+function resolveSyncQueryRows<T extends Record<string, unknown>>(
+  ctx: Record<string, any>,
+  tableName: AuthorityQueryTableName,
+): T[] {
+  const resultKey = AUTHORITY_QUERY_RESULT_KEYS[tableName];
+  const rows = ctx?.[resultKey];
+  return Array.isArray(rows) ? (rows as T[]) : [];
+}
+
+function resolveSyncQueryTask(
+  isCadenzaDBReady: boolean,
+  tableName: AuthorityQueryTableName,
+  queryData: Record<string, unknown> = {},
+  options: Record<string, unknown> = {},
+): Task | undefined {
+  const localQueryTask = Cadenza.getLocalCadenzaDBQueryTask(tableName);
+  const remoteQueryTask = isCadenzaDBReady
+    ? Cadenza.createCadenzaDBQueryTask(tableName, queryData, options)
+    : undefined;
+
+  if (!localQueryTask && !remoteQueryTask) {
+    return undefined;
+  }
+
+  const targetTask = localQueryTask ?? remoteQueryTask!;
+
+  return Cadenza.createMetaTask(
+    `Prepare graph sync query for ${tableName}`,
+    (ctx) => ({
+      ...ctx,
+      queryData: {
+        ...(ctx.queryData && typeof ctx.queryData === "object" ? ctx.queryData : {}),
+        ...queryData,
+      },
+    }),
+    `Prepares ${tableName} graph-sync query payloads.`,
+    {
+      register: false,
+      isHidden: true,
+    },
+  ).then(targetTask);
+}
+
 export default class GraphSyncController {
   private static _instance: GraphSyncController;
   public static get instance(): GraphSyncController {
@@ -485,6 +537,30 @@ export default class GraphSyncController {
         },
       },
       { concurrency: 30 },
+    );
+    const authoritativeTaskQueryTask = resolveSyncQueryTask(
+      this.isCadenzaDBReady,
+      "task",
+      {},
+      { concurrency: 10 },
+    );
+    const authoritativeRoutineQueryTask = resolveSyncQueryTask(
+      this.isCadenzaDBReady,
+      "routine",
+      {},
+      { concurrency: 10 },
+    );
+    const authoritativeSignalQueryTask = resolveSyncQueryTask(
+      this.isCadenzaDBReady,
+      "signal_registry",
+      {},
+      { concurrency: 10 },
+    );
+    const authoritativeIntentQueryTask = resolveSyncQueryTask(
+      this.isCadenzaDBReady,
+      "intent_registry",
+      {},
+      { concurrency: 10 },
     );
 
     this.splitRoutinesTask = Cadenza.createMetaTask(
@@ -1424,6 +1500,349 @@ export default class GraphSyncController {
         ),
       ),
     );
+
+    const reconcileTaskRegistrationFromAuthorityTask = Cadenza.createMetaTask(
+      "Reconcile task registration from authority",
+      (ctx, emit) => {
+        const authoritativeTasks = resolveSyncQueryRows<{
+          name?: string;
+          version?: number;
+          serviceName?: string;
+        }>(ctx, "task");
+        let changed = false;
+
+        for (const row of authoritativeTasks) {
+          const taskName = typeof row.name === "string" ? row.name : "";
+          if (!taskName) {
+            continue;
+          }
+
+          const task = Cadenza.get(taskName);
+          if (!task || task.registered) {
+            continue;
+          }
+
+          task.registered = true;
+          changed = true;
+          emit("meta.sync_controller.task_registered", {
+            ...ctx,
+            __taskName: task.name,
+            task,
+            __authoritativeReconciliation: true,
+          });
+        }
+
+        if (authoritativeTasks.length > 0) {
+          Cadenza.debounce(
+            "meta.sync_controller.task_registration_settled",
+            {
+              __syncing: true,
+              __authoritativeReconciliation: true,
+            },
+            300,
+          );
+        }
+
+        return changed;
+      },
+      "Marks local tasks as registered when authority rows already exist.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+
+    const reconcileRoutineRegistrationFromAuthorityTask = Cadenza.createMetaTask(
+      "Reconcile routine registration from authority",
+      (ctx) => {
+        const authoritativeRoutines = resolveSyncQueryRows<{
+          name?: string;
+          version?: number;
+          serviceName?: string;
+        }>(ctx, "routine");
+        let changed = false;
+
+        for (const row of authoritativeRoutines) {
+          const routineName = typeof row.name === "string" ? row.name : "";
+          if (!routineName) {
+            continue;
+          }
+
+          const routine = Cadenza.getRoutine(routineName);
+          if (!routine || routine.registered) {
+            continue;
+          }
+
+          routine.registered = true;
+          changed = true;
+        }
+
+        if (authoritativeRoutines.length > 0) {
+          Cadenza.debounce(
+            "meta.sync_controller.routine_registration_settled",
+            {
+              __syncing: true,
+              __authoritativeReconciliation: true,
+            },
+            300,
+          );
+        }
+
+        return changed;
+      },
+      "Marks local routines as registered when authority rows already exist.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+
+    const reconcileSignalRegistrationFromAuthorityTask = Cadenza.createMetaTask(
+      "Reconcile signal registration from authority",
+      (ctx) => {
+        const authoritativeSignals = resolveSyncQueryRows<{
+          name?: string;
+        }>(ctx, "signal_registry");
+        const signalObservers = (Cadenza.signalBroker as any).signalObservers;
+        let changed = false;
+
+        for (const row of authoritativeSignals) {
+          const signalName = typeof row.name === "string" ? row.name : "";
+          if (!signalName) {
+            continue;
+          }
+
+          const observer = signalObservers?.get(signalName);
+          if (!observer || observer.registered) {
+            continue;
+          }
+
+          observer.registered = true;
+          changed = true;
+        }
+
+        if (authoritativeSignals.length > 0) {
+          Cadenza.debounce(
+            "meta.sync_controller.signal_registration_settled",
+            {
+              __syncing: true,
+              __authoritativeReconciliation: true,
+            },
+            300,
+          );
+        }
+
+        return changed;
+      },
+      "Marks local signals as registered when authority rows already exist.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+
+    const reconcileIntentRegistrationFromAuthorityTask = Cadenza.createMetaTask(
+      "Reconcile intent registration from authority",
+      (ctx) => {
+        const authoritativeIntents = resolveSyncQueryRows<{
+          name?: string;
+        }>(ctx, "intent_registry");
+        let changed = false;
+
+        for (const row of authoritativeIntents) {
+          const intentName = typeof row.name === "string" ? row.name : "";
+          if (!intentName || !Cadenza.inquiryBroker.intents.has(intentName)) {
+            continue;
+          }
+
+          if (this.registeredIntentDefinitions.has(intentName)) {
+            continue;
+          }
+
+          this.registeredIntentDefinitions.add(intentName);
+          changed = true;
+        }
+
+        if (authoritativeIntents.length > 0) {
+          Cadenza.debounce(
+            "meta.sync_controller.intent_registration_settled",
+            {
+              __syncing: true,
+              __authoritativeReconciliation: true,
+            },
+            300,
+          );
+        }
+
+        return changed;
+      },
+      "Marks local intents as registered when authority rows already exist.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+
+    const authoritativeTaskReconciliationGraph =
+      authoritativeTaskQueryTask?.then(reconcileTaskRegistrationFromAuthorityTask) ??
+      Cadenza.createMetaTask(
+        "Skip authoritative task reconciliation",
+        () => false,
+        "Skips task reconciliation when no authority query task is available.",
+        {
+          register: false,
+          isHidden: true,
+        },
+      );
+    const authoritativeRoutineReconciliationGraph =
+      authoritativeRoutineQueryTask?.then(reconcileRoutineRegistrationFromAuthorityTask) ??
+      Cadenza.createMetaTask(
+        "Skip authoritative routine reconciliation",
+        () => false,
+        "Skips routine reconciliation when no authority query task is available.",
+        {
+          register: false,
+          isHidden: true,
+        },
+      );
+    const authoritativeSignalReconciliationGraph =
+      authoritativeSignalQueryTask?.then(reconcileSignalRegistrationFromAuthorityTask) ??
+      Cadenza.createMetaTask(
+        "Skip authoritative signal reconciliation",
+        () => false,
+        "Skips signal reconciliation when no authority query task is available.",
+        {
+          register: false,
+          isHidden: true,
+        },
+      );
+    const authoritativeIntentReconciliationGraph =
+      authoritativeIntentQueryTask?.then(reconcileIntentRegistrationFromAuthorityTask) ??
+      Cadenza.createMetaTask(
+        "Skip authoritative intent reconciliation",
+        () => false,
+        "Skips intent reconciliation when no authority query task is available.",
+        {
+          register: false,
+          isHidden: true,
+        },
+      );
+    const authoritativeRegistrationTriggers = [
+      "meta.service_registry.initial_sync_complete",
+      "meta.sync_requested",
+      "meta.sync_controller.synced_resource",
+      "meta.sync_controller.authority_registration_reconciliation_requested",
+    ] as const;
+
+    Cadenza.createMetaTask(
+      "Prepare authoritative task registration query",
+      (ctx) => {
+        if (!this.isCadenzaDBReady) {
+          return false;
+        }
+
+        const serviceName = resolveSyncServiceName();
+        if (!serviceName) {
+          return false;
+        }
+
+        return {
+          ...ctx,
+          __syncServiceName: serviceName,
+          queryData: {
+            filter: {
+              service_name: serviceName,
+            },
+            fields: ["name", "version", "service_name"],
+          },
+        };
+      },
+      "Builds the authority task query payload for the current service.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    )
+      .doOn(...authoritativeRegistrationTriggers)
+      .then(authoritativeTaskReconciliationGraph);
+
+    Cadenza.createMetaTask(
+      "Prepare authoritative routine registration query",
+      (ctx) => {
+        if (!this.isCadenzaDBReady) {
+          return false;
+        }
+
+        const serviceName = resolveSyncServiceName();
+        if (!serviceName) {
+          return false;
+        }
+
+        return {
+          ...ctx,
+          __syncServiceName: serviceName,
+          queryData: {
+            filter: {
+              service_name: serviceName,
+            },
+            fields: ["name", "version", "service_name"],
+          },
+        };
+      },
+      "Builds the authority routine query payload for the current service.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    )
+      .doOn(...authoritativeRegistrationTriggers)
+      .then(authoritativeRoutineReconciliationGraph);
+
+    Cadenza.createMetaTask(
+      "Prepare authoritative signal registration query",
+      (ctx) => {
+        if (!this.isCadenzaDBReady) {
+          return false;
+        }
+
+        return {
+          ...ctx,
+          queryData: {
+            fields: ["name"],
+          },
+        };
+      },
+      "Builds the authority signal query payload for local reconciliation.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    )
+      .doOn(...authoritativeRegistrationTriggers)
+      .then(authoritativeSignalReconciliationGraph);
+
+    Cadenza.createMetaTask(
+      "Prepare authoritative intent registration query",
+      (ctx) => {
+        if (!this.isCadenzaDBReady) {
+          return false;
+        }
+
+        return {
+          ...ctx,
+          queryData: {
+            fields: ["name"],
+          },
+        };
+      },
+      "Builds the authority intent query payload for local reconciliation.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    )
+      .doOn(...authoritativeRegistrationTriggers)
+      .then(authoritativeIntentReconciliationGraph);
 
     Cadenza.signalBroker
       .getSignalsTask!.clone()
