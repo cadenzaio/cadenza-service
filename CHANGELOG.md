@@ -1,3 +1,10 @@
+## [2.17.65](https://github.com/cadenzaio/cadenza-service/compare/v2.17.64...v2.17.65) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** slim milestone signal payloads ([979f7c0](https://github.com/cadenzaio/cadenza-service/commit/979f7c004ace558b8aa5471414499deabe5491fc))
+
 ## [2.17.64](https://github.com/cadenzaio/cadenza-service/compare/v2.17.63...v2.17.64) (2026-03-16)
 
 
