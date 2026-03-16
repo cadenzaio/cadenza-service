@@ -208,6 +208,20 @@ describe("graph sync authority rows", () => {
     expect(GraphSyncController.instance.registerIntentToTaskMapTask).toBeDefined();
   });
 
+  it("keeps local authority inserts in the same graph instead of routing through synthetic signals", () => {
+    Cadenza.createMetaTask("Insert task", (ctx) => ctx);
+
+    ServiceRegistry.instance.serviceName = "CadenzaDB";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    const executionRequestedObserver = (Cadenza.signalBroker as any).signalObservers.get(
+      "meta.sync_controller.insert_execution_requested:task",
+    );
+
+    expect(executionRequestedObserver).toBeUndefined();
+  });
+
   it("schedules an early sync request burst for connected services", () => {
     const scheduleSpy = vi.spyOn(Cadenza, "schedule");
 
@@ -256,27 +270,38 @@ describe("graph sync authority rows", () => {
   });
 
   it("does not mark intent definitions as registered when delegated inserts have zero responders", async () => {
-    Cadenza.createMetaTask("Insert intent_registry", (ctx) => {
-      return {
-        ...ctx,
-        __success: true,
-        __inquiryMeta: {
-          inquiry: "insert-intent-registry",
-          eligibleResponders: 0,
-          responded: 0,
-          failed: 0,
-          timedOut: 0,
-          pending: 0,
+    vi.spyOn(Cadenza, "getLocalCadenzaDBInsertTask").mockReturnValue(undefined);
+    vi.spyOn(Cadenza, "getLocalCadenzaDBQueryTask").mockReturnValue(undefined);
+    vi.spyOn(Cadenza, "createCadenzaDBQueryTask").mockReturnValue(undefined as any);
+    vi.spyOn(Cadenza, "createCadenzaDBInsertTask").mockImplementation(() =>
+      Cadenza.createMetaTask(
+        "Delegated zero-responder intent insert",
+        (ctx) => ({
+          ...ctx,
+          __success: true,
+          __inquiryMeta: {
+            inquiry: "insert-intent-registry",
+            eligibleResponders: 0,
+            responded: 0,
+            failed: 0,
+            timedOut: 0,
+            pending: 0,
+          },
+        }),
+        "Simulates a delegated intent insert with zero responders.",
+        {
+          register: false,
+          isHidden: true,
         },
-      };
-    });
+      ) as any,
+    );
 
     Cadenza.createTask("Lookup missing responders", () => ({ ok: true })).respondsTo(
       "orders-missing-responders",
     );
 
     ServiceRegistry.instance.serviceName = "OrdersApi";
-    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.isCadenzaDBReady = true;
     GraphSyncController.instance.init();
 
     Cadenza.run(GraphSyncController.instance.splitIntentsTask!, {
@@ -293,7 +318,7 @@ describe("graph sync authority rows", () => {
     ).toBe(false);
   });
 
-  it("routes local sync inserts through signal-driven runner flow so queryData survives", async () => {
+  it("routes local sync inserts through the same graph so queryData survives", async () => {
     let capturedQueryData: Record<string, unknown> | undefined;
 
     Cadenza.createMetaTask("Insert signal_registry", (ctx) => {

@@ -3,7 +3,6 @@ import {
   META_ACTOR_SESSION_STATE_PERSIST_INTENT,
   Task,
 } from "@cadenza.io/core";
-import { v4 as uuid } from "uuid";
 import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 import { DeputyTask } from "../../index";
 import { isMetaIntentName } from "../../utils/inquiry";
@@ -224,12 +223,105 @@ function buildSyncInsertQueryData(
   return nextQueryData;
 }
 
+type SyncTaskGraph = {
+  entryTask: Task;
+  completionTask: Task;
+};
+
+function wireSyncTaskGraph(
+  predecessorTask: Task,
+  graph: SyncTaskGraph | undefined,
+  ...completionTasks: (Task | undefined)[]
+): Task | undefined {
+  if (!graph) {
+    return undefined;
+  }
+
+  predecessorTask.then(graph.entryTask);
+  if (completionTasks.length > 0) {
+    graph.completionTask.then(...completionTasks);
+  }
+
+  return graph.completionTask;
+}
+
+function resolveLocalDatabaseTaskIntent(
+  task: Task | undefined,
+  operation: "query" | "insert",
+  tableName: string,
+): string | undefined {
+  if (!task) {
+    return undefined;
+  }
+
+  const expectedPrefix = `${operation}-pg-`;
+  const expectedSuffix = `-${tableName}`;
+  const handledIntents = Array.from(task.handlesIntents ?? []);
+  const directMatch = handledIntents.find(
+    (intent): intent is string =>
+      typeof intent === "string" &&
+      intent.startsWith(expectedPrefix) &&
+      intent.endsWith(expectedSuffix),
+  );
+
+  if (directMatch) {
+    return directMatch;
+  }
+
+  return handledIntents.find(
+    (intent): intent is string =>
+      typeof intent === "string" && intent.startsWith(expectedPrefix),
+  );
+}
+
+function createLocalDatabaseInquiryTask(
+  localTask: Task,
+  operation: "query" | "insert",
+  tableName: string,
+  options: Record<string, unknown> = {},
+): Task {
+  const intentName = resolveLocalDatabaseTaskIntent(localTask, operation, tableName);
+
+  return Cadenza.createMetaTask(
+    `Execute local graph sync ${operation} for ${tableName}`,
+    async (ctx, _emit, inquire) => {
+      if (!intentName) {
+        return {
+          ...ctx,
+          errored: true,
+          __success: false,
+          __error: `No local ${operation} intent found for ${tableName}`,
+        };
+      }
+
+      const inquiryContext = {
+        ...ctx,
+        queryData:
+          ctx.queryData && typeof ctx.queryData === "object" ? ctx.queryData : {},
+      };
+
+      const result = await inquire(intentName, inquiryContext, {});
+
+      return {
+        ...ctx,
+        ...result,
+      };
+    },
+    `Executes the local ${tableName} ${operation} operation through the generated database intent.`,
+    {
+      ...options,
+      register: false,
+      isHidden: true,
+    },
+  );
+}
+
 function resolveSyncInsertTask(
   isCadenzaDBReady: boolean,
   tableName: string,
   queryData: Record<string, unknown> = {},
   options: Record<string, unknown> = {},
-): Task | undefined {
+): SyncTaskGraph | undefined {
   const localInsertTask = Cadenza.getLocalCadenzaDBInsertTask(tableName);
   const remoteInsertTask = isCadenzaDBReady
     ? Cadenza.createCadenzaDBInsertTask(tableName, queryData, options)
@@ -239,7 +331,10 @@ function resolveSyncInsertTask(
   if (!localInsertTask && !remoteInsertTask) {
     return undefined;
   }
-  const targetTask = localInsertTask ?? remoteInsertTask!;
+  const targetTask =
+    localInsertTask
+      ? createLocalDatabaseInquiryTask(localInsertTask, "insert", tableName, options)
+      : remoteInsertTask!;
 
   if (debugTable) {
     logSyncDebug("insert_task_resolved", {
@@ -252,29 +347,14 @@ function resolveSyncInsertTask(
     });
   }
 
-  const executionRequestedSignal = `meta.sync_controller.insert_execution_requested:${tableName}`;
-  const executionResolvedSignal = `meta.sync_controller.insert_execution_resolved:${tableName}`;
-  const executionFailedSignal = `meta.sync_controller.insert_execution_failed:${tableName}`;
-  const pendingResolverContexts = new Map<
-    string,
-    {
-      originalContext: Record<string, unknown>;
-      originalQueryData?: Record<string, unknown>;
-    }
-  >();
-
   const prepareExecutionTask = Cadenza.createMetaTask(
     `Prepare graph sync insert for ${tableName}`,
     (ctx) => {
       const originalContext = { ...ctx };
-      const originalQueryData = buildSyncInsertQueryData(ctx as Record<string, any>, queryData);
-
-      if (typeof ctx.__resolverRequestId === "string") {
-        pendingResolverContexts.set(ctx.__resolverRequestId, {
-          originalContext,
-          originalQueryData,
-        });
-      }
+      const originalQueryData = buildSyncInsertQueryData(
+        ctx as Record<string, any>,
+        queryData,
+      );
 
       return {
         ...ctx,
@@ -288,9 +368,7 @@ function resolveSyncInsertTask(
       register: false,
       isHidden: true,
     },
-  )
-    .doOn(executionRequestedSignal)
-    .emitsOnFail(executionFailedSignal);
+  );
 
   if (debugTable) {
     prepareExecutionTask.then(
@@ -328,25 +406,16 @@ function resolveSyncInsertTask(
 
   const finalizeExecutionTask = Cadenza.createMetaTask(
     `Finalize graph sync insert for ${tableName}`,
-    (ctx, emit) => {
-      if (!ctx.__resolverRequestId) {
-        return false;
-      }
-
-      const pendingResolverContext = pendingResolverContexts.get(
-        ctx.__resolverRequestId,
-      );
+    (ctx) => {
       const originalContext =
         ctx.__resolverOriginalContext &&
         typeof ctx.__resolverOriginalContext === "object"
           ? (ctx.__resolverOriginalContext as Record<string, unknown>)
-          : pendingResolverContext?.originalContext
-            ? { ...pendingResolverContext.originalContext }
-            : {};
+          : {};
       const originalQueryData =
         ctx.__resolverQueryData && typeof ctx.__resolverQueryData === "object"
           ? (ctx.__resolverQueryData as Record<string, unknown>)
-          : pendingResolverContext?.originalQueryData;
+          : undefined;
       const normalizedContext = {
         ...originalContext,
         ...ctx,
@@ -376,8 +445,6 @@ function resolveSyncInsertTask(
         }
       }
 
-      pendingResolverContexts.delete(ctx.__resolverRequestId);
-      emit(executionResolvedSignal, normalizedContext);
       return normalizedContext;
     },
     `Finalizes ${tableName} graph-sync insert execution after the authority task finishes.`,
@@ -387,106 +454,13 @@ function resolveSyncInsertTask(
     },
   );
 
-  targetTask.then(finalizeExecutionTask).emitsOnFail(executionFailedSignal);
   prepareExecutionTask.then(targetTask);
+  targetTask.then(finalizeExecutionTask);
 
-  if (debugTable) {
-    Cadenza.createMetaTask(
-      `Log failed graph sync insert execution for ${tableName}`,
-      (ctx) => {
-        if (tableName === "task") {
-          if (
-            shouldDebugTaskSyncPayload(ctx as Record<string, any>) ||
-            shouldDebugSyncTaskName(ctx.__taskName)
-          ) {
-            logSyncDebug("insert_failed", {
-              tableName,
-              targetTaskName: targetTask.name,
-              payload: buildTaskSyncDebugPayload({
-                ...ctx,
-                __taskName: ctx.__taskName,
-              } as Record<string, any>),
-            });
-          }
-        } else {
-          logSyncDebug("insert_failed", {
-            tableName,
-            targetTaskName: targetTask.name,
-            ctx,
-          });
-        }
-        if (typeof ctx.__resolverRequestId === "string") {
-          pendingResolverContexts.delete(ctx.__resolverRequestId);
-        }
-        return false;
-      },
-      `Logs failed ${tableName} sync insert executions.`,
-      {
-        register: false,
-        isHidden: true,
-      },
-    ).doOn(executionFailedSignal);
-  }
-
-  return Cadenza.createMetaTask(
-    `Resolve graph sync insert for ${tableName}`,
-    (ctx, emit) =>
-      new Promise((resolve) => {
-        const resolverRequestId = uuid();
-        const resolvedContext = {
-          ...ctx,
-          __resolverRequestId: resolverRequestId,
-        };
-
-        if (debugTable) {
-          if (tableName === "task") {
-            if (shouldDebugTaskSyncPayload(resolvedContext as Record<string, any>)) {
-              logSyncDebug("insert_resolver_request", {
-                tableName,
-                targetTaskName: targetTask.name,
-                payload: buildTaskSyncDebugPayload(resolvedContext as Record<string, any>),
-              });
-            }
-          } else {
-            logSyncDebug("insert_resolver_request", {
-              tableName,
-              targetTaskName: targetTask.name,
-              ctx: resolvedContext,
-            });
-          }
-        }
-
-        Cadenza.createEphemeralMetaTask(
-          `Resolve graph sync insert execution for ${tableName} (${resolverRequestId})`,
-          (resultCtx) => {
-            if (resultCtx.__resolverRequestId !== resolverRequestId) {
-              return false;
-            }
-
-            const normalizedResult = {
-              ...resultCtx,
-            };
-            delete normalizedResult.__resolverRequestId;
-            pendingResolverContexts.delete(resolverRequestId);
-
-            resolve(normalizedResult);
-            return normalizedResult;
-          },
-          `Waits for ${tableName} graph-sync insert execution.`,
-          {
-            register: false,
-          },
-        ).doOn(executionResolvedSignal, executionFailedSignal);
-
-        emit(executionRequestedSignal, resolvedContext);
-      }),
-    `Routes graph sync inserts for ${tableName} through the local authority task when available.`,
-    {
-      ...options,
-      register: false,
-      isHidden: true,
-    },
-  );
+  return {
+    entryTask: prepareExecutionTask,
+    completionTask: finalizeExecutionTask,
+  };
 }
 
 const CADENZA_DB_REQUIRED_LOCAL_SYNC_INSERT_TABLES = [
@@ -726,7 +700,7 @@ function resolveSyncQueryTask(
   tableName: AuthorityQueryTableName,
   queryData: Record<string, unknown> = {},
   options: Record<string, unknown> = {},
-): Task | undefined {
+): SyncTaskGraph | undefined {
   const localQueryTask = Cadenza.getLocalCadenzaDBQueryTask(tableName);
   const remoteQueryTask = isCadenzaDBReady
     ? Cadenza.createCadenzaDBQueryTask(tableName, queryData, options)
@@ -736,9 +710,12 @@ function resolveSyncQueryTask(
     return undefined;
   }
 
-  const targetTask = localQueryTask ?? remoteQueryTask!;
+  const targetTask =
+    localQueryTask
+      ? createLocalDatabaseInquiryTask(localQueryTask, "query", tableName, options)
+      : remoteQueryTask!;
 
-  return Cadenza.createMetaTask(
+  const prepareQueryTask = Cadenza.createMetaTask(
     `Prepare graph sync query for ${tableName}`,
     (ctx) => ({
       ...ctx,
@@ -752,7 +729,24 @@ function resolveSyncQueryTask(
       register: false,
       isHidden: true,
     },
-  ).then(targetTask);
+  );
+  const finalizeQueryTask = Cadenza.createMetaTask(
+    `Finalize graph sync query for ${tableName}`,
+    (ctx) => ctx,
+    `Finalizes ${tableName} graph-sync query payloads after authority lookup.`,
+    {
+      register: false,
+      isHidden: true,
+    },
+  );
+
+  prepareQueryTask.then(targetTask);
+  targetTask.then(finalizeQueryTask);
+
+  return {
+    entryTask: prepareQueryTask,
+    completionTask: finalizeQueryTask,
+  };
 }
 
 function getRegistrableTasks(): Task[] {
@@ -922,25 +916,25 @@ export default class GraphSyncController {
       },
       { concurrency: 30 },
     );
-    const authoritativeTaskQueryTask = resolveSyncQueryTask(
+    const authoritativeTaskQueryGraph = resolveSyncQueryTask(
       this.isCadenzaDBReady,
       "task",
       {},
       { concurrency: 10 },
     );
-    const authoritativeRoutineQueryTask = resolveSyncQueryTask(
+    const authoritativeRoutineQueryGraph = resolveSyncQueryTask(
       this.isCadenzaDBReady,
       "routine",
       {},
       { concurrency: 10 },
     );
-    const authoritativeSignalQueryTask = resolveSyncQueryTask(
+    const authoritativeSignalQueryGraph = resolveSyncQueryTask(
       this.isCadenzaDBReady,
       "signal_registry",
       {},
       { concurrency: 10 },
     );
-    const authoritativeIntentQueryTask = resolveSyncQueryTask(
+    const authoritativeIntentQueryGraph = resolveSyncQueryTask(
       this.isCadenzaDBReady,
       "intent_registry",
       {},
@@ -1129,34 +1123,32 @@ export default class GraphSyncController {
       }.bind(this),
     );
 
-    this.splitRoutinesTask.then(
-      resolveSyncInsertTask(
-        this.isCadenzaDBReady,
-        "routine",
-        {
-          onConflict: {
-            target: ["name", "version", "service_name"],
-            action: {
-              do: "nothing",
-            },
+    const routineRegistrationGraph = resolveSyncInsertTask(
+      this.isCadenzaDBReady,
+      "routine",
+      {
+        onConflict: {
+          target: ["name", "version", "service_name"],
+          action: {
+            do: "nothing",
           },
         },
-        { concurrency: 30 },
-      )?.then(
-        Cadenza.createMetaTask("Register routine", (ctx) => {
-          if (!didSyncInsertSucceed(ctx)) {
-            return;
-          }
-
-          Cadenza.debounce("meta.sync_controller.synced_resource", {
-            delayMs: 3000,
-          });
-          Cadenza.getRoutine(ctx.__routineName)!.registered = true;
-
-          return true;
-        }).then(gatherRoutineRegistrationTask),
-      ),
+      },
+      { concurrency: 30 },
     );
+    const registerRoutineTask = Cadenza.createMetaTask("Register routine", (ctx) => {
+      if (!didSyncInsertSucceed(ctx)) {
+        return;
+      }
+
+      Cadenza.debounce("meta.sync_controller.synced_resource", {
+        delayMs: 3000,
+      });
+      Cadenza.getRoutine(ctx.__routineName)!.registered = true;
+
+      return true;
+    }).then(gatherRoutineRegistrationTask);
+    wireSyncTaskGraph(this.splitRoutinesTask, routineRegistrationGraph, registerRoutineTask);
 
     this.splitTasksInRoutines = Cadenza.createMetaTask(
       "Split tasks in routines",
@@ -1221,7 +1213,7 @@ export default class GraphSyncController {
       },
     );
 
-    const registerTaskToRoutineMapTask = resolveSyncInsertTask(
+    const registerTaskToRoutineMapGraph = resolveSyncInsertTask(
       this.isCadenzaDBReady,
       "task_to_routine_map",
       {
@@ -1239,8 +1231,10 @@ export default class GraphSyncController {
         },
       },
       { concurrency: 30 },
-    )?.then(
-      Cadenza.createMetaTask("Register routine task", (ctx) => {
+    );
+    const registerTaskToRoutineMapTask = Cadenza.createMetaTask(
+      "Register routine task",
+      (ctx) => {
         if (!didSyncInsertSucceed(ctx)) {
           return;
         }
@@ -1251,12 +1245,13 @@ export default class GraphSyncController {
         Cadenza.getRoutine(ctx.__routineName)!.registeredTasks.add(
           ctx.__taskName,
         );
-      }),
+      },
     );
-
-    if (registerTaskToRoutineMapTask) {
-      this.splitTasksInRoutines.then(registerTaskToRoutineMapTask);
-    }
+    wireSyncTaskGraph(
+      this.splitTasksInRoutines,
+      registerTaskToRoutineMapGraph,
+      registerTaskToRoutineMapTask,
+    );
 
     this.splitSignalsTask = Cadenza.createMetaTask(
       "Split signals for registration",
@@ -1294,34 +1289,39 @@ export default class GraphSyncController {
       }.bind(this),
     );
 
-    this.splitSignalsTask.then(
-      resolveSyncInsertTask(
-        this.isCadenzaDBReady,
-        "signal_registry",
-        {
-          onConflict: {
-            target: ["name"],
-            action: {
-              do: "nothing",
-            },
+    const signalRegistrationGraph = resolveSyncInsertTask(
+      this.isCadenzaDBReady,
+      "signal_registry",
+      {
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "nothing",
           },
         },
-        { concurrency: 30 },
-      )?.then(
-        Cadenza.createMetaTask("Process signal registration", (ctx) => {
-          if (!didSyncInsertSucceed(ctx)) {
-            return;
-          }
+      },
+      { concurrency: 30 },
+    );
+    const processSignalRegistrationTask = Cadenza.createMetaTask(
+      "Process signal registration",
+      (ctx) => {
+        if (!didSyncInsertSucceed(ctx)) {
+          return;
+        }
 
-          Cadenza.debounce("meta.sync_controller.synced_resource", {
-            delayMs: 3000,
-          });
+        Cadenza.debounce("meta.sync_controller.synced_resource", {
+          delayMs: 3000,
+        });
 
-          return { signalName: ctx.__signal };
-        })
-          .then(Cadenza.signalBroker.registerSignalTask!)
-          .then(gatherSignalRegistrationTask),
-      ),
+        return { signalName: ctx.__signal };
+      },
+    )
+      .then(Cadenza.signalBroker.registerSignalTask!)
+      .then(gatherSignalRegistrationTask);
+    wireSyncTaskGraph(
+      this.splitSignalsTask,
+      signalRegistrationGraph,
+      processSignalRegistrationTask,
     );
 
     this.splitTasksForRegistration = Cadenza.createMetaTask(
@@ -1396,7 +1396,7 @@ export default class GraphSyncController {
       }.bind(this),
     );
 
-    const registerTaskTask = resolveSyncInsertTask(
+    const registerTaskGraph = resolveSyncInsertTask(
       this.isCadenzaDBReady,
       "task",
       {
@@ -1408,8 +1408,10 @@ export default class GraphSyncController {
         },
       },
       { concurrency: 30 },
-    )?.then(
-      Cadenza.createMetaTask("Record registration", (ctx, emit) => {
+    );
+    const registerTaskTask = Cadenza.createMetaTask(
+      "Record registration",
+      (ctx, emit) => {
         if (shouldDebugSyncTaskName(ctx.__taskName)) {
           logSyncDebug("task_registration_result", {
             taskName: ctx.__taskName,
@@ -1433,12 +1435,9 @@ export default class GraphSyncController {
         });
 
         return true;
-      }).then(gatherTaskRegistrationTask),
-    );
-
-    if (registerTaskTask) {
-      this.splitTasksForRegistration.then(registerTaskTask);
-    }
+      },
+    ).then(gatherTaskRegistrationTask);
+    wireSyncTaskGraph(this.splitTasksForRegistration, registerTaskGraph, registerTaskTask);
 
     Cadenza.createMetaTask(
       "Prepare created task for immediate sync",
@@ -1510,32 +1509,38 @@ export default class GraphSyncController {
           };
         }
       }.bind(this),
-    ).then(
-      resolveSyncInsertTask(
-        this.isCadenzaDBReady,
-        "actor",
-        {
-          onConflict: {
-            target: ["name", "service_name", "version"],
-            action: {
-              do: "nothing",
-            },
+    );
+    const actorRegistrationGraph = resolveSyncInsertTask(
+      this.isCadenzaDBReady,
+      "actor",
+      {
+        onConflict: {
+          target: ["name", "service_name", "version"],
+          action: {
+            do: "nothing",
           },
         },
-        { concurrency: 30 },
-      )?.then(
-        Cadenza.createMetaTask("Record actor registration", (ctx) => {
-          if (!didSyncInsertSucceed(ctx)) {
-            return;
-          }
+      },
+      { concurrency: 30 },
+    );
+    const recordActorRegistrationTask = Cadenza.createMetaTask(
+      "Record actor registration",
+      (ctx) => {
+        if (!didSyncInsertSucceed(ctx)) {
+          return;
+        }
 
-          Cadenza.debounce("meta.sync_controller.synced_resource", {
-            delayMs: 3000,
-          });
-          this.registeredActors.add(ctx.__actorRegistrationKey);
-          return true;
-        }).then(gatherActorRegistrationTask),
-      ),
+        Cadenza.debounce("meta.sync_controller.synced_resource", {
+          delayMs: 3000,
+        });
+        this.registeredActors.add(ctx.__actorRegistrationKey);
+        return true;
+      },
+    ).then(gatherActorRegistrationTask);
+    wireSyncTaskGraph(
+      this.splitActorsForRegistration,
+      actorRegistrationGraph,
+      recordActorRegistrationTask,
     );
 
     this.registerActorTaskMapTask = Cadenza.createMetaTask(
@@ -1579,36 +1584,42 @@ export default class GraphSyncController {
           __actorTaskMapRegistrationKey: registrationKey,
         };
       }.bind(this),
-    ).then(
-      resolveSyncInsertTask(
-        this.isCadenzaDBReady,
-        "actor_task_map",
-        {
-          onConflict: {
-            target: [
-              "actor_name",
-              "actor_version",
-              "task_name",
-              "task_version",
-              "service_name",
-            ],
-            action: {
-              do: "nothing",
-            },
+    );
+    const actorTaskMapRegistrationGraph = resolveSyncInsertTask(
+      this.isCadenzaDBReady,
+      "actor_task_map",
+      {
+        onConflict: {
+          target: [
+            "actor_name",
+            "actor_version",
+            "task_name",
+            "task_version",
+            "service_name",
+          ],
+          action: {
+            do: "nothing",
           },
         },
-        { concurrency: 30 },
-      )?.then(
-        Cadenza.createMetaTask("Record actor task map registration", (ctx) => {
-          if (!didSyncInsertSucceed(ctx)) {
-            return;
-          }
-          Cadenza.debounce("meta.sync_controller.synced_resource", {
-            delayMs: 3000,
-          });
-          this.registeredActorTaskMaps.add(ctx.__actorTaskMapRegistrationKey);
-        }),
-      ),
+      },
+      { concurrency: 30 },
+    );
+    const recordActorTaskMapRegistrationTask = Cadenza.createMetaTask(
+      "Record actor task map registration",
+      (ctx) => {
+        if (!didSyncInsertSucceed(ctx)) {
+          return;
+        }
+        Cadenza.debounce("meta.sync_controller.synced_resource", {
+          delayMs: 3000,
+        });
+        this.registeredActorTaskMaps.add(ctx.__actorTaskMapRegistrationKey);
+      },
+    );
+    wireSyncTaskGraph(
+      this.registerActorTaskMapTask,
+      actorTaskMapRegistrationGraph,
+      recordActorTaskMapRegistrationTask,
     );
 
     const registerSignalTask = Cadenza.createMetaTask(
@@ -1680,28 +1691,33 @@ export default class GraphSyncController {
       },
     );
 
-    Cadenza.createMetaTask("Process split signal-to-task map", (ctx) => ctx)
-      .doOn("meta.sync_controller.signal_task_map_split")
-      .then(
-        resolveSyncInsertTask(
-          this.isCadenzaDBReady,
-          "signal_to_task_map",
-          {
-            onConflict: {
-              target: [
-                "task_name",
-                "task_version",
-                "service_name",
-                "signal_name",
-              ],
-              action: {
-                do: "nothing",
-              },
-            },
+    const processSplitSignalToTaskMapTask = Cadenza.createMetaTask(
+      "Process split signal-to-task map",
+      (ctx) => ctx,
+    ).doOn("meta.sync_controller.signal_task_map_split");
+    const signalToTaskMapGraph = resolveSyncInsertTask(
+      this.isCadenzaDBReady,
+      "signal_to_task_map",
+      {
+        onConflict: {
+          target: [
+            "task_name",
+            "task_version",
+            "service_name",
+            "signal_name",
+          ],
+          action: {
+            do: "nothing",
           },
-          { concurrency: 30 },
-        )?.then(registerSignalTask),
-      );
+        },
+      },
+      { concurrency: 30 },
+    );
+    wireSyncTaskGraph(
+      processSplitSignalToTaskMapTask,
+      signalToTaskMapGraph,
+      registerSignalTask,
+    );
 
     this.splitIntentsTask = Cadenza.createMetaTask(
       "Split intents for registration",
@@ -1734,22 +1750,26 @@ export default class GraphSyncController {
       }.bind(this),
     );
 
-    this.splitIntentsTask.then(
-      insertIntentRegistryTask?.then(
-        Cadenza.createMetaTask("Record intent definition registration", (ctx) => {
-          if (!didSyncInsertSucceed(ctx)) {
-            return;
-          }
+    const recordIntentDefinitionRegistrationTask = Cadenza.createMetaTask(
+      "Record intent definition registration",
+      (ctx) => {
+        if (!didSyncInsertSucceed(ctx)) {
+          return;
+        }
 
-          Cadenza.debounce("meta.sync_controller.synced_resource", {
-            delayMs: 3000,
-          });
+        Cadenza.debounce("meta.sync_controller.synced_resource", {
+          delayMs: 3000,
+        });
 
-          this.registeredIntentDefinitions.add(ctx.__intentName);
+        this.registeredIntentDefinitions.add(ctx.__intentName);
 
-          return true;
-        }).then(gatherIntentRegistrationTask),
-      ),
+        return true;
+      },
+    ).then(gatherIntentRegistrationTask);
+    wireSyncTaskGraph(
+      this.splitIntentsTask,
+      insertIntentRegistryTask,
+      recordIntentDefinitionRegistrationTask,
     );
 
     const registerIntentTask = Cadenza.createMetaTask(
@@ -1850,80 +1870,93 @@ export default class GraphSyncController {
       }.bind(this),
     );
 
-    Cadenza.createMetaTask("Process split intent-to-task map", (ctx) => ctx)
-      .doOn("meta.sync_controller.intent_task_map_split")
-      .then(
-        Cadenza.createMetaTask(
-          "Prepare intent definition for intent-to-task map",
-          (ctx) => {
-            if (!ctx.__intentDefinition || !ctx.__intentMapData) {
-              return false;
-            }
+    const processSplitIntentToTaskMapTask = Cadenza.createMetaTask(
+      "Process split intent-to-task map",
+      (ctx) => ctx,
+    ).doOn("meta.sync_controller.intent_task_map_split");
+    const prepareIntentDefinitionForIntentMapTask = Cadenza.createMetaTask(
+      "Prepare intent definition for intent-to-task map",
+      (ctx) => {
+        if (!ctx.__intentDefinition || !ctx.__intentMapData) {
+          return false;
+        }
 
-            if (
-              shouldDebugSyncTaskName(ctx.__taskName) ||
-              shouldDebugSyncIntentName(ctx.__intent)
-            ) {
-              logSyncDebug("intent_definition_prepare", {
-                taskName: ctx.__taskName,
-                intentName: ctx.__intent,
-                intentDefinition: ctx.__intentDefinition,
-              });
-            }
+        if (
+          shouldDebugSyncTaskName(ctx.__taskName) ||
+          shouldDebugSyncIntentName(ctx.__intent)
+        ) {
+          logSyncDebug("intent_definition_prepare", {
+            taskName: ctx.__taskName,
+            intentName: ctx.__intent,
+            intentDefinition: ctx.__intentDefinition,
+          });
+        }
 
-            return {
-              ...ctx,
-              data: ctx.__intentDefinition,
-            };
+        return {
+          ...ctx,
+          data: ctx.__intentDefinition,
+        };
+      },
+    );
+    const restoreIntentToTaskMapPayloadTask = Cadenza.createMetaTask(
+      "Restore intent-to-task map payload",
+      (ctx) => {
+        if (!ctx.__intentMapData) {
+          return false;
+        }
+
+        if (
+          shouldDebugSyncTaskName(ctx.__taskName) ||
+          shouldDebugSyncIntentName(ctx.__intent)
+        ) {
+          logSyncDebug("intent_map_payload_restore", {
+            taskName: ctx.__taskName,
+            intentName: ctx.__intent,
+            intentMapData: ctx.__intentMapData,
+          });
+        }
+
+        return {
+          ...ctx,
+          data: ctx.__intentMapData,
+        };
+      },
+    );
+    const intentToTaskMapGraph = resolveSyncInsertTask(
+      this.isCadenzaDBReady,
+      "intent_to_task_map",
+      {
+        onConflict: {
+          target: [
+            "intent_name",
+            "task_name",
+            "task_version",
+            "service_name",
+          ],
+          action: {
+            do: "nothing",
           },
-        ).then(
-          ensureIntentRegistryBeforeIntentMapTask?.then(
-            Cadenza.createMetaTask(
-              "Restore intent-to-task map payload",
-              (ctx) => {
-                if (!ctx.__intentMapData) {
-                  return false;
-                }
-
-                if (
-                  shouldDebugSyncTaskName(ctx.__taskName) ||
-                  shouldDebugSyncIntentName(ctx.__intent)
-                ) {
-                  logSyncDebug("intent_map_payload_restore", {
-                    taskName: ctx.__taskName,
-                    intentName: ctx.__intent,
-                    intentMapData: ctx.__intentMapData,
-                  });
-                }
-
-                return {
-                  ...ctx,
-                  data: ctx.__intentMapData,
-                };
-              },
-            ).then(
-              resolveSyncInsertTask(
-                this.isCadenzaDBReady,
-                "intent_to_task_map",
-                {
-                  onConflict: {
-                    target: [
-                      "intent_name",
-                      "task_name",
-                      "task_version",
-                      "service_name",
-                    ],
-                    action: {
-                      do: "nothing",
-                    },
-                  },
-                },
-                { concurrency: 30 },
-              )?.then(registerIntentTask),
-            ),
-          ),
-        ),
+        },
+      },
+      { concurrency: 30 },
+    );
+    processSplitIntentToTaskMapTask.then(prepareIntentDefinitionForIntentMapTask);
+    if (ensureIntentRegistryBeforeIntentMapTask) {
+      wireSyncTaskGraph(
+        prepareIntentDefinitionForIntentMapTask,
+        ensureIntentRegistryBeforeIntentMapTask,
+        restoreIntentToTaskMapPayloadTask,
       );
+    } else {
+      prepareIntentDefinitionForIntentMapTask.then(
+        restoreIntentToTaskMapPayloadTask,
+      );
+    }
+    wireSyncTaskGraph(
+      restoreIntentToTaskMapPayloadTask,
+      intentToTaskMapGraph,
+      registerIntentTask,
+    );
 
     this.registerTaskMapTask = Cadenza.createMetaTask(
       "Register task map to DB",
@@ -1968,41 +2001,47 @@ export default class GraphSyncController {
           };
         }
       },
-    ).then(
-      resolveSyncInsertTask(
-        this.isCadenzaDBReady,
-        "directional_task_graph_map",
-        {
-          onConflict: {
-            target: [
-              "task_name",
-              "predecessor_task_name",
-              "task_version",
-              "predecessor_task_version",
-              "service_name",
-              "predecessor_service_name",
-            ],
-            action: {
-              do: "nothing",
-            },
+    );
+    const taskMapRegistrationGraph = resolveSyncInsertTask(
+      this.isCadenzaDBReady,
+      "directional_task_graph_map",
+      {
+        onConflict: {
+          target: [
+            "task_name",
+            "predecessor_task_name",
+            "task_version",
+            "predecessor_task_version",
+            "service_name",
+            "predecessor_service_name",
+          ],
+          action: {
+            do: "nothing",
           },
         },
-        { concurrency: 30 },
-      )?.then(
-        Cadenza.createMetaTask("Record task map registration", (ctx) => {
-          if (!didSyncInsertSucceed(ctx)) {
-            return;
-          }
+      },
+      { concurrency: 30 },
+    );
+    const recordTaskMapRegistrationTask = Cadenza.createMetaTask(
+      "Record task map registration",
+      (ctx) => {
+        if (!didSyncInsertSucceed(ctx)) {
+          return;
+        }
 
-          Cadenza.debounce("meta.sync_controller.synced_resource", {
-            delayMs: 3000,
-          });
+        Cadenza.debounce("meta.sync_controller.synced_resource", {
+          delayMs: 3000,
+        });
 
-          Cadenza.get(ctx.__taskName)?.taskMapRegistration.add(
-            ctx.__nextTaskName,
-          );
-        }),
-      ),
+        Cadenza.get(ctx.__taskName)?.taskMapRegistration.add(
+          ctx.__nextTaskName,
+        );
+      },
+    );
+    wireSyncTaskGraph(
+      this.registerTaskMapTask,
+      taskMapRegistrationGraph,
+      recordTaskMapRegistrationTask,
     );
 
     this.registerDeputyRelationshipTask = Cadenza.createMetaTask(
@@ -2033,43 +2072,45 @@ export default class GraphSyncController {
           };
         }
       },
-    ).then(
-      resolveSyncInsertTask(
-        this.isCadenzaDBReady,
-        "directional_task_graph_map",
-        {
-          onConflict: {
-            target: [
-              "task_name",
-              "predecessor_task_name",
-              "task_version",
-              "predecessor_task_version",
-              "service_name",
-              "predecessor_service_name",
-            ],
-            action: {
-              do: "nothing",
-            },
+    );
+    const deputyRelationshipRegistrationGraph = resolveSyncInsertTask(
+      this.isCadenzaDBReady,
+      "directional_task_graph_map",
+      {
+        onConflict: {
+          target: [
+            "task_name",
+            "predecessor_task_name",
+            "task_version",
+            "predecessor_task_version",
+            "service_name",
+            "predecessor_service_name",
+          ],
+          action: {
+            do: "nothing",
           },
         },
-        { concurrency: 30 },
-      )?.then(
-        Cadenza.createMetaTask(
-          "Record deputy relationship registration",
-          (ctx) => {
-            if (!didSyncInsertSucceed(ctx)) {
-              return;
-            }
+      },
+      { concurrency: 30 },
+    );
+    const recordDeputyRelationshipRegistrationTask = Cadenza.createMetaTask(
+      "Record deputy relationship registration",
+      (ctx) => {
+        if (!didSyncInsertSucceed(ctx)) {
+          return;
+        }
 
-            Cadenza.debounce("meta.sync_controller.synced_resource", {
-              delayMs: 3000,
-            });
+        Cadenza.debounce("meta.sync_controller.synced_resource", {
+          delayMs: 3000,
+        });
 
-            (Cadenza.get(ctx.__taskName) as DeputyTask).registeredDeputyMap =
-              true;
-          },
-        ),
-      ),
+        (Cadenza.get(ctx.__taskName) as DeputyTask).registeredDeputyMap = true;
+      },
+    );
+    wireSyncTaskGraph(
+      this.registerDeputyRelationshipTask,
+      deputyRelationshipRegistrationGraph,
+      recordDeputyRelationshipRegistrationTask,
     );
 
     const reconcileTaskRegistrationFromAuthorityTask = Cadenza.createMetaTask(
@@ -2238,50 +2279,63 @@ export default class GraphSyncController {
       },
     );
 
-    const authoritativeTaskReconciliationGraph =
-      authoritativeTaskQueryTask?.then(reconcileTaskRegistrationFromAuthorityTask) ??
-      Cadenza.createMetaTask(
-        "Skip authoritative task reconciliation",
-        () => false,
-        "Skips task reconciliation when no authority query task is available.",
-        {
-          register: false,
-          isHidden: true,
-        },
+    const skipAuthoritativeTaskReconciliationTask = Cadenza.createMetaTask(
+      "Skip authoritative task reconciliation",
+      () => false,
+      "Skips task reconciliation when no authority query task is available.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+    const skipAuthoritativeRoutineReconciliationTask = Cadenza.createMetaTask(
+      "Skip authoritative routine reconciliation",
+      () => false,
+      "Skips routine reconciliation when no authority query task is available.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+    const skipAuthoritativeSignalReconciliationTask = Cadenza.createMetaTask(
+      "Skip authoritative signal reconciliation",
+      () => false,
+      "Skips signal reconciliation when no authority query task is available.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+    const skipAuthoritativeIntentReconciliationTask = Cadenza.createMetaTask(
+      "Skip authoritative intent reconciliation",
+      () => false,
+      "Skips intent reconciliation when no authority query task is available.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+
+    if (authoritativeTaskQueryGraph) {
+      authoritativeTaskQueryGraph.completionTask.then(
+        reconcileTaskRegistrationFromAuthorityTask,
       );
-    const authoritativeRoutineReconciliationGraph =
-      authoritativeRoutineQueryTask?.then(reconcileRoutineRegistrationFromAuthorityTask) ??
-      Cadenza.createMetaTask(
-        "Skip authoritative routine reconciliation",
-        () => false,
-        "Skips routine reconciliation when no authority query task is available.",
-        {
-          register: false,
-          isHidden: true,
-        },
+    }
+    if (authoritativeRoutineQueryGraph) {
+      authoritativeRoutineQueryGraph.completionTask.then(
+        reconcileRoutineRegistrationFromAuthorityTask,
       );
-    const authoritativeSignalReconciliationGraph =
-      authoritativeSignalQueryTask?.then(reconcileSignalRegistrationFromAuthorityTask) ??
-      Cadenza.createMetaTask(
-        "Skip authoritative signal reconciliation",
-        () => false,
-        "Skips signal reconciliation when no authority query task is available.",
-        {
-          register: false,
-          isHidden: true,
-        },
+    }
+    if (authoritativeSignalQueryGraph) {
+      authoritativeSignalQueryGraph.completionTask.then(
+        reconcileSignalRegistrationFromAuthorityTask,
       );
-    const authoritativeIntentReconciliationGraph =
-      authoritativeIntentQueryTask?.then(reconcileIntentRegistrationFromAuthorityTask) ??
-      Cadenza.createMetaTask(
-        "Skip authoritative intent reconciliation",
-        () => false,
-        "Skips intent reconciliation when no authority query task is available.",
-        {
-          register: false,
-          isHidden: true,
-        },
+    }
+    if (authoritativeIntentQueryGraph) {
+      authoritativeIntentQueryGraph.completionTask.then(
+        reconcileIntentRegistrationFromAuthorityTask,
       );
+    }
     const authoritativeRegistrationTriggers = [
       "meta.service_registry.initial_sync_complete",
       "meta.sync_requested",
@@ -2319,7 +2373,10 @@ export default class GraphSyncController {
       },
     )
       .doOn(...authoritativeRegistrationTriggers)
-      .then(authoritativeTaskReconciliationGraph);
+      .then(
+        authoritativeTaskQueryGraph?.entryTask ??
+          skipAuthoritativeTaskReconciliationTask,
+      );
 
     Cadenza.createMetaTask(
       "Prepare authoritative routine registration query",
@@ -2351,7 +2408,10 @@ export default class GraphSyncController {
       },
     )
       .doOn(...authoritativeRegistrationTriggers)
-      .then(authoritativeRoutineReconciliationGraph);
+      .then(
+        authoritativeRoutineQueryGraph?.entryTask ??
+          skipAuthoritativeRoutineReconciliationTask,
+      );
 
     Cadenza.createMetaTask(
       "Prepare authoritative signal registration query",
@@ -2374,7 +2434,10 @@ export default class GraphSyncController {
       },
     )
       .doOn(...authoritativeRegistrationTriggers)
-      .then(authoritativeSignalReconciliationGraph);
+      .then(
+        authoritativeSignalQueryGraph?.entryTask ??
+          skipAuthoritativeSignalReconciliationTask,
+      );
 
     Cadenza.createMetaTask(
       "Prepare authoritative intent registration query",
@@ -2397,7 +2460,10 @@ export default class GraphSyncController {
       },
     )
       .doOn(...authoritativeRegistrationTriggers)
-      .then(authoritativeIntentReconciliationGraph);
+      .then(
+        authoritativeIntentQueryGraph?.entryTask ??
+          skipAuthoritativeIntentReconciliationTask,
+      );
 
     Cadenza.signalBroker
       .getSignalsTask!.clone()
