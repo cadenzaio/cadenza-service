@@ -1,3 +1,10 @@
+## [2.17.45](https://github.com/cadenzaio/cadenza-service/compare/v2.17.44...v2.17.45) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** use graph fan-out for task authority sync ([5adf09b](https://github.com/cadenzaio/cadenza-service/commit/5adf09b30c4003069966df48501824d663cd6403))
+
 ## [2.17.44](https://github.com/cadenzaio/cadenza-service/compare/v2.17.43...v2.17.44) (2026-03-16)
 
 
