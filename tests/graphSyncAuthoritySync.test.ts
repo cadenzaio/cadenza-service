@@ -824,6 +824,7 @@ describe("graph sync authority rows", () => {
   it("restores the intent-to-task map payload for remote authority inserts", async () => {
     let insertedIntentDefinition: Record<string, unknown> | undefined;
     let insertedIntentMap: Record<string, unknown> | undefined;
+    let insertedIntentMapQueryData: Record<string, unknown> | undefined;
 
     vi.spyOn(Cadenza, "getLocalCadenzaDBInsertTask").mockReturnValue(undefined);
     vi.spyOn(Cadenza, "createCadenzaDBInsertTask").mockImplementation(
@@ -833,10 +834,22 @@ describe("graph sync authority rows", () => {
           (ctx) => {
             if (tableName === "intent_registry") {
               insertedIntentDefinition = getInsertRow(ctx);
+              return {
+                __success: true,
+                queryData: {
+                  filter: {
+                    service_name: "OrdersApi",
+                  },
+                  fields: ["name", "version", "service_name"],
+                  data: {},
+                },
+              };
             }
 
             if (tableName === "intent_to_task_map") {
               insertedIntentMap = getInsertRow(ctx);
+              insertedIntentMapQueryData =
+                (ctx.queryData as Record<string, unknown>) ?? undefined;
             }
 
             return {
@@ -879,6 +892,22 @@ describe("graph sync authority rows", () => {
       taskName: "Handle remote order sync",
       serviceName: "OrdersApi",
     });
+    expect(insertedIntentMapQueryData).toMatchObject({
+      onConflict: {
+        target: ["intent_name", "task_name", "task_version", "service_name"],
+        action: {
+          do: "nothing",
+        },
+      },
+      data: {
+        intentName: "orders-remote-sync",
+        taskName: "Handle remote order sync",
+        taskVersion: 1,
+        serviceName: "OrdersApi",
+      },
+    });
+    expect(insertedIntentMapQueryData).not.toHaveProperty("fields");
+    expect(insertedIntentMapQueryData).not.toHaveProperty("filter");
   });
 
   it("does not require global sync flags before registering intent-to-task maps", async () => {

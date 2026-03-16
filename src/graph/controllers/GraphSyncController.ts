@@ -216,6 +216,20 @@ function buildSyncInsertQueryData(
   ctx: Record<string, any>,
   queryData: Record<string, unknown> = {},
 ): Record<string, unknown> {
+  const pickQueryData = (
+    source: Record<string, unknown>,
+    allowedKeys: string[],
+  ): Record<string, unknown> => {
+    const next: Record<string, unknown> = {};
+
+    for (const key of allowedKeys) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
+        next[key] = source[key];
+      }
+    }
+
+    return next;
+  };
   const joinedQueryData = getJoinedContextValue(ctx, "queryData");
   const existingQueryData =
     ctx.queryData && typeof ctx.queryData === "object"
@@ -224,7 +238,7 @@ function buildSyncInsertQueryData(
         ? joinedQueryData
         : {};
   const nextQueryData: Record<string, unknown> = {
-    ...existingQueryData,
+    ...pickQueryData(existingQueryData, ["transaction"]),
     ...queryData,
   };
   const resolvedData =
@@ -241,6 +255,8 @@ function buildSyncInsertQueryData(
       resolvedData && typeof resolvedData === "object" && !Array.isArray(resolvedData)
         ? { ...resolvedData }
         : resolvedData;
+  } else {
+    delete nextQueryData.data;
   }
 
   if (resolvedBatch !== undefined) {
@@ -251,9 +267,48 @@ function buildSyncInsertQueryData(
             : row,
         )
       : resolvedBatch;
+  } else {
+    delete nextQueryData.batch;
   }
 
   return nextQueryData;
+}
+
+function buildSyncQueryQueryData(
+  ctx: Record<string, any>,
+  queryData: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const joinedQueryData = getJoinedContextValue(ctx, "queryData");
+  const existingQueryData =
+    ctx.queryData && typeof ctx.queryData === "object"
+      ? ctx.queryData
+      : joinedQueryData && typeof joinedQueryData === "object"
+        ? joinedQueryData
+        : {};
+  const nextQueryData: Record<string, unknown> = {};
+  const allowedKeys = [
+    "transaction",
+    "filter",
+    "fields",
+    "joins",
+    "sort",
+    "limit",
+    "offset",
+    "queryMode",
+    "aggregates",
+    "groupBy",
+  ];
+
+  for (const key of allowedKeys) {
+    if (Object.prototype.hasOwnProperty.call(existingQueryData, key)) {
+      nextQueryData[key] = existingQueryData[key];
+    }
+  }
+
+  return {
+    ...nextQueryData,
+    ...queryData,
+  };
 }
 
 type SyncTaskGraph = {
@@ -730,10 +785,10 @@ function resolveSyncQueryTask(
   const prepareQueryTask = Cadenza.createMetaTask(
     `Prepare graph sync query for ${tableName}`,
     (ctx) =>
-      buildSyncExecutionEnvelope(ctx as Record<string, any>, {
-        ...(ctx.queryData && typeof ctx.queryData === "object" ? ctx.queryData : {}),
-        ...queryData,
-      }),
+      buildSyncExecutionEnvelope(
+        ctx as Record<string, any>,
+        buildSyncQueryQueryData(ctx as Record<string, any>, queryData),
+      ),
     `Prepares ${tableName} graph-sync query payloads.`,
     {
       register: false,
