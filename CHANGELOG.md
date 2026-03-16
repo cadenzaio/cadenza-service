@@ -1,3 +1,10 @@
+## [2.17.71](https://github.com/cadenzaio/cadenza-service/compare/v2.17.70...v2.17.71) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** isolate authority insert query data ([19acae0](https://github.com/cadenzaio/cadenza-service/commit/19acae0ba31172781e54bb511498221cfb84a11b))
+
 ## [2.17.70](https://github.com/cadenzaio/cadenza-service/compare/v2.17.69...v2.17.70) (2026-03-16)
 
 
