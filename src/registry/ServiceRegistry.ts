@@ -311,7 +311,7 @@ function resolveServiceRegistryInsertTask(
 
   wireExecutionTarget(remoteInsertTask, prepareRemoteExecutionTask);
 
-  return Cadenza.createUniqueMetaTask(
+  return Cadenza.createMetaTask(
     `Resolve service registry insert for ${tableName}`,
     (ctx, emit) =>
       new Promise((resolve) => {

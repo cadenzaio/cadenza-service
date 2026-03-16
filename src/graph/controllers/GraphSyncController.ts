@@ -288,7 +288,7 @@ function resolveSyncInsertTask(
   targetTask.then(finalizeExecutionTask).emitsOnFail(executionFailedSignal);
   prepareExecutionTask.then(targetTask);
 
-  return Cadenza.createUniqueMetaTask(
+  return Cadenza.createMetaTask(
     `Resolve graph sync insert for ${tableName}`,
     (ctx, emit) =>
       new Promise((resolve) => {

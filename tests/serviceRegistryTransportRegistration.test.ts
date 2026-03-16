@@ -156,6 +156,41 @@ describe("service registry transport registration", () => {
     ]);
   });
 
+  it("persists each yielded transport registration without collapsing them into one resolver execution", async () => {
+    const insertedTransportIds: string[] = [];
+
+    Cadenza.createMetaTask("Insert service_instance_transport", (ctx) => {
+      insertedTransportIds.push(String(ctx.queryData?.data?.uuid ?? ctx.data?.uuid));
+      return ctx;
+    });
+
+    const prepareTransportsTask = Cadenza.get("Prepare service transport inserts");
+    expect(prepareTransportsTask).toBeDefined();
+
+    Cadenza.run(prepareTransportsTask!, {
+      __serviceInstanceId: "orders-3",
+      __serviceName: "OrdersService",
+      __transportData: [
+        {
+          uuid: "transport-a",
+          role: "internal",
+          origin: "http://orders.internal",
+          protocols: ["rest"],
+        },
+        {
+          uuid: "transport-b",
+          role: "public",
+          origin: "http://orders.localhost",
+          protocols: ["rest"],
+        },
+      ],
+    });
+
+    await waitForCondition(() => insertedTransportIds.length === 2, 1_500);
+
+    expect(insertedTransportIds).toEqual(["transport-a", "transport-b"]);
+  });
+
   it("registers rest-only transports when socket serving is disabled", async () => {
     RestController.instance;
 
