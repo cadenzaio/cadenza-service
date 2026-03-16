@@ -1,3 +1,10 @@
+## [2.17.41](https://github.com/cadenzaio/cadenza-service/compare/v2.17.40...v2.17.41) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** preserve task registration context ([4ca8879](https://github.com/cadenzaio/cadenza-service/commit/4ca88795fbe105f7ea5dd2e213398b7434f3ebb7))
+
 ## [2.17.40](https://github.com/cadenzaio/cadenza-service/compare/v2.17.39...v2.17.40) (2026-03-16)
 
 
