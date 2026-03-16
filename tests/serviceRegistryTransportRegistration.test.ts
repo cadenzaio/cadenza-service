@@ -157,10 +157,12 @@ describe("service registry transport registration", () => {
   });
 
   it("persists each yielded transport registration without collapsing them into one resolver execution", async () => {
-    const insertedTransportIds: string[] = [];
+    const insertedTransportRows: Array<Record<string, unknown>> = [];
 
     Cadenza.createMetaTask("Insert service_instance_transport", (ctx) => {
-      insertedTransportIds.push(String(ctx.queryData?.data?.uuid ?? ctx.data?.uuid));
+      insertedTransportRows.push({
+        ...(ctx.queryData?.data ?? {}),
+      });
       return ctx;
     });
 
@@ -186,9 +188,24 @@ describe("service registry transport registration", () => {
       ],
     });
 
-    await waitForCondition(() => insertedTransportIds.length === 2, 1_500);
+    await waitForCondition(() => insertedTransportRows.length === 2, 1_500);
 
-    expect(insertedTransportIds).toEqual(["transport-a", "transport-b"]);
+    expect(insertedTransportRows).toEqual([
+      expect.objectContaining({
+        uuid: "transport-a",
+        role: "internal",
+        service_instance_id: "orders-3",
+        origin: "http://orders.internal",
+      }),
+      expect.objectContaining({
+        uuid: "transport-b",
+        role: "public",
+        service_instance_id: "orders-3",
+        origin: "http://orders.localhost",
+      }),
+    ]);
+    expect(insertedTransportRows[0]).not.toHaveProperty("name");
+    expect(insertedTransportRows[1]).not.toHaveProperty("name");
   });
 
   it("registers rest-only transports when socket serving is disabled", async () => {

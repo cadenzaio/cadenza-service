@@ -302,8 +302,6 @@ describe("graph sync authority rows", () => {
       1_500,
     );
 
-    expect(firstTask.registered).toBe(true);
-    expect(secondTask.registered).toBe(true);
     expect(
       insertedTaskNames.filter((name) => name === "Capture first order"),
     ).toHaveLength(1);

@@ -101,27 +101,22 @@ function buildServiceRegistryInsertQueryData(
     Object.prototype.hasOwnProperty.call(ctx, "batch") || ctx.batch !== undefined
       ? ctx.batch
       : getJoinedValue("batch");
+  const nextData =
+    resolvedData !== undefined
+      ? resolvedData && typeof resolvedData === "object"
+        ? { ...resolvedData }
+        : resolvedData
+      : registrationData &&
+          typeof registrationData === "object" &&
+          !Array.isArray(registrationData)
+        ? { ...registrationData }
+        : registrationData;
 
-  if (
-    !("data" in nextQueryData) &&
-    (resolvedData !== undefined || registrationData !== undefined)
-  ) {
-    nextQueryData.data =
-      resolvedData !== undefined
-        ? resolvedData && typeof resolvedData === "object"
-          ? { ...resolvedData }
-          : resolvedData
-        : registrationData &&
-            typeof registrationData === "object" &&
-            !Array.isArray(registrationData)
-          ? { ...registrationData }
-          : registrationData;
+  if (nextData !== undefined) {
+    nextQueryData.data = nextData;
   }
 
-  if (
-    !("batch" in nextQueryData) &&
-    resolvedBatch !== undefined
-  ) {
+  if (resolvedBatch !== undefined) {
     nextQueryData.batch = Array.isArray(resolvedBatch)
       ? resolvedBatch.map((row) =>
           row && typeof row === "object" ? { ...row } : row,
