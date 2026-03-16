@@ -1,3 +1,10 @@
+## [2.17.59](https://github.com/cadenzaio/cadenza-service/compare/v2.17.58...v2.17.59) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** use generated authority intent names ([7c77d47](https://github.com/cadenzaio/cadenza-service/commit/7c77d47a1325d50012d3c0be1cffb774e8b731ef))
+
 ## [2.17.58](https://github.com/cadenzaio/cadenza-service/compare/v2.17.57...v2.17.58) (2026-03-16)
 
 
