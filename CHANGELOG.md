@@ -1,3 +1,10 @@
+## [2.17.39](https://github.com/cadenzaio/cadenza-service/compare/v2.17.38...v2.17.39) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** isolate registry insert conflict policies ([cf6013d](https://github.com/cadenzaio/cadenza-service/commit/cf6013dd799d8177cd26b193a6c76f4a2ecb4af4))
+
 ## [2.17.38](https://github.com/cadenzaio/cadenza-service/compare/v2.17.37...v2.17.38) (2026-03-16)
 
 
