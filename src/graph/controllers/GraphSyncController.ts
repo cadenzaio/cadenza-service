@@ -302,6 +302,19 @@ function resolveSyncInsertTask(
       Cadenza.createMetaTask(
         `Log prepared graph sync insert execution for ${tableName}`,
         (ctx) => {
+          if (tableName === "task") {
+            if (!shouldDebugTaskSyncPayload(ctx as Record<string, any>)) {
+              return ctx;
+            }
+
+            logSyncDebug("insert_prepare", {
+              tableName,
+              targetTaskName: targetTask.name,
+              payload: buildTaskSyncDebugPayload(ctx as Record<string, any>),
+            });
+            return ctx;
+          }
+
           logSyncDebug("insert_prepare", {
             tableName,
             targetTaskName: targetTask.name,
@@ -349,12 +362,23 @@ function resolveSyncInsertTask(
       };
 
       if (debugTable) {
-        logSyncDebug("insert_finalize", {
-          tableName,
-          targetTaskName: targetTask.name,
-          success: didSyncInsertSucceed(normalizedContext),
-          ctx: normalizedContext,
-        });
+        if (tableName === "task") {
+          if (shouldDebugTaskSyncPayload(normalizedContext)) {
+            logSyncDebug("insert_finalize", {
+              tableName,
+              targetTaskName: targetTask.name,
+              success: didSyncInsertSucceed(normalizedContext),
+              payload: buildTaskSyncDebugPayload(normalizedContext),
+            });
+          }
+        } else {
+          logSyncDebug("insert_finalize", {
+            tableName,
+            targetTaskName: targetTask.name,
+            success: didSyncInsertSucceed(normalizedContext),
+            ctx: normalizedContext,
+          });
+        }
       }
 
       pendingResolverContexts.delete(ctx.__resolverRequestId);
@@ -375,11 +399,21 @@ function resolveSyncInsertTask(
     Cadenza.createMetaTask(
       `Log failed graph sync insert execution for ${tableName}`,
       (ctx) => {
-        logSyncDebug("insert_failed", {
-          tableName,
-          targetTaskName: targetTask.name,
-          ctx,
-        });
+        if (tableName === "task") {
+          if (shouldDebugTaskSyncPayload(ctx as Record<string, any>)) {
+            logSyncDebug("insert_failed", {
+              tableName,
+              targetTaskName: targetTask.name,
+              payload: buildTaskSyncDebugPayload(ctx as Record<string, any>),
+            });
+          }
+        } else {
+          logSyncDebug("insert_failed", {
+            tableName,
+            targetTaskName: targetTask.name,
+            ctx,
+          });
+        }
         if (typeof ctx.__resolverRequestId === "string") {
           pendingResolverContexts.delete(ctx.__resolverRequestId);
         }
@@ -580,6 +614,80 @@ function summarizeSyncDebugValue(value: unknown, depth: number = 0): unknown {
 
 function logSyncDebug(event: string, payload: Record<string, unknown>): void {
   console.log(`${SYNC_DEBUG_PREFIX} ${event}`, summarizeSyncDebugValue(payload));
+}
+
+function buildTaskSyncDebugPayload(ctx: Record<string, any>): Record<string, unknown> {
+  const data =
+    ctx.data && typeof ctx.data === "object"
+      ? (ctx.data as Record<string, unknown>)
+      : {};
+  const queryData =
+    ctx.queryData && typeof ctx.queryData === "object"
+      ? (ctx.queryData as Record<string, unknown>)
+      : {};
+  const queryDataData =
+    queryData.data && typeof queryData.data === "object"
+      ? (queryData.data as Record<string, unknown>)
+      : {};
+  const taskPayload = Object.keys(queryDataData).length > 0 ? queryDataData : data;
+  const functionString =
+    typeof taskPayload.functionString === "string"
+      ? taskPayload.functionString
+      : typeof taskPayload.function_string === "string"
+        ? taskPayload.function_string
+        : undefined;
+  const tagIdGetter =
+    typeof taskPayload.tagIdGetter === "string"
+      ? taskPayload.tagIdGetter
+      : typeof taskPayload.tag_id_getter === "string"
+        ? taskPayload.tag_id_getter
+        : undefined;
+  const signals =
+    taskPayload.signals && typeof taskPayload.signals === "object"
+      ? (taskPayload.signals as Record<string, unknown>)
+      : {};
+  const intents =
+    taskPayload.intents && typeof taskPayload.intents === "object"
+      ? (taskPayload.intents as Record<string, unknown>)
+      : {};
+
+  return {
+    taskName:
+      taskPayload.name ??
+      taskPayload.taskName ??
+      taskPayload.task_name ??
+      ctx.__taskName ??
+      null,
+    serviceName:
+      taskPayload.service_name ??
+      taskPayload.serviceName ??
+      ctx.__syncServiceName ??
+      null,
+    functionStringLength: functionString?.length ?? null,
+    tagIdGetterLength: tagIdGetter?.length ?? null,
+    isMeta: taskPayload.isMeta ?? taskPayload.is_meta ?? null,
+    isSubMeta: taskPayload.isSubMeta ?? taskPayload.is_sub_meta ?? null,
+    isHidden: taskPayload.isHidden ?? taskPayload.is_hidden ?? null,
+    signalsEmitsCount: Array.isArray(signals.emits) ? signals.emits.length : null,
+    signalsObservedCount: Array.isArray(signals.observed)
+      ? signals.observed.length
+      : null,
+    intentHandlesCount: Array.isArray(intents.handles)
+      ? intents.handles.length
+      : null,
+    intentInquiresCount: Array.isArray(intents.inquires)
+      ? intents.inquires.length
+      : null,
+    rowCount: ctx.rowCount ?? null,
+    errored: ctx.errored ?? false,
+    success: ctx.__success ?? null,
+    error: ctx.__error ?? null,
+  };
+}
+
+function shouldDebugTaskSyncPayload(ctx: Record<string, any>): boolean {
+  const payload = buildTaskSyncDebugPayload(ctx);
+  return shouldDebugSyncTaskName(payload.taskName);
 }
 
 type AuthorityQueryTableName = keyof typeof AUTHORITY_QUERY_RESULT_KEYS;
@@ -1222,6 +1330,8 @@ export default class GraphSyncController {
               register: task.register,
               registered: task.registered,
               hidden: task.hidden,
+              exportFunctionLength: __functionString?.length ?? null,
+              exportTagGetterLength: __getTagCallback?.length ?? null,
               observedSignals: Array.from(task.observedSignals),
               handledIntents: Array.from(task.handlesIntents as Set<string>),
             });
