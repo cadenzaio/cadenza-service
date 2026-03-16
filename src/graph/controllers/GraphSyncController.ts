@@ -452,7 +452,7 @@ const SYNC_DEBUG_ENABLED =
   typeof process !== "undefined" &&
   typeof process.env === "object" &&
   process.env.CADENZA_SYNC_DEBUG === "true";
-const SYNC_DEBUG_TABLES = new Set<string>(["intent_to_task_map"]);
+const SYNC_DEBUG_TABLES = new Set<string>(["intent_to_task_map", "task"]);
 const SYNC_DEBUG_TASK_NAMES = new Set<string>([
   "Query service_instance",
   "Query service_instance_transport",
