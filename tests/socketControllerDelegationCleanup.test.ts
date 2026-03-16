@@ -2,12 +2,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("socket.io-client", async () => {
   const { EventEmitter } = await import("node:events");
+  let lastSocket: MockSocket | null = null;
 
   class MockSocket extends EventEmitter {
     connected = false;
     id = "mock-socket";
+    ackHandlers: Record<
+      string,
+      (
+        data: unknown,
+        callback?: (err: unknown, response: unknown) => void,
+      ) => void
+    > = {};
 
     connect() {
+      queueMicrotask(() => {
+        this.connected = true;
+        this.emit("connect");
+      });
       return this;
     }
 
@@ -19,24 +31,36 @@ vi.mock("socket.io-client", async () => {
     timeout(_ms: number) {
       return {
         emit: (
-          _event: string,
-          _data: unknown,
+          event: string,
+          data: unknown,
           callback?: (err: unknown, response: unknown) => void,
         ) => {
-          callback?.(null, { ok: true });
+          if (this.ackHandlers[event]) {
+            this.ackHandlers[event](data, callback);
+            return;
+          }
+          callback?.(
+            null,
+            event === "handshake" ? { status: "success" } : { ok: true },
+          );
         },
       };
     }
   }
 
   return {
-    io: () => new MockSocket(),
+    io: () => {
+      lastSocket = new MockSocket();
+      return lastSocket;
+    },
     Socket: MockSocket,
+    __getLastSocket: () => lastSocket,
   };
 });
 
 import Cadenza from "../src/Cadenza";
 import SocketController from "../src/network/SocketController";
+import { __getLastSocket } from "socket.io-client";
 
 async function waitForCondition(
   predicate: () => boolean | Promise<boolean>,
@@ -126,6 +150,10 @@ describe("SocketController delegation cleanup", () => {
       1_000,
     );
 
+    __getLastSocket()!.ackHandlers.delegation = (_data, callback) => {
+      callback?.({ message: "mock delegation failure" }, undefined);
+    };
+
     for (let i = 0; i < 15; i++) {
       const previousErrorCount =
         (await controller.getSocketClientDiagnosticsEntry(fetchId))
@@ -156,4 +184,48 @@ describe("SocketController delegation cleanup", () => {
     expect(finalState.pendingTimers).toBe(0);
     expect(finalState.errorHistory.length).toBeGreaterThan(0);
   });
+
+  it("returns delegation lookup failures through the frontend socket client receiver", async () => {
+    SocketController.instance;
+    Cadenza.serviceRegistry.serviceName = "DemoFrontend";
+    Cadenza.serviceRegistry.serviceInstanceId = "frontend-1";
+    Cadenza.serviceRegistry.isFrontend = true;
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceInstanceId: "remote-cadenza-db",
+      communicationTypes: ["socket"],
+      serviceName: "CadenzaDB",
+      serviceTransportId: "cadenza-db-public-1",
+      serviceOrigin: "http://cadenza-db.localhost",
+      transportProtocols: ["socket"],
+    });
+
+    await waitForCondition(() => Boolean(__getLastSocket()?.connected), 1_000);
+    await waitForCondition(
+      () => (__getLastSocket() as any)?.listenerCount?.("delegation") > 0,
+      1_000,
+    );
+
+    const response = await new Promise<any>((resolve) => {
+      __getLastSocket()?.emit(
+        "delegation",
+        {
+          __remoteRoutineName: "Missing frontend delegation target",
+          payload: {
+            deviceId: "device-7",
+          },
+          __metadata: {
+            __deputyExecId: "frontend-delegation-1",
+          },
+        },
+        resolve,
+      );
+    });
+
+    expect(response).toMatchObject({
+      errored: true,
+      __error:
+        "No task or routine registered for delegation target Missing frontend delegation target.",
+    });
+  }, 10_000);
 });

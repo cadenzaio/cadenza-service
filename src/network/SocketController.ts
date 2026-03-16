@@ -232,6 +232,42 @@ export default class SocketController {
   );
 
   constructor() {
+    Cadenza.registry.getTaskByName.doOn("meta.socket.delegation_requested");
+    Cadenza.registry.getRoutineByName.doOn("meta.socket.delegation_requested");
+    Cadenza.createMetaTask(
+      "Forward socket delegations to runner",
+      (context, emit: any) => {
+        if (!isBrowser && !Cadenza.serviceRegistry.isFrontend) {
+          return false;
+        }
+
+        if (context.task || context.routine) {
+          const routine = context.task ?? context.routine;
+          delete context.task;
+          delete context.routine;
+          context.__routineExecId = context.__metadata?.__deputyExecId ?? null;
+          context.__isDeputy = true;
+          Cadenza.runner.run(routine, context);
+          return true;
+        }
+
+        const deputyExecId =
+          context.__metadata?.__deputyExecId ?? context.__deputyExecId;
+        const remoteRoutineName =
+          context.__remoteRoutineName ?? context.__name ?? "unknown";
+        context.errored = true;
+        context.__error = `No task or routine registered for delegation target ${remoteRoutineName}.`;
+        if (deputyExecId) {
+          emit(`meta.socket.delegation_target_not_found:${deputyExecId}`, context);
+        }
+        emit("meta.runner.failed", context);
+        return false;
+      },
+      "Forwards socket delegated lookups to the local runner in frontend runtimes.",
+    )
+      .attachSignal("meta.runner.failed")
+      .doAfter(Cadenza.registry.getTaskByName, Cadenza.registry.getRoutineByName);
+
     this.registerDiagnosticsTasks();
     this.registerSocketServerTasks();
     this.registerSocketClientTasks();
@@ -520,8 +556,72 @@ export default class SocketController {
 
                 if (ctx.isFrontend) {
                   const fetchId = `browser:${ctx.serviceInstanceId}`;
+                  const frontendDelegateTaskName = `Delegate flow to frontend ${fetchId}`;
+                  const frontendTransmitTaskName = `Transmit signal to ${fetchId}`;
+
+                  Cadenza.get(frontendDelegateTaskName)?.destroy();
+                  Cadenza.get(frontendTransmitTaskName)?.destroy();
+
                   Cadenza.createMetaTask(
-                    `Transmit signal to ${fetchId}`,
+                    frontendDelegateTaskName,
+                    async (delegateCtx, emitter) => {
+                      if (delegateCtx.__remoteRoutineName === undefined) {
+                        return;
+                      }
+
+                      const normalizedDelegateCtx =
+                        ensureDelegationContextMetadata(delegateCtx);
+                      delete normalizedDelegateCtx.__isSubMeta;
+                      delete normalizedDelegateCtx.__broadcast;
+
+                      const deputyExecId =
+                        normalizedDelegateCtx.__metadata?.__deputyExecId;
+
+                      const resultContext = await new Promise<AnyObject>((resolve) => {
+                        ws.timeout(normalizedDelegateCtx.__timeout ?? 60_000).emit(
+                          "delegation",
+                          normalizedDelegateCtx,
+                          (err: AnyObject, response: AnyObject) => {
+                            if (err) {
+                              resolve({
+                                ...normalizedDelegateCtx,
+                                errored: true,
+                                __error: `Frontend delegation timed out: ${err.message ?? err}`,
+                              });
+                              return;
+                            }
+
+                            resolve(
+                              response ?? {
+                                errored: true,
+                                __error: "Frontend delegation returned no response",
+                              },
+                            );
+                          },
+                        );
+                      });
+
+                      if (deputyExecId) {
+                        const metadata = resultContext.__metadata;
+                        delete resultContext.__metadata;
+
+                        emitter(`meta.socket_client.delegated:${deputyExecId}`, {
+                          ...resultContext,
+                          ...(metadata && typeof metadata === "object"
+                            ? metadata
+                            : {}),
+                        });
+                      }
+
+                      return resultContext;
+                    },
+                    "Delegates work to a connected frontend runtime through its active websocket.",
+                  )
+                    .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
+                    .attachSignal("meta.socket_client.delegated");
+
+                  Cadenza.createMetaTask(
+                    frontendTransmitTaskName,
                     (c, emitter) => {
                       if (c.__signalName === undefined) {
                         return;
@@ -1080,10 +1180,65 @@ export default class SocketController {
             );
           });
 
-          socket.on("signal", (signalCtx) => {
-            if (Cadenza.signalBroker.listObservedSignals().includes(signalCtx.__signalName)) {
-              Cadenza.emit(signalCtx.__signalName, signalCtx);
+          socket.on("delegation", (delegationCtx, callback) => {
+            const normalizedDelegationCtx =
+              ensureDelegationContextMetadata(delegationCtx);
+            const deputyExecId = normalizedDelegationCtx.__metadata.__deputyExecId;
+            const targetNotFoundSignal =
+              `meta.socket.delegation_target_not_found:${deputyExecId}`;
+
+            Cadenza.createEphemeralMetaTask(
+              `Resolve frontend socket delegation ${deputyExecId}`,
+              (completedCtx: AnyObject) => {
+                callback(completedCtx);
+                return completedCtx;
+              },
+              "Resolves a server-routed delegation request through the frontend runtime.",
+              {
+                register: false,
+              },
+            ).doOn(`meta.node.graph_completed:${deputyExecId}`, targetNotFoundSignal);
+
+            if (
+              !Cadenza.get(normalizedDelegationCtx.__remoteRoutineName) &&
+              !Cadenza.registry.routines.get(
+                normalizedDelegationCtx.__remoteRoutineName,
+              )
+            ) {
+              Cadenza.emit(targetNotFoundSignal, {
+                ...normalizedDelegationCtx,
+                __error: `No task or routine registered for delegation target ${normalizedDelegationCtx.__remoteRoutineName}.`,
+                errored: true,
+              });
+              return;
             }
+
+            Cadenza.emit("meta.socket.delegation_requested", {
+              ...normalizedDelegationCtx,
+              __name: normalizedDelegationCtx.__remoteRoutineName,
+            });
+          });
+
+          socket.on("signal", (signalCtx, callback?: (context: AnyObject) => void) => {
+            if (Cadenza.signalBroker.listObservedSignals().includes(signalCtx.__signalName)) {
+              callback?.({
+                __status: "success",
+                __signalName: signalCtx.__signalName,
+              });
+              Cadenza.emit(signalCtx.__signalName, signalCtx);
+              return;
+            }
+
+            callback?.({
+              ...signalCtx,
+              __status: "error",
+              __error: `No such signal: ${signalCtx.__signalName}`,
+              errored: true,
+            });
+          });
+
+          socket.on("status_check", (statusCtx, callback) => {
+            callback(Cadenza.serviceRegistry.resolveLocalStatusCheck(statusCtx));
           });
 
           socket.on("status_update", (status) => {

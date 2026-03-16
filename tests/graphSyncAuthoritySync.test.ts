@@ -272,27 +272,18 @@ describe("graph sync authority rows", () => {
     ).toBe(false);
   });
 
-  it("routes local sync inserts through task execution so queryData survives", async () => {
+  it("routes local sync inserts through signal-driven runner flow so queryData survives", async () => {
     let capturedQueryData: Record<string, unknown> | undefined;
 
-    const localInsertTask = Cadenza.createMetaTask("Insert signal_registry", () => {
+    Cadenza.createMetaTask("Insert signal_registry", (ctx) => {
+      capturedQueryData = (ctx.queryData as Record<string, unknown>) ?? undefined;
       return {
-        __success: false,
-        __error: "raw taskFunction path should not be used for local sync inserts",
-      };
-    });
-
-    vi.spyOn(localInsertTask, "execute").mockImplementation((context) => {
-      capturedQueryData = context.getFullContext().queryData as
-        | Record<string, unknown>
-        | undefined;
-
-      return {
+        ...ctx,
         __success: true,
         __syncing: true,
         __taskName: "Insert signal_registry",
         __signal: "orders.updated",
-      } as any;
+      };
     });
 
     ServiceRegistry.instance.serviceName = "OrdersApi";

@@ -1,9 +1,9 @@
 import Cadenza from "../../Cadenza";
 import {
-  GraphContext,
   META_ACTOR_SESSION_STATE_PERSIST_INTENT,
   Task,
 } from "@cadenza.io/core";
+import { v4 as uuid } from "uuid";
 import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 import { DeputyTask } from "../../index";
 import { isMetaIntentName } from "../../utils/inquiry";
@@ -244,40 +244,82 @@ function resolveSyncInsertTask(
   if (!localInsertTask && !remoteInsertTask) {
     return undefined;
   }
+  const targetTask = localInsertTask ?? remoteInsertTask!;
 
-  return Cadenza.createUniqueMetaTask(
-    `Resolve graph sync insert for ${tableName}`,
-    (ctx, emit, inquire, progressCallback) => {
-      const targetTask =
-        Cadenza.getLocalCadenzaDBInsertTask(tableName) ?? remoteInsertTask;
-      if (!targetTask) {
+  const executionRequestedSignal = `meta.sync_controller.insert_execution_requested:${tableName}`;
+  const executionResolvedSignal = `meta.sync_controller.insert_execution_resolved:${tableName}`;
+  const executionFailedSignal = `meta.sync_controller.insert_execution_failed:${tableName}`;
+
+  const prepareExecutionTask = Cadenza.createMetaTask(
+    `Prepare graph sync insert execution for ${tableName}`,
+    (ctx) => ({
+      ...ctx,
+      queryData: buildSyncInsertQueryData(
+        ctx as Record<string, any>,
+        queryData,
+      ),
+    }),
+    `Prepares ${tableName} graph-sync insert payloads for runner execution.`,
+    {
+      register: false,
+      isHidden: true,
+    },
+  )
+    .doOn(executionRequestedSignal)
+    .emitsOnFail(executionFailedSignal);
+
+  const finalizeExecutionTask = Cadenza.createMetaTask(
+    `Finalize graph sync insert execution for ${tableName}`,
+    (ctx, emit) => {
+      if (!ctx.__resolverRequestId) {
         return false;
       }
 
-      return targetTask.execute(
-        new GraphContext({
-          ...ctx,
-          queryData: buildSyncInsertQueryData(
-            ctx as Record<string, any>,
-            queryData,
-          ),
-        }),
-        emit,
-        inquire,
-        progressCallback,
-        {
-          nodeId:
-            ctx.__previousTaskExecutionId ??
-            ctx.__metadata?.__previousTaskExecutionId ??
-            `graph-sync-${tableName}`,
-          routineExecId:
-            ctx.__routineExecId ??
-            ctx.__metadata?.__routineExecId ??
-            ctx.__metadata?.__localRoutineExecId ??
-            "graph-sync",
-        },
-      );
+      emit(executionResolvedSignal, ctx);
+      return ctx;
     },
+    `Resolves signal-driven ${tableName} graph-sync insert execution.`,
+    {
+      register: false,
+      isHidden: true,
+    },
+  );
+
+  targetTask.then(finalizeExecutionTask).emitsOnFail(executionFailedSignal);
+  prepareExecutionTask.then(targetTask);
+
+  return Cadenza.createUniqueMetaTask(
+    `Resolve graph sync insert for ${tableName}`,
+    (ctx, emit) =>
+      new Promise((resolve) => {
+        const resolverRequestId = uuid();
+
+        Cadenza.createEphemeralMetaTask(
+          `Resolve graph sync insert execution for ${tableName} (${resolverRequestId})`,
+          (resultCtx) => {
+            if (resultCtx.__resolverRequestId !== resolverRequestId) {
+              return false;
+            }
+
+            const normalizedResult = {
+              ...resultCtx,
+            };
+            delete normalizedResult.__resolverRequestId;
+
+            resolve(normalizedResult);
+            return normalizedResult;
+          },
+          `Waits for signal-driven ${tableName} graph-sync insert execution.`,
+          {
+            register: false,
+          },
+        ).doOn(executionResolvedSignal, executionFailedSignal);
+
+        emit(executionRequestedSignal, {
+          ...ctx,
+          __resolverRequestId: resolverRequestId,
+        });
+      }),
     `Routes graph sync inserts for ${tableName} through the local authority task when available.`,
     {
       ...options,

@@ -1,5 +1,6 @@
-import { GraphContext, GraphRoutine, Task } from "@cadenza.io/core";
+import { GraphRoutine, Task } from "@cadenza.io/core";
 import type { AnyObject } from "@cadenza.io/core";
+import { v4 as uuid } from "uuid";
 import Cadenza from "../Cadenza";
 import { isBrowser } from "../utils/environment";
 import { InquiryResponderDescriptor } from "../types/inquiry";
@@ -142,6 +143,8 @@ function normalizeServiceRegistryInsertResult(
   }
 
   const result = { ...(rawResult as AnyObject) };
+  delete result.__resolverOriginalContext;
+  delete result.__resolverQueryData;
   const normalizedQueryData =
     result.queryData && typeof result.queryData === "object"
       ? { ...(result.queryData as AnyObject) }
@@ -221,80 +224,140 @@ function resolveServiceRegistryInsertTask(
     options,
   );
 
-  return Cadenza.createUniqueMetaTask(
-    `Resolve service registry insert for ${tableName}`,
-    (ctx, emit, inquire, progressCallback) => {
-      const nextQueryData = buildServiceRegistryInsertQueryData(ctx, queryData);
-      if (tableName === "service" && nextQueryData.data === undefined) {
-        Cadenza.log(
-          "Service registry insert resolver missing service payload.",
-          {
-            ctxKeys:
-              ctx && typeof ctx === "object" ? Object.keys(ctx).sort() : [],
-            hasData:
-              !!ctx &&
-              typeof ctx === "object" &&
-              (Object.prototype.hasOwnProperty.call(ctx, "data") ||
-                (ctx as AnyObject).data !== undefined),
-            hasRegistrationData:
-              !!ctx &&
-              typeof ctx === "object" &&
-              (Object.prototype.hasOwnProperty.call(ctx, "__registrationData") ||
-                (ctx as AnyObject).__registrationData !== undefined),
-            serviceName:
-              (ctx as AnyObject)?.__serviceName ??
-              (ctx as AnyObject)?.data?.name ??
-              null,
+  const localExecutionRequestedSignal = `meta.service_registry.insert_execution_requested:${tableName}:local`;
+  const remoteExecutionRequestedSignal = `meta.service_registry.insert_execution_requested:${tableName}:remote`;
+  const executionResolvedSignal = `meta.service_registry.insert_execution_resolved:${tableName}`;
+  const executionFailedSignal = `meta.service_registry.insert_execution_failed:${tableName}`;
+
+  const createPrepareExecutionTask = (signalName: string) =>
+    Cadenza.createMetaTask(
+      `Prepare service registry insert execution for ${tableName} (${signalName})`,
+      (ctx) => {
+        const nextQueryData = buildServiceRegistryInsertQueryData(ctx, queryData);
+
+        const delegationContext = ensureDelegationContextMetadata({
+          ...ctx,
+          queryData: nextQueryData,
+        }) as AnyObject & {
+          __deputyExecId: string;
+          __metadata: AnyObject;
+        };
+        delegationContext.__metadata.__skipRemoteExecution =
+          delegationContext.__metadata.__skipRemoteExecution ??
+          delegationContext.__skipRemoteExecution ??
+          false;
+        delegationContext.__metadata.__blockRemoteExecution =
+          delegationContext.__metadata.__blockRemoteExecution ??
+          delegationContext.__blockRemoteExecution ??
+          false;
+
+        return {
+          ...delegationContext,
+          __resolverOriginalContext: {
+            ...ctx,
           },
-          "warning",
-        );
+          __resolverQueryData: nextQueryData,
+        };
+      },
+      `Prepares ${tableName} service-registry insert payloads for runner execution.`,
+      {
+        register: false,
+        isHidden: true,
+      },
+    )
+      .doOn(signalName)
+      .emitsOnFail(executionFailedSignal);
+
+  const prepareLocalExecutionTask = createPrepareExecutionTask(
+    localExecutionRequestedSignal,
+  );
+  const prepareRemoteExecutionTask = createPrepareExecutionTask(
+    remoteExecutionRequestedSignal,
+  );
+
+  const finalizeExecutionTask = Cadenza.createMetaTask(
+    `Finalize service registry insert execution for ${tableName}`,
+    (ctx, emit) => {
+      if (!ctx.__resolverRequestId) {
+        return false;
       }
 
-      const targetTask =
-        Cadenza.getLocalCadenzaDBInsertTask(tableName) ?? remoteInsertTask;
-      const delegationContext = ensureDelegationContextMetadata({
-        ...ctx,
-        queryData: nextQueryData,
-      }) as AnyObject & {
-        __deputyExecId: string;
-        __metadata: AnyObject;
-      };
-      delegationContext.__metadata.__skipRemoteExecution =
-        delegationContext.__metadata.__skipRemoteExecution ??
-        delegationContext.__skipRemoteExecution ??
-        false;
-      delegationContext.__metadata.__blockRemoteExecution =
-        delegationContext.__metadata.__blockRemoteExecution ??
-        delegationContext.__blockRemoteExecution ??
-        false;
-
-      return Promise.resolve(
-        targetTask.execute(
-          new GraphContext(delegationContext),
-          emit,
-          inquire,
-          progressCallback,
-          {
-            nodeId:
-              delegationContext.__previousTaskExecutionId ??
-              delegationContext.__metadata?.__previousTaskExecutionId ??
-              `service-registry-${tableName}`,
-            routineExecId:
-              delegationContext.__routineExecId ??
-              delegationContext.__metadata?.__routineExecId ??
-              delegationContext.__metadata?.__localRoutineExecId ??
-              "service-registry",
-          },
-        ),
-      ).then((result) =>
-        normalizeServiceRegistryInsertResult(
-          tableName,
-          ctx,
-          nextQueryData,
-          result,
-        ),
+      const normalized = normalizeServiceRegistryInsertResult(
+        tableName,
+        (ctx.__resolverOriginalContext as AnyObject) ?? ctx,
+        (ctx.__resolverQueryData as Record<string, unknown>) ?? ctx.queryData ?? {},
+        ctx,
       );
+
+      if (!normalized || typeof normalized !== "object") {
+        return normalized as any;
+      }
+
+      emit(executionResolvedSignal, normalized as AnyObject);
+      return normalized;
     },
+    `Normalizes ${tableName} service-registry insert results for resolver callers.`,
+    {
+      register: false,
+      isHidden: true,
+    },
+  );
+
+  const wiredLocalTaskNames = new Set<string>();
+  const wireExecutionTarget = (targetTask: Task, prepareTask: Task) => {
+    targetTask.then(finalizeExecutionTask).emitsOnFail(executionFailedSignal);
+    prepareTask.then(targetTask);
+  };
+
+  wireExecutionTarget(remoteInsertTask, prepareRemoteExecutionTask);
+
+  return Cadenza.createUniqueMetaTask(
+    `Resolve service registry insert for ${tableName}`,
+    (ctx, emit) =>
+      new Promise((resolve) => {
+        const resolverRequestId = uuid();
+
+        Cadenza.createEphemeralMetaTask(
+          `Resolve service registry insert execution for ${tableName} (${resolverRequestId})`,
+          (resultCtx) => {
+            if (resultCtx.__resolverRequestId !== resolverRequestId) {
+              return false;
+            }
+
+            const normalizedResult = {
+              ...resultCtx,
+            };
+            delete normalizedResult.__resolverRequestId;
+            delete normalizedResult.__resolverOriginalContext;
+            delete normalizedResult.__resolverQueryData;
+
+            resolve(normalizedResult);
+            return normalizedResult;
+          },
+          `Resolves signal-driven ${tableName} service-registry insert execution.`,
+          {
+            register: false,
+          },
+        ).doOn(executionResolvedSignal, executionFailedSignal);
+
+        const localInsertTask = Cadenza.getLocalCadenzaDBInsertTask(tableName);
+        const executionSignal = localInsertTask
+          ? localExecutionRequestedSignal
+          : remoteExecutionRequestedSignal;
+
+        if (
+          localInsertTask &&
+          !wiredLocalTaskNames.has(localInsertTask.name)
+        ) {
+          wireExecutionTarget(localInsertTask, prepareLocalExecutionTask);
+          wiredLocalTaskNames.add(localInsertTask.name);
+        }
+
+        emit(executionSignal, {
+          ...ctx,
+          __resolverRequestId: resolverRequestId,
+        });
+      }),
     `Resolves ${tableName} inserts through the local CadenzaDB task when available.`,
     options,
   );
@@ -2231,15 +2294,18 @@ export default class ServiceRegistry {
           return false;
         }
 
+        if (trackedInstance?.isFrontend) {
+          return true;
+        }
+
         const trackedTransport = this.getRouteableTransport(
           trackedInstance!,
           this.useSocket ? "socket" : "rest",
         );
 
         if (
-          (!serviceInstance.isFrontend &&
-            (this.deputies.has(serviceName) ||
-              this.remoteIntents.has(serviceName))) ||
+          this.deputies.has(serviceName) ||
+          this.remoteIntents.has(serviceName) ||
           this.remoteSignals.has(serviceName)
         ) {
           const communicationTypes = Array.from(
@@ -2351,9 +2417,9 @@ export default class ServiceRegistry {
         }
 
         const hasRemoteInterest =
-          ((!ownerInstance.isFrontend &&
-            (this.deputies.has(ownerInstance.serviceName) ||
-              this.remoteIntents.has(ownerInstance.serviceName))) ||
+          !ownerInstance.isFrontend &&
+          (this.deputies.has(ownerInstance.serviceName) ||
+            this.remoteIntents.has(ownerInstance.serviceName) ||
             this.remoteSignals.has(ownerInstance.serviceName)) &&
           transport.role === this.getRoutingTransportRole();
 
@@ -2875,6 +2941,10 @@ export default class ServiceRegistry {
               return false;
             }
 
+            if (instance.isFrontend) {
+              return true;
+            }
+
             return Boolean(
               this.selectTransportForInstance(instance, context, preferredRole),
             );
@@ -2920,6 +2990,22 @@ export default class ServiceRegistry {
 
         if (__broadcast || instances[0].isFrontend) {
           for (const instance of instances) {
+            if (instance.isFrontend) {
+              const fetchId = `browser:${instance.uuid}`;
+              emit(
+                `meta.service_registry.selected_instance_for_socket:${fetchId}`,
+                {
+                  ...context,
+                  __instance: instance.uuid,
+                  __transportId: undefined,
+                  __transportOrigin: undefined,
+                  __transportProtocols: ["socket"],
+                  __fetchId: fetchId,
+                },
+              );
+              continue;
+            }
+
             const selectedTransport = this.selectTransportForInstance(
               instance,
               context,
@@ -2971,6 +3057,23 @@ export default class ServiceRegistry {
         if (retries > 0) {
           selected =
             instancesToTry[Math.floor(Math.random() * instancesToTry.length)];
+        }
+
+        if (selected.isFrontend) {
+          context.__instance = selected.uuid;
+          context.__transportId = undefined;
+          context.__transportOrigin = undefined;
+          context.__transportProtocols = ["socket"];
+          context.__fetchId = `browser:${selected.uuid}`;
+          context.__triedInstances = triedInstances;
+          context.__triedInstances.push(selected.uuid);
+          context.__retries = retries;
+
+          emit(
+            `meta.service_registry.selected_instance_for_socket:${context.__fetchId}`,
+            context,
+          );
+          return context;
         }
 
         const selectedTransport = this.selectTransportForInstance(
@@ -3753,7 +3856,7 @@ export default class ServiceRegistry {
                     for (const service of services) {
                       const instances = this.instances
                         .get(service)!
-                        .filter((i) => i.isActive);
+                        .filter((i) => i.isActive && !i.isFrontend);
                       for (const instance of instances) {
                         const transport = this.getRouteableTransport(
                           instance,

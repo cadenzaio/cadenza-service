@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
 
 import Cadenza from "../src/Cadenza";
 import DatabaseController from "@service-database-controller";
@@ -225,14 +226,17 @@ describe("service registry transport registration", () => {
       };
     });
 
-    const result = await registry.insertServiceInstanceTask.taskFunction({
-      data: {
-        uuid: "orders-3",
-        process_pid: 1,
-        service_name: "OrdersService",
-        is_active: true,
+    const result = await registry.insertServiceInstanceTask.taskFunction(
+      {
+        data: {
+          uuid: "orders-3",
+          process_pid: 1,
+          service_name: "OrdersService",
+          is_active: true,
+        },
       },
-    });
+      Cadenza.emit.bind(Cadenza),
+    );
 
     expect(capturedQueryData).toEqual([
       expect.objectContaining({
@@ -248,48 +252,56 @@ describe("service registry transport registration", () => {
     });
   });
 
-  it("routes remote service inserts through task execution", async () => {
+  it("routes remote service inserts through signal-driven runner flow", async () => {
     resetRuntimeState();
 
-    const executeSpy = vi.fn((context: any) => ({
-      ...context.getContext(),
-      __serviceName: "OrdersService",
-      queryData: context.getContext().queryData,
-    }));
-    const taskFunctionSpy = vi.fn(() => {
-      throw new Error("taskFunction should not be called directly");
-    });
+    const capturedQueryData: Array<Record<string, unknown>> = [];
 
     vi.spyOn(Cadenza, "createCadenzaDBInsertTask").mockImplementation(
       () =>
-        ({
-          execute: executeSpy,
-          taskFunction: taskFunctionSpy,
-        }) as any,
+        Cadenza.createMetaTask(
+          "Mock remote service insert",
+          (ctx) => {
+            capturedQueryData.push(
+              (ctx.queryData as Record<string, unknown>) ?? {},
+            );
+
+            return {
+              ...ctx,
+              __serviceName: "OrdersService",
+            };
+          },
+          "Captures remote service insert payloads for resolver tests.",
+          {
+            register: false,
+            isHidden: true,
+          },
+        ),
     );
 
     Cadenza.bootstrap();
     Cadenza.setMode("production");
 
     const registry = ServiceRegistry.instance as any;
-    const result = await registry.insertServiceTask.taskFunction({
-      data: {
-        name: "OrdersService",
-        description: "Orders",
+    const result = await registry.insertServiceTask.taskFunction(
+      {
+        data: {
+          name: "OrdersService",
+          description: "Orders",
+        },
+        __serviceName: "OrdersService",
       },
-      __serviceName: "OrdersService",
-    });
+      Cadenza.emit.bind(Cadenza),
+    );
 
-    expect(taskFunctionSpy).not.toHaveBeenCalled();
-    expect(executeSpy).toHaveBeenCalledTimes(1);
-    expect(executeSpy.mock.calls[0]?.[0]?.getContext()).toMatchObject({
-      queryData: expect.objectContaining({
+    expect(capturedQueryData).toEqual([
+      expect.objectContaining({
         data: expect.objectContaining({
           name: "OrdersService",
           description: "Orders",
         }),
       }),
-    });
+    ]);
     expect(result).toMatchObject({
       __serviceName: "OrdersService",
     });
@@ -298,35 +310,39 @@ describe("service registry transport registration", () => {
   it("preserves local instance identity when remote service inserts return authority metadata", async () => {
     resetRuntimeState();
 
-    const executeSpy = vi.fn((context: any) => ({
-      ...context.getContext(),
-      __serviceName: "CadenzaDB",
-      __serviceInstanceId: "authority-1",
-      queryData: context.getContext().queryData,
-    }));
-
     vi.spyOn(Cadenza, "createCadenzaDBInsertTask").mockImplementation(
       () =>
-        ({
-          execute: executeSpy,
-          taskFunction: vi.fn(),
-        }) as any,
+        Cadenza.createMetaTask(
+          "Mock remote authority insert",
+          (ctx) => ({
+            ...ctx,
+            __serviceName: "CadenzaDB",
+            __serviceInstanceId: "authority-1",
+          }),
+          "Returns authority metadata for identity preservation tests.",
+          {
+            register: false,
+            isHidden: true,
+          },
+        ),
     );
 
     Cadenza.bootstrap();
     Cadenza.setMode("production");
 
     const registry = ServiceRegistry.instance as any;
-    const result = await registry.insertServiceTask.taskFunction({
-      data: {
-        name: "OrdersService",
-        description: "Orders",
+    const result = await registry.insertServiceTask.taskFunction(
+      {
+        data: {
+          name: "OrdersService",
+          description: "Orders",
+        },
+        __serviceName: "OrdersService",
+        __serviceInstanceId: "orders-4",
       },
-      __serviceName: "OrdersService",
-      __serviceInstanceId: "orders-4",
-    });
+      Cadenza.emit.bind(Cadenza),
+    );
 
-    expect(executeSpy).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
       __serviceName: "OrdersService",
       __serviceInstanceId: "orders-4",
@@ -336,6 +352,115 @@ describe("service registry transport registration", () => {
         }),
       }),
     });
+  });
+
+  it("routes frontend targets through browser socket fetch ids without transports", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const selectedContexts: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture frontend socket selection", (ctx) => {
+      selectedContexts.push(ctx);
+      return true;
+    }).doOn("meta.service_registry.selected_instance_for_socket:browser:frontend-1");
+
+    registry.instances.set("DashboardFrontend", [
+      {
+        uuid: "frontend-1",
+        serviceName: "DashboardFrontend",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: true,
+        isDatabase: false,
+        transports: [],
+        clientCreatedTransportIds: [],
+      },
+    ]);
+
+    Cadenza.run(registry.getBalancedInstance, {
+      __serviceName: "DashboardFrontend",
+      __remoteRoutineName: "HandleFrontendDelegation",
+      __metadata: {
+        __deputyExecId: "frontend-routing-1",
+      },
+    });
+
+    await waitForCondition(() => selectedContexts.length === 1, 1_500);
+
+    expect(selectedContexts[0]).toMatchObject({
+      __instance: "frontend-1",
+      __fetchId: "browser:frontend-1",
+      __transportProtocols: ["socket"],
+    });
+    expect(selectedContexts[0].__transportId).toBeUndefined();
+  });
+
+  it("does not create server transport clients for frontend instances", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const dependeeRegistrations: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture dependee registration", (ctx) => {
+      dependeeRegistrations.push(ctx.data);
+      return true;
+    }).doOn("meta.service_registry.dependee_registered");
+
+    registry.remoteSignals.set("DashboardFrontend", new Set(["signal.test"]));
+    registry.instances.set("DashboardFrontend", [
+      {
+        uuid: "frontend-2",
+        serviceName: "DashboardFrontend",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: true,
+        isDatabase: false,
+        transports: [],
+        clientCreatedTransportIds: [],
+      },
+    ]);
+
+    Cadenza.run(registry.handleTransportUpdateTask, {
+      serviceTransport: {
+        uuid: "frontend-transport-1",
+        serviceInstanceId: "frontend-2",
+        role: "internal",
+        origin: "http://frontend.internal",
+        protocols: ["socket"],
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(dependeeRegistrations).toEqual([]);
+    expect(
+      registry.instances.get("DashboardFrontend")?.[0]?.clientCreatedTransportIds,
+    ).toEqual([]);
+  });
+
+  it("does not call task.execute directly from resolver wrappers", () => {
+    const serviceRegistrySource = fs.readFileSync(
+      "/Users/emilforsvall/WebstormProjects/cadenza-workspace/cadenza-service/src/registry/ServiceRegistry.ts",
+      "utf8",
+    );
+    const graphSyncSource = fs.readFileSync(
+      "/Users/emilforsvall/WebstormProjects/cadenza-workspace/cadenza-service/src/graph/controllers/GraphSyncController.ts",
+      "utf8",
+    );
+
+    expect(serviceRegistrySource).not.toMatch(/targetTask\.execute\s*\(/);
+    expect(graphSyncSource).not.toMatch(/targetTask\.execute\s*\(/);
   });
 
 });

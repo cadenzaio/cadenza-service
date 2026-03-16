@@ -1346,7 +1346,7 @@ export default class CadenzaService {
           "global.meta.cadenza_db.gathered_sync_data",
           ctx.serviceName,
         );
-      }).doOn("meta.rest.handshake");
+      }).doOn("meta.rest.handshake", "meta.socket.handshake");
     }
 
     this.createMetaTask("Handle service setup completion", () => {

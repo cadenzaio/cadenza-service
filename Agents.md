@@ -154,6 +154,7 @@ Breaking contract changes require:
 Do NOT:
 
 - Bypass primitive flow with hidden side channels.
+- Call `task.execute(...)` directly outside the internal graph runner/runtime.
 - Read/write actor state outside actor-bound tasks when actor context is required.
 - Persist runtime-only objects.
 - Modify generated files manually.
@@ -193,6 +194,7 @@ Within this repo:
 - Use signals as fire-and-forget detach points when no response contract is required.
 - Reuse tasks across multiple flows by cloning tasks when the task behavior is unchanged.
 - Keep helper functions narrowly scoped to repeated low-level work, normalization, or hot paths where primitive-only modeling would be inefficient.
+- When a task must be reused in another flow, wire it through signals, inquiries, routines, or cloned task graphs rather than imperative task invocation.
 
 When in doubt: stop and ask.
 
