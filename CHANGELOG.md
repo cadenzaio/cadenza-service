@@ -1,3 +1,10 @@
+## [2.17.49](https://github.com/cadenzaio/cadenza-service/compare/v2.17.48...v2.17.49) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** fan in registration milestones correctly ([0cbf545](https://github.com/cadenzaio/cadenza-service/commit/0cbf545a7a0928263f0a7a1110c5eeb6f9a58cac))
+
 ## [2.17.48](https://github.com/cadenzaio/cadenza-service/compare/v2.17.47...v2.17.48) (2026-03-16)
 
 
