@@ -1,3 +1,10 @@
+## [2.17.40](https://github.com/cadenzaio/cadenza-service/compare/v2.17.39...v2.17.40) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** preserve current graph insert payloads ([292b400](https://github.com/cadenzaio/cadenza-service/commit/292b400c01643944f144da36e686094a3f96c3bc))
+
 ## [2.17.39](https://github.com/cadenzaio/cadenza-service/compare/v2.17.38...v2.17.39) (2026-03-16)
 
 
