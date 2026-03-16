@@ -1,3 +1,10 @@
+## [2.17.66](https://github.com/cadenzaio/cadenza-service/compare/v2.17.65...v2.17.66) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** tolerate late local registration state ([8a3bd7b](https://github.com/cadenzaio/cadenza-service/commit/8a3bd7b92f8b754e85e3636861cf22efb986535d))
+
 ## [2.17.65](https://github.com/cadenzaio/cadenza-service/compare/v2.17.64...v2.17.65) (2026-03-16)
 
 
