@@ -1,3 +1,10 @@
+## [2.17.60](https://github.com/cadenzaio/cadenza-service/compare/v2.17.59...v2.17.60) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** route authority writes through cadenza db deputy ([7f3f565](https://github.com/cadenzaio/cadenza-service/commit/7f3f56517785b1f2060027618b4a04a234784322))
+
 ## [2.17.59](https://github.com/cadenzaio/cadenza-service/compare/v2.17.58...v2.17.59) (2026-03-16)
 
 
