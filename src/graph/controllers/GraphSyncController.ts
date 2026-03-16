@@ -248,6 +248,13 @@ function resolveSyncInsertTask(
     `Prepare graph sync insert execution for ${tableName}`,
     (ctx) => ({
       ...ctx,
+      __resolverOriginalContext: {
+        ...ctx,
+      },
+      __resolverQueryData: buildSyncInsertQueryData(
+        ctx as Record<string, any>,
+        queryData,
+      ),
       queryData: buildSyncInsertQueryData(
         ctx as Record<string, any>,
         queryData,
@@ -269,8 +276,26 @@ function resolveSyncInsertTask(
         return false;
       }
 
-      emit(executionResolvedSignal, ctx);
-      return ctx;
+      const originalContext =
+        ctx.__resolverOriginalContext &&
+        typeof ctx.__resolverOriginalContext === "object"
+          ? (ctx.__resolverOriginalContext as Record<string, unknown>)
+          : {};
+      const originalQueryData =
+        ctx.__resolverQueryData && typeof ctx.__resolverQueryData === "object"
+          ? (ctx.__resolverQueryData as Record<string, unknown>)
+          : undefined;
+      const normalizedContext = {
+        ...originalContext,
+        ...ctx,
+        queryData:
+          ctx.queryData && typeof ctx.queryData === "object"
+            ? ctx.queryData
+            : originalQueryData,
+      };
+
+      emit(executionResolvedSignal, normalizedContext);
+      return normalizedContext;
     },
     `Resolves signal-driven ${tableName} graph-sync insert execution.`,
     {
