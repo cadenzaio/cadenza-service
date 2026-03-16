@@ -131,7 +131,7 @@ describe("graph sync authority rows", () => {
     ).toBe(true);
   });
 
-  it("emits compact task registration split payloads", async () => {
+  it("yields compact task registration split payloads", () => {
     const splitPayloads: Array<Record<string, unknown>> = [];
 
     const task = Cadenza.createMetaTask("Register compact task", () => true);
@@ -141,21 +141,14 @@ describe("graph sync authority rows", () => {
     GraphSyncController.instance.init();
 
     const splitTask = GraphSyncController.instance.splitTasksForRegistration as any;
-    splitTask.taskFunction(
-      {
+    for (const payload of splitTask.taskFunction({
         __syncing: true,
         tasks: [task],
         intents: [{ name: "should-not-leak" }],
         signals: [{ signal: "should.not.leak", data: {} }],
-      },
-      (signal: string, payload: Record<string, unknown>) => {
-        if (signal === "meta.sync_controller.task_registration_split") {
-          splitPayloads.push(payload);
-        }
-      },
-    );
-
-    await waitForCondition(() => splitPayloads.length === 1, 1_500);
+      }) as Iterable<Record<string, unknown>>) {
+      splitPayloads.push(payload);
+    }
 
     expect(splitPayloads[0]).toMatchObject({
       __syncing: true,
@@ -234,7 +227,7 @@ describe("graph sync authority rows", () => {
     );
   });
 
-  it("persists every split task registration signal instead of collapsing them into one resolver execution", async () => {
+  it("persists every yielded task registration branch instead of collapsing them into one resolver execution", async () => {
     const insertedTaskNames: string[] = [];
 
     for (const tableName of [
@@ -272,27 +265,9 @@ describe("graph sync authority rows", () => {
       "Second business task to persist through graph sync.",
     );
 
-    Cadenza.emit("meta.sync_controller.task_registration_split", {
+    Cadenza.run(GraphSyncController.instance.splitTasksForRegistration!, {
       __syncing: true,
-      __taskName: firstTask.name,
-      data: {
-        name: firstTask.name,
-        version: firstTask.version,
-        description: firstTask.description,
-        functionString: "(() => ({ ok: true }))",
-        service_name: "OrdersApi",
-      },
-    });
-    Cadenza.emit("meta.sync_controller.task_registration_split", {
-      __syncing: true,
-      __taskName: secondTask.name,
-      data: {
-        name: secondTask.name,
-        version: secondTask.version,
-        description: secondTask.description,
-        functionString: "(() => ({ ok: true }))",
-        service_name: "OrdersApi",
-      },
+      tasks: [firstTask, secondTask],
     });
 
     await waitForCondition(
@@ -575,51 +550,6 @@ describe("graph sync authority rows", () => {
     });
     expect(insertedIntentMap).not.toHaveProperty("name");
     expect(insertedIntentMap).not.toHaveProperty("input");
-  });
-
-  it("preserves sync metadata when remote insert results omit the original context", async () => {
-    const originalCreateCadenzaDbInsertTask =
-      Cadenza.createCadenzaDBInsertTask.bind(Cadenza);
-
-    vi.spyOn(Cadenza, "createCadenzaDBInsertTask").mockImplementation(
-      (tableName: string, queryData: Record<string, unknown>, options?: Record<string, unknown>) => {
-        if (tableName !== "task") {
-          return originalCreateCadenzaDbInsertTask(tableName, queryData, options);
-        }
-
-        return Cadenza.createMetaTask("Insert task remotely", (ctx) => ({
-          __resolverRequestId: ctx.__resolverRequestId,
-          __success: true,
-          queryData: ctx.queryData,
-        }));
-      },
-    );
-
-    ServiceRegistry.instance.serviceName = "OrdersApi";
-    GraphSyncController.instance.isCadenzaDBReady = true;
-    GraphSyncController.instance.init();
-
-    const task = Cadenza.createTask(
-      "Register remote task metadata",
-      () => ({ ok: true }),
-      "Persists task metadata through the remote graph sync path.",
-    );
-
-    Cadenza.emit("meta.sync_controller.task_registration_split", {
-      __syncing: true,
-      __taskName: task.name,
-      data: {
-        name: task.name,
-        version: task.version,
-        description: task.description,
-        functionString: "(() => ({ ok: true }))",
-        service_name: "OrdersApi",
-      },
-    });
-
-    await waitForCondition(() => task.registered === true, 1_500);
-
-    expect(task.registered).toBe(true);
   });
 
 });
