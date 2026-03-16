@@ -928,6 +928,31 @@ export default class GraphSyncController {
       this.splitTasksForRegistration.then(registerTaskTask);
     }
 
+    Cadenza.createMetaTask(
+      "Prepare created task for immediate sync",
+      (ctx) => {
+        const task =
+          ctx.taskInstance ??
+          (ctx.data?.name ? Cadenza.get(String(ctx.data.name)) : undefined);
+
+        if (!task || task.hidden || !task.register || task.registered) {
+          return false;
+        }
+
+        return {
+          __syncing: true,
+          tasks: [task],
+        };
+      },
+      "Schedules newly created tasks into the graph sync registration flow without waiting for the next periodic tick.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    )
+      .doOn("meta.task.created")
+      .then(this.splitTasksForRegistration);
+
     Cadenza.createUniqueMetaTask(
       "Gather task registration",
       () => {

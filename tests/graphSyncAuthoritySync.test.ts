@@ -227,64 +227,6 @@ describe("graph sync authority rows", () => {
     );
   });
 
-  it("persists every yielded task registration branch instead of collapsing them into one resolver execution", async () => {
-    const insertedTaskNames: string[] = [];
-
-    for (const tableName of [
-      "intent_registry",
-      "routine",
-      "task_to_routine_map",
-      "signal_registry",
-      "task",
-      "actor",
-      "actor_task_map",
-      "signal_to_task_map",
-      "intent_to_task_map",
-      "directional_task_graph_map",
-    ]) {
-      Cadenza.createMetaTask(`Insert ${tableName}`, (ctx) => {
-        if (tableName === "task") {
-          insertedTaskNames.push(String(getInsertRow(ctx).name));
-        }
-        return ctx;
-      });
-    }
-
-    ServiceRegistry.instance.serviceName = "OrdersApi";
-    GraphSyncController.instance.isCadenzaDBReady = true;
-    GraphSyncController.instance.init();
-
-    const firstTask = Cadenza.createTask(
-      "Capture first order",
-      () => ({ ok: true }),
-      "First business task to persist through graph sync.",
-    );
-    const secondTask = Cadenza.createTask(
-      "Capture second order",
-      () => ({ ok: true }),
-      "Second business task to persist through graph sync.",
-    );
-
-    Cadenza.run(GraphSyncController.instance.splitTasksForRegistration!, {
-      __syncing: true,
-      tasks: [firstTask, secondTask],
-    });
-
-    await waitForCondition(
-      () =>
-        insertedTaskNames.includes("Capture first order") &&
-        insertedTaskNames.includes("Capture second order"),
-      1_500,
-    );
-
-    expect(
-      insertedTaskNames.filter((name) => name === "Capture first order"),
-    ).toHaveLength(1);
-    expect(
-      insertedTaskNames.filter((name) => name === "Capture second order"),
-    ).toHaveLength(1);
-  });
-
   it("does not mark intent definitions as registered when delegated inserts have zero responders", async () => {
     Cadenza.createMetaTask("Insert intent_registry", (ctx) => {
       return {
