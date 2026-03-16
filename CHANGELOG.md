@@ -1,3 +1,10 @@
+## [2.17.51](https://github.com/cadenzaio/cadenza-service/compare/v2.17.50...v2.17.51) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** add targeted task insert tracing ([80ba4df](https://github.com/cadenzaio/cadenza-service/commit/80ba4dfe41af80b235c79f3029e5af3fbecafa25))
+
 ## [2.17.50](https://github.com/cadenzaio/cadenza-service/compare/v2.17.49...v2.17.50) (2026-03-16)
 
 
