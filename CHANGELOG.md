@@ -1,3 +1,10 @@
+## [2.17.61](https://github.com/cadenzaio/cadenza-service/compare/v2.17.60...v2.17.61) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** narrow authority sync debug scope ([6a35b39](https://github.com/cadenzaio/cadenza-service/commit/6a35b398e36dfcb3b086883d1a7df53ba065f91b))
+
 ## [2.17.60](https://github.com/cadenzaio/cadenza-service/compare/v2.17.59...v2.17.60) (2026-03-16)
 
 
