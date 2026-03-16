@@ -1,3 +1,10 @@
+## [2.17.64](https://github.com/cadenzaio/cadenza-service/compare/v2.17.63...v2.17.64) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** gate db task tracing behind env ([c149be9](https://github.com/cadenzaio/cadenza-service/commit/c149be9ef574d5c3086f11b125720eb094c8e090))
+
 ## [2.17.63](https://github.com/cadenzaio/cadenza-service/compare/v2.17.62...v2.17.63) (2026-03-16)
 
 
