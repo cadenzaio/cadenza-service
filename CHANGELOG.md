@@ -1,3 +1,10 @@
+## [2.17.55](https://github.com/cadenzaio/cadenza-service/compare/v2.17.54...v2.17.55) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** decouple responder maps from global sync flags ([c10ac3f](https://github.com/cadenzaio/cadenza-service/commit/c10ac3f1a6d0f0a5193c4a36dfe37b465ec3c053))
+
 ## [2.17.54](https://github.com/cadenzaio/cadenza-service/compare/v2.17.53...v2.17.54) (2026-03-16)
 
 
