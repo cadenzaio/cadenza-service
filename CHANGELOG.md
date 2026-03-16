@@ -1,3 +1,10 @@
+## [2.17.53](https://github.com/cadenzaio/cadenza-service/compare/v2.17.52...v2.17.53) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** sequence local authority flows correctly ([e30158b](https://github.com/cadenzaio/cadenza-service/commit/e30158b132cb1477b9cc7b888106f4fca3f93a82))
+
 ## [2.17.52](https://github.com/cadenzaio/cadenza-service/compare/v2.17.51...v2.17.52) (2026-03-16)
 
 
