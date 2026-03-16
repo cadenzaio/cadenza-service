@@ -1,3 +1,10 @@
+## [2.17.50](https://github.com/cadenzaio/cadenza-service/compare/v2.17.49...v2.17.50) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** release task registration tracing ([e39bcee](https://github.com/cadenzaio/cadenza-service/commit/e39bcee4dc3b6a8895ce4419509fa24114a3b788))
+
 ## [2.17.49](https://github.com/cadenzaio/cadenza-service/compare/v2.17.48...v2.17.49) (2026-03-16)
 
 
