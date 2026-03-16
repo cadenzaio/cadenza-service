@@ -204,20 +204,14 @@ function buildSyncInsertQueryData(
       ? ctx.batch
       : getJoinedContextValue(ctx, "batch");
 
-  if (
-    !("data" in nextQueryData) &&
-    resolvedData !== undefined
-  ) {
+  if (resolvedData !== undefined) {
     nextQueryData.data =
       resolvedData && typeof resolvedData === "object" && !Array.isArray(resolvedData)
         ? { ...resolvedData }
         : resolvedData;
   }
 
-  if (
-    !("batch" in nextQueryData) &&
-    resolvedBatch !== undefined
-  ) {
+  if (resolvedBatch !== undefined) {
     nextQueryData.batch = Array.isArray(resolvedBatch)
       ? resolvedBatch.map((row: unknown) =>
           row && typeof row === "object"

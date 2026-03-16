@@ -525,4 +525,55 @@ describe("graph sync authority rows", () => {
 
     expect(intentMapRows).toHaveLength(0);
   });
+
+  it("restores the intent-to-task map payload after ensuring the intent registry row exists", async () => {
+    let insertedIntentDefinition: Record<string, unknown> | undefined;
+    let insertedIntentMap: Record<string, unknown> | undefined;
+
+    Cadenza.createMetaTask("Insert intent_registry", (ctx) => {
+      insertedIntentDefinition = getInsertRow(ctx);
+      return {
+        ...ctx,
+        __success: true,
+      };
+    });
+
+    Cadenza.createMetaTask("Insert intent_to_task_map", (ctx) => {
+      insertedIntentMap = getInsertRow(ctx);
+      return {
+        ...ctx,
+        __success: true,
+      };
+    });
+
+    const task = Cadenza.createMetaTask("Handle order sync", (ctx) => ctx).respondsTo(
+      "orders-sync",
+    );
+    task.registered = true;
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.registerIntentToTaskMapTask!, {
+      __syncing: true,
+      task,
+    });
+
+    await waitForCondition(
+      () => insertedIntentDefinition !== undefined && insertedIntentMap !== undefined,
+      1_500,
+    );
+
+    expect(insertedIntentDefinition).toMatchObject({
+      name: "orders-sync",
+    });
+    expect(insertedIntentMap).toMatchObject({
+      intentName: "orders-sync",
+      taskName: "Handle order sync",
+      serviceName: "OrdersApi",
+    });
+    expect(insertedIntentMap).not.toHaveProperty("name");
+    expect(insertedIntentMap).not.toHaveProperty("input");
+  });
 });
