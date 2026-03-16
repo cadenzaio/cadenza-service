@@ -1,3 +1,10 @@
+## [2.17.58](https://github.com/cadenzaio/cadenza-service/compare/v2.17.57...v2.17.58) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** preserve authority map context ([b5598de](https://github.com/cadenzaio/cadenza-service/commit/b5598ded05282ccd35cb2ffa7b269391fa528130))
+
 ## [2.17.57](https://github.com/cadenzaio/cadenza-service/compare/v2.17.56...v2.17.57) (2026-03-16)
 
 
