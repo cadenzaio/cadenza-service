@@ -78,6 +78,10 @@ interface PostgresActorRegistration {
 
 type QueryMacroOperation = "count" | "exists" | "one" | "aggregate";
 const AUTHORITY_SYNC_DEBUG_PREFIX = "[CADENZA_DB_TASK_DEBUG]";
+const AUTHORITY_SYNC_DEBUG_ENABLED =
+  typeof process !== "undefined" &&
+  typeof process.env === "object" &&
+  process.env.CADENZA_DB_TASK_DEBUG === "true";
 const AUTHORITY_SYNC_DEBUG_TASK_NAMES = new Set<string>([
   "Query service_instance",
   "Query service_instance_transport",
@@ -96,6 +100,9 @@ function logAuthoritySyncDebug(
   event: string,
   payload: Record<string, unknown>,
 ): void {
+  if (!AUTHORITY_SYNC_DEBUG_ENABLED) {
+    return;
+  }
   console.log(`${AUTHORITY_SYNC_DEBUG_PREFIX} ${event}`, payload);
 }
 
@@ -129,6 +136,10 @@ function shouldDebugAuthoritySyncPayload(
   tableName: string,
   payload: DbOperationPayload,
 ): boolean {
+  if (!AUTHORITY_SYNC_DEBUG_ENABLED) {
+    return false;
+  }
+
   if (tableName !== "task" && tableName !== "task_to_routine_map") {
     return false;
   }
