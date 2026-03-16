@@ -1,3 +1,10 @@
+## [2.17.54](https://github.com/cadenzaio/cadenza-service/compare/v2.17.53...v2.17.54) (2026-03-16)
+
+
+### Bug Fixes
+
+* **socket:** guard optional signal acks ([69ea4a5](https://github.com/cadenzaio/cadenza-service/commit/69ea4a545f89ecb7ec77e791fdd32b9427c35cb4))
+
 ## [2.17.53](https://github.com/cadenzaio/cadenza-service/compare/v2.17.52...v2.17.53) (2026-03-16)
 
 
