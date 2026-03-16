@@ -264,15 +264,10 @@ function resolveSyncInsertTask(
   >();
 
   const prepareExecutionTask = Cadenza.createMetaTask(
-    `Prepare graph sync insert execution for ${tableName}`,
+    `Prepare graph sync insert for ${tableName}`,
     (ctx) => {
-      const originalContext = {
-        ...ctx,
-      };
-      const originalQueryData = buildSyncInsertQueryData(
-        ctx as Record<string, any>,
-        queryData,
-      );
+      const originalContext = { ...ctx };
+      const originalQueryData = buildSyncInsertQueryData(ctx as Record<string, any>, queryData);
 
       if (typeof ctx.__resolverRequestId === "string") {
         pendingResolverContexts.set(ctx.__resolverRequestId, {
@@ -332,7 +327,7 @@ function resolveSyncInsertTask(
   }
 
   const finalizeExecutionTask = Cadenza.createMetaTask(
-    `Finalize graph sync insert execution for ${tableName}`,
+    `Finalize graph sync insert for ${tableName}`,
     (ctx, emit) => {
       if (!ctx.__resolverRequestId) {
         return false;
@@ -385,7 +380,7 @@ function resolveSyncInsertTask(
       emit(executionResolvedSignal, normalizedContext);
       return normalizedContext;
     },
-    `Resolves signal-driven ${tableName} graph-sync insert execution.`,
+    `Finalizes ${tableName} graph-sync insert execution after the authority task finishes.`,
     {
       register: false,
       isHidden: true,
@@ -400,11 +395,17 @@ function resolveSyncInsertTask(
       `Log failed graph sync insert execution for ${tableName}`,
       (ctx) => {
         if (tableName === "task") {
-          if (shouldDebugTaskSyncPayload(ctx as Record<string, any>)) {
+          if (
+            shouldDebugTaskSyncPayload(ctx as Record<string, any>) ||
+            shouldDebugSyncTaskName(ctx.__taskName)
+          ) {
             logSyncDebug("insert_failed", {
               tableName,
               targetTaskName: targetTask.name,
-              payload: buildTaskSyncDebugPayload(ctx as Record<string, any>),
+              payload: buildTaskSyncDebugPayload({
+                ...ctx,
+                __taskName: ctx.__taskName,
+              } as Record<string, any>),
             });
           }
         } else {
@@ -432,6 +433,28 @@ function resolveSyncInsertTask(
     (ctx, emit) =>
       new Promise((resolve) => {
         const resolverRequestId = uuid();
+        const resolvedContext = {
+          ...ctx,
+          __resolverRequestId: resolverRequestId,
+        };
+
+        if (debugTable) {
+          if (tableName === "task") {
+            if (shouldDebugTaskSyncPayload(resolvedContext as Record<string, any>)) {
+              logSyncDebug("insert_resolver_request", {
+                tableName,
+                targetTaskName: targetTask.name,
+                payload: buildTaskSyncDebugPayload(resolvedContext as Record<string, any>),
+              });
+            }
+          } else {
+            logSyncDebug("insert_resolver_request", {
+              tableName,
+              targetTaskName: targetTask.name,
+              ctx: resolvedContext,
+            });
+          }
+        }
 
         Cadenza.createEphemeralMetaTask(
           `Resolve graph sync insert execution for ${tableName} (${resolverRequestId})`,
@@ -449,16 +472,13 @@ function resolveSyncInsertTask(
             resolve(normalizedResult);
             return normalizedResult;
           },
-          `Waits for signal-driven ${tableName} graph-sync insert execution.`,
+          `Waits for ${tableName} graph-sync insert execution.`,
           {
             register: false,
           },
         ).doOn(executionResolvedSignal, executionFailedSignal);
 
-        emit(executionRequestedSignal, {
-          ...ctx,
-          __resolverRequestId: resolverRequestId,
-        });
+        emit(executionRequestedSignal, resolvedContext);
       }),
     `Routes graph sync inserts for ${tableName} through the local authority task when available.`,
     {
