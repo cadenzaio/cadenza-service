@@ -1,3 +1,10 @@
+## [2.17.38](https://github.com/cadenzaio/cadenza-service/compare/v2.17.37...v2.17.38) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** preserve current registry insert payloads ([8162891](https://github.com/cadenzaio/cadenza-service/commit/81628914ac9b43ca5fdd8baf2a49d5068b955f1c))
+
 ## [2.17.37](https://github.com/cadenzaio/cadenza-service/compare/v2.17.36...v2.17.37) (2026-03-16)
 
 
