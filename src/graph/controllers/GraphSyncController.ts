@@ -391,6 +391,8 @@ const AUTHORITY_QUERY_RESULT_KEYS = {
   intent_registry: "intentRegistrys",
 } as const;
 
+const EARLY_SYNC_REQUEST_DELAYS_MS = [2000, 10000, 30000] as const;
+
 type AuthorityQueryTableName = keyof typeof AUTHORITY_QUERY_RESULT_KEYS;
 
 function resolveSyncQueryRows<T extends Record<string, unknown>>(
@@ -1893,6 +1895,7 @@ export default class GraphSyncController {
       .doOn(
         "meta.sync_controller.sync_tick",
         "meta.service_registry.initial_sync_complete",
+        "meta.sync_requested",
       )
       .then(this.splitSignalsTask);
 
@@ -1901,6 +1904,7 @@ export default class GraphSyncController {
       .doOn(
         "meta.sync_controller.sync_tick",
         "meta.sync_controller.synced_signals",
+        "meta.sync_requested",
       )
       .then(this.splitTasksForRegistration);
 
@@ -1913,6 +1917,7 @@ export default class GraphSyncController {
       .doOn(
         "meta.sync_controller.sync_tick",
         "meta.service_registry.initial_sync_complete",
+        "meta.sync_requested",
       )
       .then(this.splitIntentsTask);
 
@@ -1921,6 +1926,7 @@ export default class GraphSyncController {
       .doOn(
         "meta.sync_controller.sync_tick",
         "meta.service_registry.initial_sync_complete",
+        "meta.sync_requested",
       )
       .then(this.splitRoutinesTask);
 
@@ -1933,6 +1939,7 @@ export default class GraphSyncController {
       .doOn(
         "meta.sync_controller.sync_tick",
         "meta.service_registry.initial_sync_complete",
+        "meta.sync_requested",
       )
       .then(this.splitActorsForRegistration);
 
@@ -1958,6 +1965,7 @@ export default class GraphSyncController {
       .doOn(
         "meta.sync_controller.synced_signals",
         "meta.sync_controller.synced_tasks",
+        "meta.sync_requested",
       )
       .then(
         Cadenza.createMetaTask(
@@ -2002,6 +2010,7 @@ export default class GraphSyncController {
       .doOn(
         "meta.sync_controller.synced_intents",
         "meta.sync_controller.synced_tasks",
+        "meta.sync_requested",
       )
       .then(
         Cadenza.createMetaTask(
@@ -2046,6 +2055,7 @@ export default class GraphSyncController {
       .doOn(
         "meta.sync_controller.synced_actors",
         "meta.sync_controller.synced_tasks",
+        "meta.sync_requested",
       )
       .then(this.registerActorTaskMapTask);
 
@@ -2079,7 +2089,7 @@ export default class GraphSyncController {
       .doOn(
         "meta.sync_controller.synced_routines",
         "meta.sync_controller.synced_tasks",
-        "meta.sync_controller.task_registered",
+        "meta.sync_requested",
       )
       .then(
         Cadenza.createMetaTask(
@@ -2130,7 +2140,9 @@ export default class GraphSyncController {
         { __syncing: true },
         250,
       );
-      Cadenza.schedule("meta.sync_requested", { __syncing: true }, 2000);
+      for (const delayMs of EARLY_SYNC_REQUEST_DELAYS_MS) {
+        Cadenza.schedule("meta.sync_requested", { __syncing: true }, delayMs);
+      }
     }
   }
 }

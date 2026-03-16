@@ -208,7 +208,7 @@ describe("graph sync authority rows", () => {
     expect(GraphSyncController.instance.registerIntentToTaskMapTask).toBeDefined();
   });
 
-  it("schedules an immediate sync tick for connected services", () => {
+  it("schedules an early sync request burst for connected services", () => {
     const scheduleSpy = vi.spyOn(Cadenza, "schedule");
 
     ServiceRegistry.instance.serviceName = "OrdersApi";
@@ -225,6 +225,34 @@ describe("graph sync authority rows", () => {
       { __syncing: true },
       2000,
     );
+    expect(scheduleSpy).toHaveBeenCalledWith(
+      "meta.sync_requested",
+      { __syncing: true },
+      10000,
+    );
+    expect(scheduleSpy).toHaveBeenCalledWith(
+      "meta.sync_requested",
+      { __syncing: true },
+      30000,
+    );
+  });
+
+  it("wires meta.sync_requested to graph registration scans", () => {
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = true;
+    GraphSyncController.instance.init();
+
+    const syncRequestedObserver = (Cadenza.signalBroker as any).signalObservers.get(
+      "meta.sync_requested",
+    );
+    const taskNames = Array.from(syncRequestedObserver?.tasks ?? []).map(
+      (task: any) => task.name as string,
+    );
+
+    expect(taskNames.some((name) => name.startsWith("Get all tasks"))).toBe(true);
+    expect(taskNames.some((name) => name.startsWith("Get all routines"))).toBe(true);
+    expect(taskNames.some((name) => name === "Get all intents")).toBe(true);
+    expect(taskNames.some((name) => name === "Get all actors")).toBe(true);
   });
 
   it("does not mark intent definitions as registered when delegated inserts have zero responders", async () => {
