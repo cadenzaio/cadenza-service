@@ -405,6 +405,105 @@ describe("graph sync authority rows", () => {
     });
   });
 
+  it("does not crash task registration when the local task is not yet available", async () => {
+    createLocalAuthorityInsertTask("task", (ctx) => ({
+      ...ctx,
+      __success: true,
+    }));
+
+    const originalGet = Cadenza.get.bind(Cadenza);
+    const task = Cadenza.createMetaTask("Late sync task", () => true);
+
+    vi.spyOn(Cadenza, "get").mockImplementation((taskName: string) =>
+      taskName === "Late sync task" ? undefined : originalGet(taskName),
+    );
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.splitTasksForRegistration!, {
+      __syncing: true,
+      tasks: [task],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(task.registered).toBe(false);
+  });
+
+  it("does not crash routine registration when the local routine is not yet available", async () => {
+    createLocalAuthorityInsertTask("routine", (ctx) => ({
+      ...ctx,
+      __success: true,
+    }));
+
+    const originalGetRoutine = Cadenza.getRoutine.bind(Cadenza);
+    const routine = {
+      name: "Late sync routine",
+      version: 1,
+      description: "",
+      isMeta: true,
+      registered: false,
+      tasks: [],
+      registeredTasks: new Set<string>(),
+    };
+
+    vi.spyOn(Cadenza, "getRoutine").mockImplementation((routineName: string) =>
+      routineName === "Late sync routine" ? undefined : originalGetRoutine(routineName),
+    );
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.splitRoutinesTask!, {
+      __syncing: true,
+      routines: [routine],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(routine.registered).toBe(false);
+  });
+
+  it("falls back to data.name when signal registration loses __signal", async () => {
+    createLocalAuthorityInsertTask("signal_registry", (ctx) => ({
+      ...ctx,
+      __success: true,
+      __signal: undefined,
+      data: {
+        name: "orders.updated",
+      },
+    }));
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.splitSignalsTask!, {
+      __syncing: true,
+      signals: [
+        {
+          signal: "orders.updated",
+          data: { registered: false },
+        },
+      ],
+    });
+
+    await waitForCondition(
+      () =>
+        (Cadenza.signalBroker as any).signalObservers?.get("orders.updated")
+          ?.registered === true,
+      1_500,
+    );
+
+    expect((Cadenza.signalBroker as any).signalObservers?.get("orders.updated"))
+      .toMatchObject({
+        registered: true,
+      });
+  });
+
   it("skips task-to-routine sync until both routines and tasks are registered", async () => {
     const taskToRoutineRows: Array<Record<string, unknown>> = [];
 

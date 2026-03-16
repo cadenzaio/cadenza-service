@@ -753,6 +753,51 @@ function buildActorRegistrationKey(
   return `${name}|${data.version}|${serviceName}`;
 }
 
+function resolveLocalTaskFromSyncContext(ctx: Record<string, any>): Task | undefined {
+  const taskName =
+    typeof ctx.__taskName === "string" && ctx.__taskName.trim().length > 0
+      ? ctx.__taskName
+      : typeof ctx.data?.name === "string" && ctx.data.name.trim().length > 0
+        ? ctx.data.name
+        : undefined;
+
+  return taskName ? Cadenza.get(taskName) : undefined;
+}
+
+function resolveLocalRoutineFromSyncContext(
+  ctx: Record<string, any>,
+): ReturnType<typeof Cadenza.getRoutine> | undefined {
+  const routineName =
+    typeof ctx.__routineName === "string" && ctx.__routineName.trim().length > 0
+      ? ctx.__routineName
+      : typeof ctx.data?.name === "string" && ctx.data.name.trim().length > 0
+        ? ctx.data.name
+        : undefined;
+
+  return routineName ? Cadenza.getRoutine(routineName) : undefined;
+}
+
+function resolveSignalNameFromSyncContext(ctx: Record<string, any>): string | undefined {
+  const candidateSignalNames = [
+    ctx.signalName,
+    ctx.__signal,
+    ctx.data?.name,
+    ctx.queryData?.data?.name,
+    getJoinedContextValue(ctx, "data") &&
+    typeof getJoinedContextValue(ctx, "data") === "object"
+      ? (getJoinedContextValue(ctx, "data") as Record<string, unknown>).name
+      : undefined,
+  ];
+
+  for (const candidate of candidateSignalNames) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
 export default class GraphSyncController {
   private static _instance: GraphSyncController;
   public static get instance(): GraphSyncController {
@@ -1106,7 +1151,11 @@ export default class GraphSyncController {
       Cadenza.debounce("meta.sync_controller.synced_resource", {
         delayMs: 3000,
       });
-      Cadenza.getRoutine(ctx.__routineName)!.registered = true;
+      const routine = resolveLocalRoutineFromSyncContext(ctx);
+      if (!routine) {
+        return true;
+      }
+      routine.registered = true;
 
       return true;
     }).then(gatherRoutineRegistrationTask);
@@ -1204,9 +1253,11 @@ export default class GraphSyncController {
         Cadenza.debounce("meta.sync_controller.synced_resource", {
           delayMs: 2000,
         });
-        Cadenza.getRoutine(ctx.__routineName)!.registeredTasks.add(
-          ctx.__taskName,
-        );
+        const routine = resolveLocalRoutineFromSyncContext(ctx);
+        if (!routine) {
+          return true;
+        }
+        routine.registeredTasks.add(ctx.__taskName);
       },
     );
     wireSyncTaskGraph(
@@ -1275,7 +1326,22 @@ export default class GraphSyncController {
           delayMs: 3000,
         });
 
-        return { signalName: ctx.__signal };
+        const signalName = resolveSignalNameFromSyncContext(ctx);
+        if (!signalName) {
+          return true;
+        }
+
+        const signalObservers = (Cadenza.signalBroker as any).signalObservers;
+        if (!signalObservers?.has(signalName)) {
+          Cadenza.signalBroker.addSignal(signalName);
+        }
+
+        const observer = signalObservers?.get(signalName);
+        if (observer) {
+          observer.registered = true;
+        }
+
+        return { signalName };
       },
     )
       .then(Cadenza.signalBroker.registerSignalTask!)
@@ -1390,7 +1456,12 @@ export default class GraphSyncController {
           delayMs: 3000,
         });
 
-        Cadenza.get(ctx.__taskName)!.registered = true;
+        const task = resolveLocalTaskFromSyncContext(ctx);
+        if (!task) {
+          return true;
+        }
+
+        task.registered = true;
         emit(
           "meta.sync_controller.task_registered",
           buildMinimalSyncSignalContext(ctx, {
@@ -1597,7 +1668,13 @@ export default class GraphSyncController {
           delayMs: 3000,
         });
 
-        Cadenza.get(ctx.__taskName)?.registeredSignals.add(ctx.__signal);
+        const task = resolveLocalTaskFromSyncContext(ctx);
+        const signalName = resolveSignalNameFromSyncContext(ctx);
+        if (!task || !signalName) {
+          return true;
+        }
+
+        task.registeredSignals.add(signalName);
       },
     );
 
@@ -1742,7 +1819,10 @@ export default class GraphSyncController {
           delayMs: 3000,
         });
 
-        const task = Cadenza.get(ctx.__taskName) as any;
+        const task = resolveLocalTaskFromSyncContext(ctx) as any;
+        if (!task) {
+          return true;
+        }
         task.__registeredIntents = task.__registeredIntents ?? new Set<string>();
         task.__registeredIntents.add(ctx.__intent);
       },
@@ -2087,7 +2167,11 @@ export default class GraphSyncController {
           delayMs: 3000,
         });
 
-        (Cadenza.get(ctx.__taskName) as DeputyTask).registeredDeputyMap = true;
+        const task = resolveLocalTaskFromSyncContext(ctx) as DeputyTask | undefined;
+        if (!task) {
+          return true;
+        }
+        task.registeredDeputyMap = true;
       },
     );
     wireSyncTaskGraph(
