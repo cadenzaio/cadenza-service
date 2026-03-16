@@ -1,3 +1,10 @@
+## [2.17.42](https://github.com/cadenzaio/cadenza-service/compare/v2.17.41...v2.17.42) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** record authority inserts without sync flag echo ([ba2fb33](https://github.com/cadenzaio/cadenza-service/commit/ba2fb3350563a0ead9cae880666037234ed62877))
+
 ## [2.17.41](https://github.com/cadenzaio/cadenza-service/compare/v2.17.40...v2.17.41) (2026-03-16)
 
 
