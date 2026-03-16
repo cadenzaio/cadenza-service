@@ -1,3 +1,10 @@
+## [2.17.48](https://github.com/cadenzaio/cadenza-service/compare/v2.17.47...v2.17.48) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** publish targeted responder-map debug tracing ([e199f74](https://github.com/cadenzaio/cadenza-service/commit/e199f74956de11dfeb01e51e955e05f941d5fb1e))
+
 ## [2.17.47](https://github.com/cadenzaio/cadenza-service/compare/v2.17.46...v2.17.47) (2026-03-16)
 
 
