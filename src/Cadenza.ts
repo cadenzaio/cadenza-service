@@ -1364,7 +1364,7 @@ export default class CadenzaService {
       } else {
         GraphMetadataController.instance;
         GraphSyncController.instance.isCadenzaDBReady =
-          !!options.cadenzaDB?.connect;
+          serviceName === "CadenzaDB" || !!options.cadenzaDB?.connect;
         GraphSyncController.instance.init();
       }
 
