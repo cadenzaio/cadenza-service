@@ -505,12 +505,23 @@ const SYNC_DEBUG_TASK_NAMES = new Set<string>([
   "Forward service transport sync",
   "Forward intent to task map sync",
   "Forward signal to task map sync",
+  "Normalize telemetry ingest payload",
+  "Get telemetry session state",
+  "Normalize anomaly detect input",
+  "Read anomaly runtime session",
+  "Normalize prediction compute input",
+  "Normalize telemetry insert queryData",
 ]);
 const SYNC_DEBUG_ROUTINE_NAMES = new Set<string>(["Sync services"]);
 const SYNC_DEBUG_INTENT_NAMES = new Set<string>([
   "meta-service-registry-full-sync",
   "runner-traffic-runtime-get",
   "iot-telemetry-ingest",
+  "iot-telemetry-session-get",
+  "iot-anomaly-detect",
+  "iot-anomaly-runtime-get",
+  "iot-prediction-compute",
+  "iot-db-telemetry-insert",
   "query-pg-CadenzaDBPostgresActor-service_instance",
   "query-pg-CadenzaDBPostgresActor-service_instance_transport",
   "query-pg-CadenzaDBPostgresActor-intent_to_task_map",
@@ -1803,7 +1814,24 @@ export default class GraphSyncController {
         task.__registeredIntents = task.__registeredIntents ?? new Set<string>();
         task.__invalidMetaIntentWarnings =
           task.__invalidMetaIntentWarnings ?? new Set<string>();
+        const shouldDebugTask = shouldDebugSyncTaskName(task.name);
 
+        if (shouldDebugTask) {
+          logSyncDebug("intent_map_task_state", {
+            taskName: task.name,
+            taskVersion: task.version,
+            serviceName,
+            registered: task.registered,
+            register: task.register,
+            hidden: task.hidden,
+            handledIntents: Array.from(task.handlesIntents as Set<string>),
+            registeredIntents: Array.from(task.__registeredIntents),
+            tasksSynced: this.tasksSynced,
+            intentsSynced: this.intentsSynced,
+          });
+        }
+
+        let emittedCount = 0;
         for (const intent of task.handlesIntents as Set<string>) {
           if (task.__registeredIntents.has(intent)) continue;
 
@@ -1865,8 +1893,20 @@ export default class GraphSyncController {
               serviceName,
             },
           });
+          emittedCount += 1;
         }
-        return true;
+
+        if (shouldDebugTask && emittedCount === 0) {
+          logSyncDebug("intent_map_task_noop", {
+            taskName: task.name,
+            taskVersion: task.version,
+            serviceName,
+            handledIntents: Array.from(task.handlesIntents as Set<string>),
+            registeredIntents: Array.from(task.__registeredIntents),
+          });
+        }
+
+        return emittedCount > 0;
       }.bind(this),
     );
 
