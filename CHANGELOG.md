@@ -1,3 +1,10 @@
+## [2.17.47](https://github.com/cadenzaio/cadenza-service/compare/v2.17.46...v2.17.47) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** add early graph sync follow-up waves ([1795a0c](https://github.com/cadenzaio/cadenza-service/commit/1795a0cf8a4a50260d8873aaf7915ec372794f48))
+
 ## [2.17.46](https://github.com/cadenzaio/cadenza-service/compare/v2.17.45...v2.17.46) (2026-03-16)
 
 
