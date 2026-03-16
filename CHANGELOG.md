@@ -1,3 +1,10 @@
+## [2.17.34](https://github.com/cadenzaio/cadenza-service/compare/v2.17.33...v2.17.34) (2026-03-16)
+
+
+### Bug Fixes
+
+* **socket:** route frontend delivery through client runtime ([7fa5944](https://github.com/cadenzaio/cadenza-service/commit/7fa5944ad715177e11a6e6ca965e31f432591376))
+
 ## [2.17.33](https://github.com/cadenzaio/cadenza-service/compare/v2.17.32...v2.17.33) (2026-03-15)
 
 
