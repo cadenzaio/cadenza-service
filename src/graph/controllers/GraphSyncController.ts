@@ -416,11 +416,7 @@ const AUTHORITY_QUERY_RESULT_KEYS = {
 const EARLY_SYNC_REQUEST_DELAYS_MS = [2000, 10000, 30000] as const;
 const SYNC_DEBUG_PREFIX = "[CADENZA_SYNC_DEBUG]";
 const SYNC_DEBUG_TABLES = new Set<string>([
-  "task",
-  "routine",
   "task_to_routine_map",
-  "signal_registry",
-  "intent_registry",
   "signal_to_task_map",
   "intent_to_task_map",
 ]);
