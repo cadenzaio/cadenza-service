@@ -179,6 +179,22 @@ function didSyncInsertSucceed(ctx: Record<string, any>): boolean {
   return true;
 }
 
+function buildMinimalSyncSignalContext(
+  ctx: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const nextContext: Record<string, unknown> = {
+    __syncing: ctx.__syncing === true,
+    ...extra,
+  };
+
+  if (typeof ctx.__reason === "string" && ctx.__reason.trim().length > 0) {
+    nextContext.__reason = ctx.__reason;
+  }
+
+  return nextContext;
+}
+
 function buildSyncInsertQueryData(
   ctx: Record<string, any>,
   queryData: Record<string, unknown> = {},
@@ -896,10 +912,10 @@ export default class GraphSyncController {
       const shouldEmit = !this.tasksSynced;
       this.tasksSynced = true;
       if (shouldEmit) {
-        emit("meta.sync_controller.synced_tasks", {
-          __syncing: true,
-          ...ctx,
-        });
+        emit(
+          "meta.sync_controller.synced_tasks",
+          buildMinimalSyncSignalContext(ctx),
+        );
       }
 
       return true;
@@ -916,10 +932,10 @@ export default class GraphSyncController {
       const shouldEmit = !this.routinesSynced;
       this.routinesSynced = true;
       if (shouldEmit) {
-        emit("meta.sync_controller.synced_routines", {
-          __syncing: true,
-          ...ctx,
-        });
+        emit(
+          "meta.sync_controller.synced_routines",
+          buildMinimalSyncSignalContext(ctx),
+        );
       }
 
       return true;
@@ -936,10 +952,10 @@ export default class GraphSyncController {
       const shouldEmit = !this.signalsSynced;
       this.signalsSynced = true;
       if (shouldEmit) {
-        emit("meta.sync_controller.synced_signals", {
-          __syncing: true,
-          ...ctx,
-        });
+        emit(
+          "meta.sync_controller.synced_signals",
+          buildMinimalSyncSignalContext(ctx),
+        );
       }
 
       return true;
@@ -956,10 +972,10 @@ export default class GraphSyncController {
       const shouldEmit = !this.intentsSynced;
       this.intentsSynced = true;
       if (shouldEmit) {
-        emit("meta.sync_controller.synced_intents", {
-          __syncing: true,
-          ...ctx,
-        });
+        emit(
+          "meta.sync_controller.synced_intents",
+          buildMinimalSyncSignalContext(ctx),
+        );
       }
 
       return true;
@@ -984,10 +1000,10 @@ export default class GraphSyncController {
       const shouldEmit = !this.actorsSynced;
       this.actorsSynced = true;
       if (shouldEmit) {
-        emit("meta.sync_controller.synced_actors", {
-          __syncing: true,
-          ...ctx,
-        });
+        emit(
+          "meta.sync_controller.synced_actors",
+          buildMinimalSyncSignalContext(ctx),
+        );
       }
 
       return true;
@@ -1375,10 +1391,12 @@ export default class GraphSyncController {
         });
 
         Cadenza.get(ctx.__taskName)!.registered = true;
-        emit("meta.sync_controller.task_registered", {
-          ...ctx,
-          task: Cadenza.get(ctx.__taskName),
-        });
+        emit(
+          "meta.sync_controller.task_registered",
+          buildMinimalSyncSignalContext(ctx, {
+            __taskName: ctx.__taskName,
+          }),
+        );
 
         return true;
       },
