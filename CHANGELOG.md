@@ -1,3 +1,10 @@
+## [2.17.69](https://github.com/cadenzaio/cadenza-service/compare/v2.17.68...v2.17.69) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** widen task sync tracing ([126bd10](https://github.com/cadenzaio/cadenza-service/commit/126bd10c740e6c44a078999381c808a40987f1ea))
+
 ## [2.17.68](https://github.com/cadenzaio/cadenza-service/compare/v2.17.67...v2.17.68) (2026-03-16)
 
 
