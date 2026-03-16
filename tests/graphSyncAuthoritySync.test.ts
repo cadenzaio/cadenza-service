@@ -633,6 +633,51 @@ describe("graph sync authority rows", () => {
     });
   });
 
+  it("keeps signal transmission task split payloads owned by the local service", () => {
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+
+    const transmissionTask = Cadenza.createMetaTask(
+      "Transmit signal: global.meta.cadenza_db.gathered_sync_data to AlertService",
+      () => true,
+    );
+    transmissionTask.doOn("global.meta.cadenza_db.gathered_sync_data");
+    Object.defineProperty(transmissionTask, "isDeputy", {
+      value: true,
+      configurable: true,
+    });
+    Object.defineProperty(transmissionTask, "serviceName", {
+      value: "AlertService",
+      configurable: true,
+    });
+    transmissionTask.registered = true;
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(Cadenza.signalBroker.registerSignalTask!, {
+      signalName: "global.meta.cadenza_db.gathered_sync_data",
+    });
+    ((Cadenza.signalBroker as any).signalObservers.get(
+      "global.meta.cadenza_db.gathered_sync_data",
+    ) as any).registered = true;
+
+    const payloads = Array.from(
+      (
+        GraphSyncController.instance.registerSignalToTaskMapTask as any
+      ).taskFunction({
+        __syncing: true,
+        task: transmissionTask,
+      }) as Iterable<Record<string, any>>,
+    );
+
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0].data).toMatchObject({
+      signalName: "global.meta.cadenza_db.gathered_sync_data",
+      taskName:
+        "Transmit signal: global.meta.cadenza_db.gathered_sync_data to AlertService",
+      serviceName: "OrdersApi",
+    });
+  });
+
   it("wires synced_tasks to retry relationship sync observers", () => {
     ServiceRegistry.instance.serviceName = "OrdersApi";
     GraphSyncController.instance.isCadenzaDBReady = false;

@@ -3,6 +3,7 @@ import {
   META_ACTOR_SESSION_STATE_PERSIST_INTENT,
   Task,
 } from "@cadenza.io/core";
+import ServiceRegistry from "../../registry/ServiceRegistry";
 import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
 import { DeputyTask } from "../../index";
 import { isMetaIntentName } from "../../utils/inquiry";
@@ -93,17 +94,33 @@ function buildActorRegistrationData(actor: any): Record<string, unknown> {
   };
 }
 
-function resolveSyncServiceName(task?: { serviceName?: string } | null):
+function resolveSyncServiceName(
+  task?:
+    | {
+        serviceName?: string;
+        ownerServiceName?: string | null;
+        isDeputy?: boolean;
+      }
+    | null,
+):
   | string
   | undefined {
+  const ownerServiceName =
+    typeof task?.ownerServiceName === "string"
+      ? task.ownerServiceName.trim()
+      : "";
   const taskServiceName =
     typeof task?.serviceName === "string" ? task.serviceName.trim() : "";
   const registryServiceName =
-    typeof Cadenza.serviceRegistry.serviceName === "string"
-      ? Cadenza.serviceRegistry.serviceName.trim()
+    typeof ServiceRegistry.instance.serviceName === "string"
+      ? ServiceRegistry.instance.serviceName.trim()
       : "";
 
-  return taskServiceName || registryServiceName || undefined;
+  if (task?.isDeputy) {
+    return ownerServiceName || registryServiceName || taskServiceName || undefined;
+  }
+
+  return ownerServiceName || taskServiceName || registryServiceName || undefined;
 }
 
 function isLocalOnlySyncIntent(intentName: string): boolean {
