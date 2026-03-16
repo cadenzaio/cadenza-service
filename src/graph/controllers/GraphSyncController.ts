@@ -234,11 +234,23 @@ function resolveSyncInsertTask(
   const remoteInsertTask = isCadenzaDBReady
     ? Cadenza.createCadenzaDBInsertTask(tableName, queryData, options)
     : undefined;
+  const debugTable = shouldDebugSyncTable(tableName);
 
   if (!localInsertTask && !remoteInsertTask) {
     return undefined;
   }
   const targetTask = localInsertTask ?? remoteInsertTask!;
+
+  if (debugTable) {
+    logSyncDebug("insert_task_resolved", {
+      tableName,
+      localInsertTaskName: localInsertTask?.name ?? null,
+      remoteInsertTaskName: remoteInsertTask?.name ?? null,
+      targetTaskName: targetTask.name,
+      queryData,
+      options,
+    });
+  }
 
   const executionRequestedSignal = `meta.sync_controller.insert_execution_requested:${tableName}`;
   const executionResolvedSignal = `meta.sync_controller.insert_execution_resolved:${tableName}`;
@@ -285,6 +297,27 @@ function resolveSyncInsertTask(
     .doOn(executionRequestedSignal)
     .emitsOnFail(executionFailedSignal);
 
+  if (debugTable) {
+    prepareExecutionTask.then(
+      Cadenza.createMetaTask(
+        `Log prepared graph sync insert execution for ${tableName}`,
+        (ctx) => {
+          logSyncDebug("insert_prepare", {
+            tableName,
+            targetTaskName: targetTask.name,
+            ctx,
+          });
+          return ctx;
+        },
+        `Logs prepared ${tableName} sync insert payloads.`,
+        {
+          register: false,
+          isHidden: true,
+        },
+      ),
+    );
+  }
+
   const finalizeExecutionTask = Cadenza.createMetaTask(
     `Finalize graph sync insert execution for ${tableName}`,
     (ctx, emit) => {
@@ -315,6 +348,15 @@ function resolveSyncInsertTask(
             : originalQueryData,
       };
 
+      if (debugTable) {
+        logSyncDebug("insert_finalize", {
+          tableName,
+          targetTaskName: targetTask.name,
+          success: didSyncInsertSucceed(normalizedContext),
+          ctx: normalizedContext,
+        });
+      }
+
       pendingResolverContexts.delete(ctx.__resolverRequestId);
       emit(executionResolvedSignal, normalizedContext);
       return normalizedContext;
@@ -328,6 +370,28 @@ function resolveSyncInsertTask(
 
   targetTask.then(finalizeExecutionTask).emitsOnFail(executionFailedSignal);
   prepareExecutionTask.then(targetTask);
+
+  if (debugTable) {
+    Cadenza.createMetaTask(
+      `Log failed graph sync insert execution for ${tableName}`,
+      (ctx) => {
+        logSyncDebug("insert_failed", {
+          tableName,
+          targetTaskName: targetTask.name,
+          ctx,
+        });
+        if (typeof ctx.__resolverRequestId === "string") {
+          pendingResolverContexts.delete(ctx.__resolverRequestId);
+        }
+        return false;
+      },
+      `Logs failed ${tableName} sync insert executions.`,
+      {
+        register: false,
+        isHidden: true,
+      },
+    ).doOn(executionFailedSignal);
+  }
 
   return Cadenza.createMetaTask(
     `Resolve graph sync insert for ${tableName}`,
@@ -392,6 +456,131 @@ const AUTHORITY_QUERY_RESULT_KEYS = {
 } as const;
 
 const EARLY_SYNC_REQUEST_DELAYS_MS = [2000, 10000, 30000] as const;
+const SYNC_DEBUG_PREFIX = "[CADENZA_SYNC_DEBUG]";
+const SYNC_DEBUG_TABLES = new Set<string>([
+  "task",
+  "routine",
+  "task_to_routine_map",
+  "signal_registry",
+  "intent_registry",
+  "signal_to_task_map",
+  "intent_to_task_map",
+]);
+const SYNC_DEBUG_TASK_NAMES = new Set<string>([
+  "Query service_instance",
+  "Query service_instance_transport",
+  "Query intent_to_task_map",
+  "Query signal_to_task_map",
+  "Prepare for signal sync",
+  "Compile sync data and broadcast",
+  "Forward service instance sync",
+  "Forward service transport sync",
+  "Forward intent to task map sync",
+  "Forward signal to task map sync",
+]);
+const SYNC_DEBUG_ROUTINE_NAMES = new Set<string>(["Sync services"]);
+const SYNC_DEBUG_INTENT_NAMES = new Set<string>([
+  "meta-service-registry-full-sync",
+  "runner-traffic-runtime-get",
+  "iot-telemetry-ingest",
+  "query-pg-CadenzaDBPostgresActor-service_instance",
+  "query-pg-CadenzaDBPostgresActor-service_instance_transport",
+  "query-pg-CadenzaDBPostgresActor-intent_to_task_map",
+  "query-pg-CadenzaDBPostgresActor-signal_to_task_map",
+]);
+
+function shouldDebugSyncTable(tableName: string): boolean {
+  return SYNC_DEBUG_TABLES.has(tableName);
+}
+
+function shouldDebugSyncTaskName(taskName: unknown): boolean {
+  return typeof taskName === "string" && SYNC_DEBUG_TASK_NAMES.has(taskName);
+}
+
+function shouldDebugSyncRoutineName(routineName: unknown): boolean {
+  return (
+    typeof routineName === "string" && SYNC_DEBUG_ROUTINE_NAMES.has(routineName)
+  );
+}
+
+function shouldDebugSyncIntentName(intentName: unknown): boolean {
+  return typeof intentName === "string" && SYNC_DEBUG_INTENT_NAMES.has(intentName);
+}
+
+function summarizeSyncDebugValue(value: unknown, depth: number = 0): unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (value instanceof Set) {
+    return {
+      __type: "Set",
+      size: value.size,
+      values: Array.from(value)
+        .slice(0, 8)
+        .map((item) => summarizeSyncDebugValue(item, depth + 1)),
+    };
+  }
+
+  if (value instanceof Map) {
+    return {
+      __type: "Map",
+      size: value.size,
+    };
+  }
+
+  if (Array.isArray(value)) {
+    return {
+      __type: "Array",
+      length: value.length,
+      items: value
+        .slice(0, 5)
+        .map((item) => summarizeSyncDebugValue(item, depth + 1)),
+    };
+  }
+
+  if (typeof value === "object") {
+    if (depth >= 2) {
+      return "[object]";
+    }
+
+    const output: Record<string, unknown> = {};
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([key]) =>
+        ![
+          "functionString",
+          "tagIdGetter",
+          "__functionString",
+          "__getTagCallback",
+          "joinedContexts",
+          "task",
+          "taskInstance",
+          "tasks",
+        ].includes(key),
+      )
+      .slice(0, 12);
+
+    for (const [key, nestedValue] of entries) {
+      output[key] = summarizeSyncDebugValue(nestedValue, depth + 1);
+    }
+
+    return output;
+  }
+
+  return String(value);
+}
+
+function logSyncDebug(event: string, payload: Record<string, unknown>): void {
+  console.log(`${SYNC_DEBUG_PREFIX} ${event}`, summarizeSyncDebugValue(payload));
+}
 
 type AuthorityQueryTableName = keyof typeof AUTHORITY_QUERY_RESULT_KEYS;
 
@@ -697,6 +886,21 @@ export default class GraphSyncController {
               if (!nextTask?.registered) {
                 continue;
               }
+
+              if (
+                shouldDebugSyncRoutineName(routine.name) ||
+                shouldDebugSyncTaskName(nextTask.name)
+              ) {
+                logSyncDebug("task_to_routine_split", {
+                  routineName: routine.name,
+                  routineVersion: routine.version,
+                  taskName: nextTask.name,
+                  taskVersion: nextTask.version,
+                  serviceName,
+                  registered: nextTask.registered,
+                });
+              }
+
               yield {
                 __syncing: ctx.__syncing,
                 data: {
@@ -850,6 +1054,19 @@ export default class GraphSyncController {
           if (task.registered) continue;
           const { __functionString, __getTagCallback } = task.export();
 
+          if (shouldDebugSyncTaskName(task.name)) {
+            logSyncDebug("task_registration_split", {
+              taskName: task.name,
+              taskVersion: task.version,
+              serviceName,
+              register: task.register,
+              registered: task.registered,
+              hidden: task.hidden,
+              observedSignals: Array.from(task.observedSignals),
+              handledIntents: Array.from(task.handlesIntents as Set<string>),
+            });
+          }
+
           yield {
             __syncing: ctx.__syncing,
             data: {
@@ -903,6 +1120,14 @@ export default class GraphSyncController {
       { concurrency: 30 },
     )?.then(
       Cadenza.createMetaTask("Record registration", (ctx, emit) => {
+        if (shouldDebugSyncTaskName(ctx.__taskName)) {
+          logSyncDebug("task_registration_result", {
+            taskName: ctx.__taskName,
+            success: didSyncInsertSucceed(ctx),
+            ctx,
+          });
+        }
+
         if (!didSyncInsertSucceed(ctx)) {
           return;
         }
@@ -936,6 +1161,17 @@ export default class GraphSyncController {
         const task =
           ctx.taskInstance ??
           (ctx.data?.name ? Cadenza.get(String(ctx.data.name)) : undefined);
+
+        if (shouldDebugSyncTaskName(task?.name ?? ctx?.data?.name)) {
+          logSyncDebug("task_created_for_immediate_sync", {
+            incomingTaskName: ctx?.data?.name ?? null,
+            resolvedTaskName: task?.name ?? null,
+            exists: Boolean(task),
+            hidden: task?.hidden ?? null,
+            register: task?.register ?? null,
+            registered: task?.registered ?? null,
+          });
+        }
 
         if (!task || task.hidden || !task.register || task.registered) {
           return false;
@@ -1153,6 +1389,18 @@ export default class GraphSyncController {
 
           const { isGlobal } = decomposeSignalName(_signal);
 
+          if (shouldDebugSyncTaskName(task.name)) {
+            logSyncDebug("signal_to_task_map_split", {
+              taskName: task.name,
+              signalName: _signal,
+              rawSignal: signal,
+              serviceName,
+              observerRegistered: (Cadenza.signalBroker as any).signalObservers?.get(
+                _signal,
+              )?.registered,
+            });
+          }
+
           emit("meta.sync_controller.signal_task_map_split", {
             __syncing: ctx.__syncing,
             data: {
@@ -1324,6 +1572,19 @@ export default class GraphSyncController {
             continue;
           }
 
+          if (
+            shouldDebugSyncTaskName(task.name) ||
+            shouldDebugSyncIntentName(intent)
+          ) {
+            logSyncDebug("intent_to_task_map_split", {
+              taskName: task.name,
+              taskVersion: task.version,
+              intentName: intent,
+              serviceName,
+              intentDefinition,
+            });
+          }
+
           emit("meta.sync_controller.intent_task_map_split", {
             __syncing: ctx.__syncing,
             data: {
@@ -1357,6 +1618,17 @@ export default class GraphSyncController {
               return false;
             }
 
+            if (
+              shouldDebugSyncTaskName(ctx.__taskName) ||
+              shouldDebugSyncIntentName(ctx.__intent)
+            ) {
+              logSyncDebug("intent_definition_prepare", {
+                taskName: ctx.__taskName,
+                intentName: ctx.__intent,
+                intentDefinition: ctx.__intentDefinition,
+              });
+            }
+
             return {
               ...ctx,
               data: ctx.__intentDefinition,
@@ -1369,6 +1641,17 @@ export default class GraphSyncController {
               (ctx) => {
                 if (!ctx.__intentMapData) {
                   return false;
+                }
+
+                if (
+                  shouldDebugSyncTaskName(ctx.__taskName) ||
+                  shouldDebugSyncIntentName(ctx.__intent)
+                ) {
+                  logSyncDebug("intent_map_payload_restore", {
+                    taskName: ctx.__taskName,
+                    intentName: ctx.__intent,
+                    intentMapData: ctx.__intentMapData,
+                  });
                 }
 
                 return {
