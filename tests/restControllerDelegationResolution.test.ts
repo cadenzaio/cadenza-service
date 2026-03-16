@@ -231,4 +231,23 @@ describe("RestController delegation resolution", () => {
       }),
     );
   }, 10_000);
+
+  it("extends delegation timeout budgets for sync traffic", () => {
+    const controller = RestController.instance as any;
+
+    expect(controller.resolveDelegationTimeoutMs({})).toBe(30_000);
+    expect(controller.resolveDelegationTimeoutMs({ __syncing: true })).toBe(
+      120_000,
+    );
+    expect(
+      controller.resolveDelegationTimeoutMs({
+        __metadata: { __syncing: true },
+      }),
+    ).toBe(120_000);
+    expect(
+      controller.resolveDelegationTimeoutMs({
+        joinedContexts: [{ __metadata: { __syncing: true } }],
+      }),
+    ).toBe(120_000);
+  });
 });

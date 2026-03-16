@@ -163,6 +163,20 @@ export default class RestController {
     }
   }
 
+  private resolveDelegationTimeoutMs(ctx: AnyObject): number {
+    const syncing =
+      ctx?.__syncing === true ||
+      ctx?.__metadata?.__syncing === true ||
+      (Array.isArray(ctx?.joinedContexts) &&
+        ctx.joinedContexts.some(
+          (joinedCtx: AnyObject) =>
+            joinedCtx?.__syncing === true ||
+            joinedCtx?.__metadata?.__syncing === true,
+        ));
+
+    return syncing ? 120_000 : 30_000;
+  }
+
   private recordFetchClientError(
     fetchId: string,
     serviceName: string,
@@ -982,7 +996,7 @@ export default class RestController {
                   method: "POST",
                   body: JSON.stringify(delegateCtx),
                 },
-                30_000,
+                this.resolveDelegationTimeoutMs(delegateCtx),
               );
               if (resultContext?.errored || resultContext?.failed) {
                 fetchDiagnostics.delegationFailures++;
