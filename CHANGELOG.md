@@ -1,3 +1,10 @@
+## [2.17.57](https://github.com/cadenzaio/cadenza-service/compare/v2.17.56...v2.17.57) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** keep responder map fan-out in graph ([2d3de25](https://github.com/cadenzaio/cadenza-service/commit/2d3de25dfb65d138e6ea4ddb74f93f40fe632dab))
+
 ## [2.17.56](https://github.com/cadenzaio/cadenza-service/compare/v2.17.55...v2.17.56) (2026-03-16)
 
 
