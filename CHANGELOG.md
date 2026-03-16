@@ -1,3 +1,10 @@
+## [2.17.46](https://github.com/cadenzaio/cadenza-service/compare/v2.17.45...v2.17.46) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** register newly created tasks promptly ([dc0b524](https://github.com/cadenzaio/cadenza-service/commit/dc0b524a8af524da5dea55da4be96f992d7ee5b1))
+
 ## [2.17.45](https://github.com/cadenzaio/cadenza-service/compare/v2.17.44...v2.17.45) (2026-03-16)
 
 
