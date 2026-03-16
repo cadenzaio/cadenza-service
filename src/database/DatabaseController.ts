@@ -77,6 +77,119 @@ interface PostgresActorRegistration {
 }
 
 type QueryMacroOperation = "count" | "exists" | "one" | "aggregate";
+const AUTHORITY_SYNC_DEBUG_PREFIX = "[CADENZA_DB_TASK_DEBUG]";
+const AUTHORITY_SYNC_DEBUG_TASK_NAMES = new Set<string>([
+  "Query service_instance",
+  "Query service_instance_transport",
+  "Query intent_to_task_map",
+  "Query signal_to_task_map",
+  "Forward service instance sync",
+  "Forward service transport sync",
+  "Forward intent to task map sync",
+  "Forward signal to task map sync",
+  "Compile sync data and broadcast",
+  "Prepare for signal sync",
+]);
+const AUTHORITY_SYNC_DEBUG_ROUTINE_NAMES = new Set<string>(["Sync services"]);
+
+function logAuthoritySyncDebug(
+  event: string,
+  payload: Record<string, unknown>,
+): void {
+  console.log(`${AUTHORITY_SYNC_DEBUG_PREFIX} ${event}`, payload);
+}
+
+function resolveAuthoritySyncPayloadName(
+  payload: DbOperationPayload,
+  tableName: string,
+): string | null {
+  const data =
+    payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+      ? (payload.data as Record<string, unknown>)
+      : null;
+
+  if (!data) {
+    return null;
+  }
+
+  if (tableName === "task") {
+    const taskName = data.name;
+    return typeof taskName === "string" ? taskName : null;
+  }
+
+  if (tableName === "task_to_routine_map") {
+    const taskName = data.taskName ?? data.task_name;
+    return typeof taskName === "string" ? taskName : null;
+  }
+
+  return null;
+}
+
+function shouldDebugAuthoritySyncPayload(
+  tableName: string,
+  payload: DbOperationPayload,
+): boolean {
+  if (tableName !== "task" && tableName !== "task_to_routine_map") {
+    return false;
+  }
+
+  const payloadName = resolveAuthoritySyncPayloadName(payload, tableName);
+  if (payloadName && AUTHORITY_SYNC_DEBUG_TASK_NAMES.has(payloadName)) {
+    return true;
+  }
+
+  if (tableName === "task_to_routine_map") {
+    const data =
+      payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+        ? (payload.data as Record<string, unknown>)
+        : null;
+    const routineName = data?.routineName ?? data?.routine_name;
+    return (
+      typeof routineName === "string" &&
+      AUTHORITY_SYNC_DEBUG_ROUTINE_NAMES.has(routineName)
+    );
+  }
+
+  return false;
+}
+
+function buildAuthoritySyncDebugSummary(
+  payload: DbOperationPayload,
+  context: AnyObject,
+): Record<string, unknown> {
+  const data =
+    payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+      ? (payload.data as Record<string, unknown>)
+      : {};
+
+  return {
+    taskName:
+      data.name ??
+      data.taskName ??
+      data.task_name ??
+      context.__taskName ??
+      null,
+    routineName: data.routineName ?? data.routine_name ?? context.__routineName ?? null,
+    serviceName:
+      data.serviceName ??
+      data.service_name ??
+      context.__syncServiceName ??
+      null,
+    predecessorTaskName:
+      data.predecessorTaskName ?? data.predecessor_task_name ?? null,
+    queryDataKeys:
+      context.queryData && typeof context.queryData === "object"
+        ? Object.keys(context.queryData as Record<string, unknown>)
+        : [],
+    dataKeys: Object.keys(data),
+    onConflict:
+      payload.onConflict && typeof payload.onConflict === "object"
+        ? payload.onConflict
+        : null,
+    rowCount: context.rowCount ?? null,
+    error: context.__error ?? null,
+  };
+}
 
 function normalizeIntentToken(value: string): string {
   const normalized = kebabCase(String(value ?? "").trim());
@@ -1901,19 +2014,43 @@ export default class DatabaseController {
           typeof context.queryData === "object" && context.queryData
             ? (context.queryData as DbOperationPayload)
             : (context as DbOperationPayload);
-
-        this.validateOperationPayload(
-          registration,
-          op,
+        const shouldDebugAuthoritySync = shouldDebugAuthoritySyncPayload(
           tableName,
-          table,
           operationPayload,
-          {
-            enforceFieldAllowlist:
-              registration.options.securityProfile === "low" ||
-              payloadModifiedByTriggers,
-          },
         );
+
+        if (shouldDebugAuthoritySync) {
+          logAuthoritySyncDebug("input", {
+            tableName,
+            operation: op,
+            summary: buildAuthoritySyncDebugSummary(operationPayload, context),
+          });
+        }
+
+        try {
+          this.validateOperationPayload(
+            registration,
+            op,
+            tableName,
+            table,
+            operationPayload,
+            {
+              enforceFieldAllowlist:
+                registration.options.securityProfile === "low" ||
+                payloadModifiedByTriggers,
+            },
+          );
+        } catch (error) {
+          if (shouldDebugAuthoritySync) {
+            logAuthoritySyncDebug("validation_failed", {
+              tableName,
+              operation: op,
+              summary: buildAuthoritySyncDebugSummary(operationPayload, context),
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          throw error;
+        }
 
         let result: AnyObject;
         if (op === "query") {
@@ -1930,6 +2067,16 @@ export default class DatabaseController {
           ...context,
           ...result,
         };
+
+        if (shouldDebugAuthoritySync) {
+          logAuthoritySyncDebug("result", {
+            tableName,
+            operation: op,
+            summary: buildAuthoritySyncDebugSummary(operationPayload, context),
+            resultKeys:
+              result && typeof result === "object" ? Object.keys(result) : [],
+          });
+        }
 
         if (!context.errored) {
           for (const signal of table.customSignals?.emissions?.[op] ?? []) {
