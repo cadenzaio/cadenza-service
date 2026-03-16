@@ -1,3 +1,10 @@
+## [2.17.43](https://github.com/cadenzaio/cadenza-service/compare/v2.17.42...v2.17.43) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** reconcile authority-backed registrations ([3ca3cae](https://github.com/cadenzaio/cadenza-service/commit/3ca3caec387be17f8bac43cce2f249346491da0f))
+
 ## [2.17.42](https://github.com/cadenzaio/cadenza-service/compare/v2.17.41...v2.17.42) (2026-03-16)
 
 
