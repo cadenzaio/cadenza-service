@@ -1,3 +1,10 @@
+## [2.17.56](https://github.com/cadenzaio/cadenza-service/compare/v2.17.55...v2.17.56) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** publish targeted intent map tracing ([5331468](https://github.com/cadenzaio/cadenza-service/commit/5331468cd2babdf9bdf657aeae77073bfab92799))
+
 ## [2.17.55](https://github.com/cadenzaio/cadenza-service/compare/v2.17.54...v2.17.55) (2026-03-16)
 
 
