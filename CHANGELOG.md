@@ -1,3 +1,10 @@
+## [2.17.36](https://github.com/cadenzaio/cadenza-service/compare/v2.17.35...v2.17.36) (2026-03-16)
+
+
+### Bug Fixes
+
+* **transport:** honor rest-only service registration ([3132779](https://github.com/cadenzaio/cadenza-service/commit/3132779f451fcdab8b25cf72551db486bcead567))
+
 ## [2.17.35](https://github.com/cadenzaio/cadenza-service/compare/v2.17.34...v2.17.35) (2026-03-16)
 
 
