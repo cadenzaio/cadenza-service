@@ -1,3 +1,10 @@
+## [2.17.35](https://github.com/cadenzaio/cadenza-service/compare/v2.17.34...v2.17.35) (2026-03-16)
+
+
+### Bug Fixes
+
+* **rest:** extend sync delegation timeout budget ([49f2fe6](https://github.com/cadenzaio/cadenza-service/commit/49f2fe656aa6895fd5cc6193f5178f8e9028a6b0))
+
 ## [2.17.34](https://github.com/cadenzaio/cadenza-service/compare/v2.17.33...v2.17.34) (2026-03-16)
 
 
