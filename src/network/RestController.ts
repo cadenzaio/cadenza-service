@@ -780,7 +780,7 @@ export default class RestController {
                           service_instance_id: ctx.__serviceInstanceId,
                           role: "internal",
                           origin: internalOrigin,
-                          protocols: ["rest", "socket"],
+                          protocols: ctx.__useSocket ? ["rest", "socket"] : ["rest"],
                           ...(ctx.__securityProfile
                             ? { security_profile: ctx.__securityProfile }
                             : {}),

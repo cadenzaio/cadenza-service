@@ -156,6 +156,64 @@ describe("service registry transport registration", () => {
     ]);
   });
 
+  it("registers rest-only transports when socket serving is disabled", async () => {
+    RestController.instance;
+
+    const registrationPromise = new Promise<any>((resolve) => {
+      Cadenza.createEphemeralMetaTask(
+        "Capture rest-only instance registration",
+        (ctx) => {
+          resolve(ctx);
+          return true;
+        },
+        "Captures service registration payloads for protocol assertions.",
+        { register: false },
+      ).doOn("meta.service_registry.instance_registration_requested");
+    });
+
+    Cadenza.emit("meta.service_registry.service_inserted", {
+      data: {
+        name: "OrdersService",
+        description: "Orders service with REST-only transport exposure.",
+        displayName: "",
+        isMeta: false,
+      },
+      __serviceName: "OrdersService",
+      __serviceInstanceId: "orders-rest-only",
+      __port: 0,
+      __useSocket: false,
+      __networkMode: "dev",
+      __securityProfile: "medium",
+      __declaredTransports: [
+        {
+          uuid: "orders-public",
+          role: "public",
+          origin: "http://orders.localhost",
+          protocols: ["rest"],
+        },
+      ],
+      __isFrontend: false,
+      __retryCount: 3,
+    });
+
+    const registrationContext = await registrationPromise;
+    const transports = registrationContext.__transportData as Array<Record<string, unknown>>;
+
+    expect(transports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "internal",
+          protocols: ["rest"],
+        }),
+        expect.objectContaining({
+          role: "public",
+          origin: "http://orders.localhost",
+          protocols: ["rest"],
+        }),
+      ]),
+    );
+  });
+
   it("preserves chained transport metadata through setup service", async () => {
     const registrations: Array<Record<string, unknown>> = [];
 

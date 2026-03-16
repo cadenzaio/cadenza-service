@@ -206,6 +206,7 @@ export default class CadenzaService {
   private static normalizeDeclaredTransports(
     transports: ServiceTransportConfig[] | undefined,
     serviceId: string,
+    useSocket: boolean,
   ): Array<
     ServiceTransportConfig & {
       uuid: string;
@@ -221,6 +222,12 @@ export default class CadenzaService {
       )
       .map((transport) => ({
         ...transport,
+        protocols:
+          transport.protocols && transport.protocols.length > 0
+            ? transport.protocols
+            : useSocket
+              ? ["rest", "socket"]
+              : ["rest"],
         uuid: uuid(),
       }));
   }
@@ -1223,6 +1230,7 @@ export default class CadenzaService {
     const declaredTransports = this.normalizeDeclaredTransports(
       options.transports,
       serviceId,
+      !!options.useSocket,
     );
     this.serviceRegistry.isFrontend = isFrontend;
     this.serviceRegistry.useSocket = !!options.useSocket;
@@ -1276,7 +1284,7 @@ export default class CadenzaService {
       const relatedTransport = normalizeServiceTransportConfig({
         role: isFrontend ? "public" : "internal",
         origin: service[2].includes("://") ? service[2] : `http://${service[2]}`,
-        protocols: ["rest", "socket"],
+        protocols: options.useSocket ? ["rest", "socket"] : ["rest"],
       });
       this.emit("meta.initializing_service", {
         serviceInstance: {
