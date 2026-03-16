@@ -1,3 +1,10 @@
+## [2.17.52](https://github.com/cadenzaio/cadenza-service/compare/v2.17.51...v2.17.52) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** add authority insert task tracing ([50592fd](https://github.com/cadenzaio/cadenza-service/commit/50592fdad0cccc19081dab477de5a306bcc01de9))
+
 ## [2.17.51](https://github.com/cadenzaio/cadenza-service/compare/v2.17.50...v2.17.51) (2026-03-16)
 
 
