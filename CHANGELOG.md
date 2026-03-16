@@ -1,3 +1,10 @@
+## [2.17.67](https://github.com/cadenzaio/cadenza-service/compare/v2.17.66...v2.17.67) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** keep deputy signal maps owned locally ([defa5bb](https://github.com/cadenzaio/cadenza-service/commit/defa5bbf40a26015e89fde2da59e018d0b163c7d))
+
 ## [2.17.66](https://github.com/cadenzaio/cadenza-service/compare/v2.17.65...v2.17.66) (2026-03-16)
 
 
