@@ -1,3 +1,10 @@
+## [2.17.37](https://github.com/cadenzaio/cadenza-service/compare/v2.17.36...v2.17.37) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** preserve per-context authority inserts ([54edb98](https://github.com/cadenzaio/cadenza-service/commit/54edb983da48bb80f1b4c4220bb0bf413ddcefdd))
+
 ## [2.17.36](https://github.com/cadenzaio/cadenza-service/compare/v2.17.35...v2.17.36) (2026-03-16)
 
 
