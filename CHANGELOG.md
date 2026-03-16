@@ -1,3 +1,10 @@
+## [2.17.70](https://github.com/cadenzaio/cadenza-service/compare/v2.17.69...v2.17.70) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** reduce authority delegation pressure ([ce75287](https://github.com/cadenzaio/cadenza-service/commit/ce75287ba577c9f7d965d402ac032c103b3cdf2a))
+
 ## [2.17.69](https://github.com/cadenzaio/cadenza-service/compare/v2.17.68...v2.17.69) (2026-03-16)
 
 
