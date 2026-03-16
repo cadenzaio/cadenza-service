@@ -53,7 +53,7 @@ function createLocalAuthorityInsertTask(
   handler: (ctx: Record<string, any>) => Record<string, any>,
 ) {
   return Cadenza.createMetaTask(`Insert ${tableName}`, handler).respondsTo(
-    `insert-pg-CadenzaDBPostgresActor-${tableName}`,
+    `insert-pg-cadenza-db-postgres-actor-${tableName}`,
   );
 }
 
@@ -631,7 +631,7 @@ describe("graph sync authority rows", () => {
         ...ctx,
         __success: true,
       };
-    }).respondsTo("insert-pg-CadenzaDBPostgresActor-intent_registry");
+    }).respondsTo("insert-pg-cadenza-db-postgres-actor-intent_registry");
 
     Cadenza.createMetaTask("Remote insert intent map", (ctx) => {
       insertedIntentMap = getInsertRow(ctx);
@@ -639,7 +639,7 @@ describe("graph sync authority rows", () => {
         ...ctx,
         __success: true,
       };
-    }).respondsTo("insert-pg-CadenzaDBPostgresActor-intent_to_task_map");
+    }).respondsTo("insert-pg-cadenza-db-postgres-actor-intent_to_task_map");
 
     const task = Cadenza.createMetaTask("Handle remote order sync", (ctx) => ctx).respondsTo(
       "orders-remote-sync",

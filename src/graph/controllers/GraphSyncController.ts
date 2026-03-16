@@ -278,7 +278,7 @@ function buildAuthoritySyncIntentName(
   operation: "query" | "insert",
   tableName: string,
 ): string {
-  return `${operation}-pg-CadenzaDBPostgresActor-${tableName}`;
+  return `${operation}-pg-cadenza-db-postgres-actor-${tableName}`;
 }
 
 function createDatabaseInquiryTask(
@@ -557,10 +557,10 @@ const SYNC_DEBUG_INTENT_NAMES = new Set<string>([
   "iot-anomaly-runtime-get",
   "iot-prediction-compute",
   "iot-db-telemetry-insert",
-  "query-pg-CadenzaDBPostgresActor-service_instance",
-  "query-pg-CadenzaDBPostgresActor-service_instance_transport",
-  "query-pg-CadenzaDBPostgresActor-intent_to_task_map",
-  "query-pg-CadenzaDBPostgresActor-signal_to_task_map",
+  "query-pg-cadenza-db-postgres-actor-service_instance",
+  "query-pg-cadenza-db-postgres-actor-service_instance_transport",
+  "query-pg-cadenza-db-postgres-actor-intent_to_task_map",
+  "query-pg-cadenza-db-postgres-actor-signal_to_task_map",
 ]);
 
 function shouldDebugSyncTable(tableName: string): boolean {
