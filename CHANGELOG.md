@@ -1,3 +1,10 @@
+## [2.17.68](https://github.com/cadenzaio/cadenza-service/compare/v2.17.67...v2.17.68) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** scope authority signal sync to globals ([0dc0490](https://github.com/cadenzaio/cadenza-service/commit/0dc0490b400a0ecadb60e0f60321232939b7c7d9))
+
 ## [2.17.67](https://github.com/cadenzaio/cadenza-service/compare/v2.17.66...v2.17.67) (2026-03-16)
 
 
