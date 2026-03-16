@@ -2542,18 +2542,7 @@ export default class GraphSyncController {
         "meta.sync_controller.synced_tasks",
         "meta.sync_requested",
       )
-      .then(
-        Cadenza.createMetaTask(
-          "Ensure signal and task sync ready",
-          (ctx) => {
-            if (!this.tasksSynced || !this.signalsSynced) {
-              return false;
-            }
-
-            return ctx;
-          },
-        ).then(this.registerSignalToTaskMapTask),
-      );
+      .then(this.registerSignalToTaskMapTask);
 
     Cadenza.createMetaTask("Get registered task for signal sync", (ctx) => {
       const task = ctx.task ?? (ctx.__taskName ? Cadenza.get(ctx.__taskName) : undefined);
@@ -2567,18 +2556,7 @@ export default class GraphSyncController {
       };
     })
       .doOn("meta.sync_controller.task_registered")
-      .then(
-        Cadenza.createMetaTask(
-          "Ensure signal and task sync ready from task registration",
-          (ctx) => {
-            if (!this.tasksSynced || !this.signalsSynced) {
-              return false;
-            }
-
-            return ctx;
-          },
-        ).then(this.registerSignalToTaskMapTask),
-      );
+      .then(this.registerSignalToTaskMapTask);
 
     Cadenza.registry
       .doForEachTask!.clone()
@@ -2587,18 +2565,7 @@ export default class GraphSyncController {
         "meta.sync_controller.synced_tasks",
         "meta.sync_requested",
       )
-      .then(
-        Cadenza.createMetaTask(
-          "Ensure intent and task sync ready",
-          (ctx) => {
-            if (!this.tasksSynced || !this.intentsSynced) {
-              return false;
-            }
-
-            return ctx;
-          },
-        ).then(this.registerIntentToTaskMapTask),
-      );
+      .then(this.registerIntentToTaskMapTask);
 
     Cadenza.createMetaTask("Get registered task for intent sync", (ctx) => {
       const task = ctx.task ?? (ctx.__taskName ? Cadenza.get(ctx.__taskName) : undefined);
@@ -2612,18 +2579,7 @@ export default class GraphSyncController {
       };
     })
       .doOn("meta.sync_controller.task_registered")
-      .then(
-        Cadenza.createMetaTask(
-          "Ensure intent and task sync ready from task registration",
-          (ctx) => {
-            if (!this.tasksSynced || !this.intentsSynced) {
-              return false;
-            }
-
-            return ctx;
-          },
-        ).then(this.registerIntentToTaskMapTask),
-      );
+      .then(this.registerIntentToTaskMapTask);
 
     Cadenza.registry
       .doForEachTask!.clone()

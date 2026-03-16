@@ -48,6 +48,15 @@ function getInsertRow(ctx: Record<string, any>): Record<string, any> {
   return (ctx.data ?? ctx.queryData?.data ?? {}) as Record<string, any>;
 }
 
+function createLocalAuthorityInsertTask(
+  tableName: string,
+  handler: (ctx: Record<string, any>) => Record<string, any>,
+) {
+  return Cadenza.createMetaTask(`Insert ${tableName}`, handler).respondsTo(
+    `insert-pg-CadenzaDBPostgresActor-${tableName}`,
+  );
+}
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -74,7 +83,7 @@ describe("graph sync authority rows", () => {
   it("falls back to the local service name for default database deputy relationships", async () => {
     const directionalRows: Array<Record<string, unknown>> = [];
 
-    Cadenza.createMetaTask("Insert directional_task_graph_map", (ctx) => {
+    createLocalAuthorityInsertTask("directional_task_graph_map", (ctx) => {
       directionalRows.push(getInsertRow(ctx));
       return ctx;
     });
@@ -321,7 +330,7 @@ describe("graph sync authority rows", () => {
   it("routes local sync inserts through the same graph so queryData survives", async () => {
     let capturedQueryData: Record<string, unknown> | undefined;
 
-    Cadenza.createMetaTask("Insert signal_registry", (ctx) => {
+    createLocalAuthorityInsertTask("signal_registry", (ctx) => {
       capturedQueryData = (ctx.queryData as Record<string, unknown>) ?? undefined;
       return {
         ...ctx,
@@ -361,7 +370,7 @@ describe("graph sync authority rows", () => {
   it("skips task-to-routine sync until both routines and tasks are registered", async () => {
     const taskToRoutineRows: Array<Record<string, unknown>> = [];
 
-    Cadenza.createMetaTask("Insert task_to_routine_map", (ctx) => {
+    createLocalAuthorityInsertTask("task_to_routine_map", (ctx) => {
       taskToRoutineRows.push(getInsertRow(ctx));
       return ctx;
     });
@@ -409,7 +418,7 @@ describe("graph sync authority rows", () => {
   it("skips signal-to-task sync until the observed signal is registered", async () => {
     const signalToTaskRows: Array<Record<string, unknown>> = [];
 
-    Cadenza.createMetaTask("Insert signal_to_task_map", (ctx) => {
+    createLocalAuthorityInsertTask("signal_to_task_map", (ctx) => {
       signalToTaskRows.push(getInsertRow(ctx));
       return ctx;
     });
@@ -448,6 +457,45 @@ describe("graph sync authority rows", () => {
     });
   });
 
+  it("does not require global sync flags before registering signal-to-task maps", async () => {
+    const signalToTaskRows: Array<Record<string, unknown>> = [];
+
+    createLocalAuthorityInsertTask("signal_to_task_map", (ctx) => {
+      signalToTaskRows.push(getInsertRow(ctx));
+      return {
+        ...ctx,
+        __success: true,
+      };
+    });
+
+    const observedTask = Cadenza.createMetaTask("Observe invoice paid", () => true);
+    observedTask.doOn("billing.invoice.paid");
+    observedTask.registered = true;
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+    GraphSyncController.instance.tasksSynced = false;
+    GraphSyncController.instance.signalsSynced = false;
+
+    Cadenza.run(Cadenza.signalBroker.registerSignalTask!, {
+      signalName: "billing.invoice.paid",
+    });
+
+    Cadenza.run(GraphSyncController.instance.registerSignalToTaskMapTask!, {
+      __syncing: true,
+      task: observedTask,
+    });
+
+    await waitForCondition(() => signalToTaskRows.length === 1, 1_500);
+
+    expect(signalToTaskRows[0]).toMatchObject({
+      signalName: "billing.invoice.paid",
+      taskName: "Observe invoice paid",
+      serviceName: "OrdersApi",
+    });
+  });
+
   it("wires synced_tasks to retry relationship sync observers", () => {
     ServiceRegistry.instance.serviceName = "OrdersApi";
     GraphSyncController.instance.isCadenzaDBReady = false;
@@ -469,7 +517,7 @@ describe("graph sync authority rows", () => {
   it("keeps actor session persistence local by skipping intent-to-task sync", async () => {
     const intentMapRows: Array<Record<string, unknown>> = [];
 
-    Cadenza.createMetaTask("Insert intent_to_task_map", (ctx) => {
+    createLocalAuthorityInsertTask("intent_to_task_map", (ctx) => {
       intentMapRows.push(getInsertRow(ctx));
       return {
         ...ctx,
@@ -500,7 +548,7 @@ describe("graph sync authority rows", () => {
     let insertedIntentDefinition: Record<string, unknown> | undefined;
     let insertedIntentMap: Record<string, unknown> | undefined;
 
-    Cadenza.createMetaTask("Insert intent_registry", (ctx) => {
+    createLocalAuthorityInsertTask("intent_registry", (ctx) => {
       insertedIntentDefinition = getInsertRow(ctx);
       return {
         ...ctx,
@@ -508,7 +556,7 @@ describe("graph sync authority rows", () => {
       };
     });
 
-    Cadenza.createMetaTask("Insert intent_to_task_map", (ctx) => {
+    createLocalAuthorityInsertTask("intent_to_task_map", (ctx) => {
       insertedIntentMap = getInsertRow(ctx);
       return {
         ...ctx,
@@ -545,6 +593,46 @@ describe("graph sync authority rows", () => {
     });
     expect(insertedIntentMap).not.toHaveProperty("name");
     expect(insertedIntentMap).not.toHaveProperty("input");
+  });
+
+  it("does not require global sync flags before registering intent-to-task maps", async () => {
+    const intentMapRows: Array<Record<string, unknown>> = [];
+
+    createLocalAuthorityInsertTask("intent_registry", (ctx) => ({
+      ...ctx,
+      __success: true,
+    }));
+
+    createLocalAuthorityInsertTask("intent_to_task_map", (ctx) => {
+      intentMapRows.push(getInsertRow(ctx));
+      return {
+        ...ctx,
+        __success: true,
+      };
+    });
+
+    const task = Cadenza.createMetaTask("Handle payment reconciliation", (ctx) => ctx)
+      .respondsTo("billing-payment-reconcile");
+    task.registered = true;
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+    GraphSyncController.instance.tasksSynced = false;
+    GraphSyncController.instance.intentsSynced = false;
+
+    Cadenza.run(GraphSyncController.instance.registerIntentToTaskMapTask!, {
+      __syncing: true,
+      task,
+    });
+
+    await waitForCondition(() => intentMapRows.length === 1, 1_500);
+
+    expect(intentMapRows[0]).toMatchObject({
+      intentName: "billing-payment-reconcile",
+      taskName: "Handle payment reconciliation",
+      serviceName: "OrdersApi",
+    });
   });
 
 });
