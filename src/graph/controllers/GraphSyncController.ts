@@ -261,6 +261,9 @@ type SyncTaskGraph = {
   completionTask: Task;
 };
 
+const REMOTE_AUTHORITY_SYNC_INSERT_CONCURRENCY = 5;
+const REMOTE_AUTHORITY_SYNC_QUERY_CONCURRENCY = 3;
+
 function wireSyncTaskGraph(
   predecessorTask: Task,
   graph: SyncTaskGraph | undefined,
@@ -276,6 +279,27 @@ function wireSyncTaskGraph(
   }
 
   return graph.completionTask;
+}
+
+function buildSyncExecutionEnvelope(
+  ctx: Record<string, any>,
+  queryData: Record<string, unknown>,
+): Record<string, unknown> {
+  const originalContext = { ...ctx };
+  const nextContext: Record<string, unknown> = {
+    __syncing:
+      ctx.__syncing === true || ctx.__metadata?.__syncing === true || false,
+    __preferredTransportProtocol: "rest",
+    __resolverOriginalContext: originalContext,
+    __resolverQueryData: queryData,
+    queryData,
+  };
+
+  if (typeof ctx.__reason === "string" && ctx.__reason.trim().length > 0) {
+    nextContext.__reason = ctx.__reason;
+  }
+
+  return nextContext;
 }
 
 function resolveSyncInsertTask(
@@ -294,6 +318,13 @@ function resolveSyncInsertTask(
     localInsertTask ??
     Cadenza.createCadenzaDBInsertTask(tableName, queryData, {
       ...options,
+      concurrency:
+        Number(options.concurrency) > 0
+          ? Math.min(
+              Number(options.concurrency),
+              REMOTE_AUTHORITY_SYNC_INSERT_CONCURRENCY,
+            )
+          : REMOTE_AUTHORITY_SYNC_INSERT_CONCURRENCY,
       register: false,
       isHidden: true,
     });
@@ -312,19 +343,15 @@ function resolveSyncInsertTask(
   const prepareExecutionTask = Cadenza.createMetaTask(
     `Prepare graph sync insert for ${tableName}`,
     (ctx) => {
-      const originalContext = { ...ctx };
       const originalQueryData = buildSyncInsertQueryData(
         ctx as Record<string, any>,
         queryData,
       );
 
-      return {
-        ...ctx,
-        __preferredTransportProtocol: "rest",
-        __resolverOriginalContext: originalContext,
-        __resolverQueryData: originalQueryData,
-        queryData: originalQueryData,
-      };
+      return buildSyncExecutionEnvelope(
+        ctx as Record<string, any>,
+        originalQueryData,
+      );
     },
     `Prepares ${tableName} graph-sync insert payloads for runner execution.`,
     {
@@ -689,20 +716,24 @@ function resolveSyncQueryTask(
     localQueryTask ??
     Cadenza.createCadenzaDBQueryTask(tableName, queryData, {
       ...options,
+      concurrency:
+        Number(options.concurrency) > 0
+          ? Math.min(
+              Number(options.concurrency),
+              REMOTE_AUTHORITY_SYNC_QUERY_CONCURRENCY,
+            )
+          : REMOTE_AUTHORITY_SYNC_QUERY_CONCURRENCY,
       register: false,
       isHidden: true,
     });
 
   const prepareQueryTask = Cadenza.createMetaTask(
     `Prepare graph sync query for ${tableName}`,
-    (ctx) => ({
-      ...ctx,
-      __preferredTransportProtocol: "rest",
-      queryData: {
+    (ctx) =>
+      buildSyncExecutionEnvelope(ctx as Record<string, any>, {
         ...(ctx.queryData && typeof ctx.queryData === "object" ? ctx.queryData : {}),
         ...queryData,
-      },
-    }),
+      }),
     `Prepares ${tableName} graph-sync query payloads.`,
     {
       register: false,
