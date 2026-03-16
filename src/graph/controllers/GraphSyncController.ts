@@ -274,23 +274,28 @@ function resolveLocalDatabaseTaskIntent(
   );
 }
 
-function createLocalDatabaseInquiryTask(
-  localTask: Task,
+function buildAuthoritySyncIntentName(
+  operation: "query" | "insert",
+  tableName: string,
+): string {
+  return `${operation}-pg-CadenzaDBPostgresActor-${tableName}`;
+}
+
+function createDatabaseInquiryTask(
+  intentName: string,
   operation: "query" | "insert",
   tableName: string,
   options: Record<string, unknown> = {},
 ): Task {
-  const intentName = resolveLocalDatabaseTaskIntent(localTask, operation, tableName);
-
   return Cadenza.createMetaTask(
-    `Execute local graph sync ${operation} for ${tableName}`,
+    `Execute graph sync ${operation} for ${tableName}`,
     async (ctx, _emit, inquire) => {
       if (!intentName) {
         return {
           ...ctx,
           errored: true,
           __success: false,
-          __error: `No local ${operation} intent found for ${tableName}`,
+          __error: `No ${operation} intent found for ${tableName}`,
         };
       }
 
@@ -301,13 +306,39 @@ function createLocalDatabaseInquiryTask(
       };
 
       const result = await inquire(intentName, inquiryContext, {});
+      const normalizedResult =
+        result && typeof result === "object"
+          ? (result as Record<string, unknown>)
+          : {};
+
+      if (
+        Object.keys(normalizedResult).length === 0 &&
+        normalizedResult.errored !== true &&
+        normalizedResult.__success !== true &&
+        normalizedResult.__inquiryMeta === undefined
+      ) {
+        return {
+          ...ctx,
+          errored: true,
+          __success: false,
+          __error: `No responders available for ${intentName}`,
+          __inquiryMeta: {
+            inquiry: intentName,
+            eligibleResponders: 0,
+            responded: 0,
+            failed: 0,
+            timedOut: 0,
+            pending: 0,
+          },
+        };
+      }
 
       return {
         ...ctx,
-        ...result,
+        ...normalizedResult,
       };
     },
-    `Executes the local ${tableName} ${operation} operation through the generated database intent.`,
+    `Executes the ${tableName} ${operation} operation through the generated database intent.`,
     {
       ...options,
       register: false,
@@ -323,25 +354,28 @@ function resolveSyncInsertTask(
   options: Record<string, unknown> = {},
 ): SyncTaskGraph | undefined {
   const localInsertTask = Cadenza.getLocalCadenzaDBInsertTask(tableName);
-  const remoteInsertTask = isCadenzaDBReady
-    ? Cadenza.createCadenzaDBInsertTask(tableName, queryData, options)
-    : undefined;
   const debugTable = shouldDebugSyncTable(tableName);
 
-  if (!localInsertTask && !remoteInsertTask) {
+  if (!localInsertTask && !isCadenzaDBReady) {
     return undefined;
   }
-  const targetTask =
-    localInsertTask
-      ? createLocalDatabaseInquiryTask(localInsertTask, "insert", tableName, options)
-      : remoteInsertTask!;
+  const targetIntentName =
+    resolveLocalDatabaseTaskIntent(localInsertTask, "insert", tableName) ??
+    buildAuthoritySyncIntentName("insert", tableName);
+  const targetTask = createDatabaseInquiryTask(
+    targetIntentName,
+    "insert",
+    tableName,
+    options,
+  );
 
   if (debugTable) {
     logSyncDebug("insert_task_resolved", {
       tableName,
       localInsertTaskName: localInsertTask?.name ?? null,
-      remoteInsertTaskName: remoteInsertTask?.name ?? null,
+      remoteInsertTaskName: isCadenzaDBReady ? targetIntentName : null,
       targetTaskName: targetTask.name,
+      targetIntentName,
       queryData,
       options,
     });
@@ -714,18 +748,20 @@ function resolveSyncQueryTask(
   options: Record<string, unknown> = {},
 ): SyncTaskGraph | undefined {
   const localQueryTask = Cadenza.getLocalCadenzaDBQueryTask(tableName);
-  const remoteQueryTask = isCadenzaDBReady
-    ? Cadenza.createCadenzaDBQueryTask(tableName, queryData, options)
-    : undefined;
 
-  if (!localQueryTask && !remoteQueryTask) {
+  if (!localQueryTask && !isCadenzaDBReady) {
     return undefined;
   }
 
-  const targetTask =
-    localQueryTask
-      ? createLocalDatabaseInquiryTask(localQueryTask, "query", tableName, options)
-      : remoteQueryTask!;
+  const targetIntentName =
+    resolveLocalDatabaseTaskIntent(localQueryTask, "query", tableName) ??
+    buildAuthoritySyncIntentName("query", tableName);
+  const targetTask = createDatabaseInquiryTask(
+    targetIntentName,
+    "query",
+    tableName,
+    options,
+  );
 
   const prepareQueryTask = Cadenza.createMetaTask(
     `Prepare graph sync query for ${tableName}`,

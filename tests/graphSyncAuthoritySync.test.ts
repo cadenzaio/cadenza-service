@@ -619,6 +619,57 @@ describe("graph sync authority rows", () => {
     expect(insertedIntentMap).not.toHaveProperty("input");
   });
 
+  it("restores the intent-to-task map payload for remote authority inserts", async () => {
+    let insertedIntentDefinition: Record<string, unknown> | undefined;
+    let insertedIntentMap: Record<string, unknown> | undefined;
+
+    vi.spyOn(Cadenza, "getLocalCadenzaDBInsertTask").mockReturnValue(undefined);
+
+    Cadenza.createMetaTask("Remote insert intent registry", (ctx) => {
+      insertedIntentDefinition = getInsertRow(ctx);
+      return {
+        ...ctx,
+        __success: true,
+      };
+    }).respondsTo("insert-pg-CadenzaDBPostgresActor-intent_registry");
+
+    Cadenza.createMetaTask("Remote insert intent map", (ctx) => {
+      insertedIntentMap = getInsertRow(ctx);
+      return {
+        ...ctx,
+        __success: true,
+      };
+    }).respondsTo("insert-pg-CadenzaDBPostgresActor-intent_to_task_map");
+
+    const task = Cadenza.createMetaTask("Handle remote order sync", (ctx) => ctx).respondsTo(
+      "orders-remote-sync",
+    );
+    task.registered = true;
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = true;
+    GraphSyncController.instance.init();
+
+    Cadenza.run(GraphSyncController.instance.registerIntentToTaskMapTask!, {
+      __syncing: true,
+      task,
+    });
+
+    await waitForCondition(
+      () => insertedIntentDefinition !== undefined && insertedIntentMap !== undefined,
+      1_500,
+    );
+
+    expect(insertedIntentDefinition).toMatchObject({
+      name: "orders-remote-sync",
+    });
+    expect(insertedIntentMap).toMatchObject({
+      intentName: "orders-remote-sync",
+      taskName: "Handle remote order sync",
+      serviceName: "OrdersApi",
+    });
+  });
+
   it("does not require global sync flags before registering intent-to-task maps", async () => {
     const intentMapRows: Array<Record<string, unknown>> = [];
 
