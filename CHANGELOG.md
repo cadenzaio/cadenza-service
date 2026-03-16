@@ -1,3 +1,10 @@
+## [2.17.44](https://github.com/cadenzaio/cadenza-service/compare/v2.17.43...v2.17.44) (2026-03-16)
+
+
+### Bug Fixes
+
+* **sync:** mark cadenza db self-sync as ready ([8cae299](https://github.com/cadenzaio/cadenza-service/commit/8cae299094938ed321bf1838e427b467f52fe514))
+
 ## [2.17.43](https://github.com/cadenzaio/cadenza-service/compare/v2.17.42...v2.17.43) (2026-03-16)
 
 
