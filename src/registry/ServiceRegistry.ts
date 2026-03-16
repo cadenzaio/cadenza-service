@@ -93,6 +93,9 @@ function buildServiceRegistryInsertQueryData(
     ...existingQueryData,
     ...queryData,
   };
+  if (!Object.prototype.hasOwnProperty.call(queryData, "onConflict")) {
+    delete nextQueryData.onConflict;
+  }
   const resolvedData =
     Object.prototype.hasOwnProperty.call(ctx, "data") || ctx.data !== undefined
       ? ctx.data

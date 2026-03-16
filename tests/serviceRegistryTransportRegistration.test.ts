@@ -208,6 +208,52 @@ describe("service registry transport registration", () => {
     expect(insertedTransportRows[1]).not.toHaveProperty("name");
   });
 
+  it("does not leak service insert onConflict settings into service_instance inserts", async () => {
+    const insertPayloads: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Insert service_instance", (ctx) => {
+      insertPayloads.push({
+        ...(ctx.queryData ?? {}),
+      });
+      return {
+        ...ctx,
+        uuid: ctx.queryData?.data?.uuid ?? ctx.data?.uuid,
+      };
+    });
+
+    const resolveInsertTask = Cadenza.get(
+      "Resolve service registry insert for service_instance",
+    );
+    expect(resolveInsertTask).toBeDefined();
+
+    Cadenza.run(resolveInsertTask!, {
+      queryData: {
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "nothing",
+          },
+        },
+      },
+      data: {
+        uuid: "orders-instance-1",
+        process_pid: 42,
+        service_name: "OrdersService",
+        is_active: true,
+      },
+    });
+
+    await waitForCondition(() => insertPayloads.length === 1, 1_500);
+
+    expect(insertPayloads[0]).toMatchObject({
+      data: expect.objectContaining({
+        uuid: "orders-instance-1",
+        service_name: "OrdersService",
+      }),
+    });
+    expect(insertPayloads[0]).not.toHaveProperty("onConflict");
+  });
+
   it("registers rest-only transports when socket serving is disabled", async () => {
     RestController.instance;
 
