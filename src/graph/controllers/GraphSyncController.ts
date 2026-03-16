@@ -358,6 +358,7 @@ function resolveSyncInsertTask(
 
       return {
         ...ctx,
+        __preferredTransportProtocol: "rest",
         __resolverOriginalContext: originalContext,
         __resolverQueryData: originalQueryData,
         queryData: originalQueryData,
@@ -730,6 +731,7 @@ function resolveSyncQueryTask(
     `Prepare graph sync query for ${tableName}`,
     (ctx) => ({
       ...ctx,
+      __preferredTransportProtocol: "rest",
       queryData: {
         ...(ctx.queryData && typeof ctx.queryData === "object" ? ctx.queryData : {}),
         ...queryData,
@@ -1650,7 +1652,7 @@ export default class GraphSyncController {
 
     this.registerSignalToTaskMapTask = Cadenza.createMetaTask(
       "Split observed signals of task",
-      (ctx, emit) => {
+      function* (ctx) {
         const task = ctx.task;
         if (task.hidden || !task.register || !task.registered) return false;
 
@@ -1684,7 +1686,7 @@ export default class GraphSyncController {
             });
           }
 
-          emit("meta.sync_controller.signal_task_map_split", {
+          yield {
             __syncing: ctx.__syncing,
             data: {
               signalName: _signal,
@@ -1695,17 +1697,12 @@ export default class GraphSyncController {
             },
             __taskName: task.name,
             __signal: signal,
-          });
+          };
           emittedCount += 1;
         }
         return emittedCount > 0;
       },
     );
-
-    const processSplitSignalToTaskMapTask = Cadenza.createMetaTask(
-      "Process split signal-to-task map",
-      (ctx) => ctx,
-    ).doOn("meta.sync_controller.signal_task_map_split");
     const signalToTaskMapGraph = resolveSyncInsertTask(
       this.isCadenzaDBReady,
       "signal_to_task_map",
@@ -1725,7 +1722,7 @@ export default class GraphSyncController {
       { concurrency: 30 },
     );
     wireSyncTaskGraph(
-      processSplitSignalToTaskMapTask,
+      this.registerSignalToTaskMapTask,
       signalToTaskMapGraph,
       registerSignalTask,
     );
@@ -1802,7 +1799,7 @@ export default class GraphSyncController {
 
     this.registerIntentToTaskMapTask = Cadenza.createMetaTask(
       "Split intents of task",
-      function (this: GraphSyncController, ctx: any, emit: any) {
+      function* (this: GraphSyncController, ctx: any) {
         const task = ctx.task as any;
         if (task.hidden || !task.register || !task.registered) return false;
 
@@ -1875,7 +1872,7 @@ export default class GraphSyncController {
             });
           }
 
-          emit("meta.sync_controller.intent_task_map_split", {
+          yield {
             __syncing: ctx.__syncing,
             data: {
               intentName: intent,
@@ -1892,7 +1889,7 @@ export default class GraphSyncController {
               taskVersion: task.version,
               serviceName,
             },
-          });
+          };
           emittedCount += 1;
         }
 
@@ -1909,11 +1906,6 @@ export default class GraphSyncController {
         return emittedCount > 0;
       }.bind(this),
     );
-
-    const processSplitIntentToTaskMapTask = Cadenza.createMetaTask(
-      "Process split intent-to-task map",
-      (ctx) => ctx,
-    ).doOn("meta.sync_controller.intent_task_map_split");
     const prepareIntentDefinitionForIntentMapTask = Cadenza.createMetaTask(
       "Prepare intent definition for intent-to-task map",
       (ctx) => {
@@ -1980,7 +1972,7 @@ export default class GraphSyncController {
       },
       { concurrency: 30 },
     );
-    processSplitIntentToTaskMapTask.then(prepareIntentDefinitionForIntentMapTask);
+    this.registerIntentToTaskMapTask.then(prepareIntentDefinitionForIntentMapTask);
     if (ensureIntentRegistryBeforeIntentMapTask) {
       wireSyncTaskGraph(
         prepareIntentDefinitionForIntentMapTask,

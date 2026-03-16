@@ -231,6 +231,30 @@ describe("graph sync authority rows", () => {
     expect(executionRequestedObserver).toBeUndefined();
   });
 
+  it("keeps signal-to-task sync in the same graph instead of routing through split signals", () => {
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    const splitSignalObserver = (Cadenza.signalBroker as any).signalObservers.get(
+      "meta.sync_controller.signal_task_map_split",
+    );
+
+    expect(splitSignalObserver).toBeUndefined();
+  });
+
+  it("keeps intent-to-task sync in the same graph instead of routing through split signals", () => {
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    const splitSignalObserver = (Cadenza.signalBroker as any).signalObservers.get(
+      "meta.sync_controller.intent_task_map_split",
+    );
+
+    expect(splitSignalObserver).toBeUndefined();
+  });
+
   it("schedules an early sync request burst for connected services", () => {
     const scheduleSpy = vi.spyOn(Cadenza, "schedule");
 
