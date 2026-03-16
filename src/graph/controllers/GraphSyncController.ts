@@ -415,6 +415,10 @@ const AUTHORITY_QUERY_RESULT_KEYS = {
 
 const EARLY_SYNC_REQUEST_DELAYS_MS = [2000, 10000, 30000] as const;
 const SYNC_DEBUG_PREFIX = "[CADENZA_SYNC_DEBUG]";
+const SYNC_DEBUG_ENABLED =
+  typeof process !== "undefined" &&
+  typeof process.env === "object" &&
+  process.env.CADENZA_SYNC_DEBUG === "true";
 const SYNC_DEBUG_TABLES = new Set<string>(["intent_to_task_map"]);
 const SYNC_DEBUG_TASK_NAMES = new Set<string>([
   "Query service_instance",
@@ -451,21 +455,30 @@ const SYNC_DEBUG_INTENT_NAMES = new Set<string>([
 ]);
 
 function shouldDebugSyncTable(tableName: string): boolean {
-  return SYNC_DEBUG_TABLES.has(tableName);
+  return SYNC_DEBUG_ENABLED && SYNC_DEBUG_TABLES.has(tableName);
 }
 
 function shouldDebugSyncTaskName(taskName: unknown): boolean {
-  return typeof taskName === "string" && SYNC_DEBUG_TASK_NAMES.has(taskName);
+  return (
+    SYNC_DEBUG_ENABLED &&
+    typeof taskName === "string" &&
+    SYNC_DEBUG_TASK_NAMES.has(taskName)
+  );
 }
 
 function shouldDebugSyncRoutineName(routineName: unknown): boolean {
   return (
+    SYNC_DEBUG_ENABLED &&
     typeof routineName === "string" && SYNC_DEBUG_ROUTINE_NAMES.has(routineName)
   );
 }
 
 function shouldDebugSyncIntentName(intentName: unknown): boolean {
-  return typeof intentName === "string" && SYNC_DEBUG_INTENT_NAMES.has(intentName);
+  return (
+    SYNC_DEBUG_ENABLED &&
+    typeof intentName === "string" &&
+    SYNC_DEBUG_INTENT_NAMES.has(intentName)
+  );
 }
 
 function summarizeSyncDebugValue(value: unknown, depth: number = 0): unknown {
