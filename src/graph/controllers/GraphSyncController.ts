@@ -627,6 +627,48 @@ function resolveSyncQueryTask(
   ).then(targetTask);
 }
 
+function getRegistrableTasks(): Task[] {
+  return Array.from(Cadenza.registry.tasks.values()).filter(
+    (task) => task.register && !task.isHidden,
+  );
+}
+
+function getRegistrableRoutines() {
+  return Array.from(Cadenza.registry.routines.values());
+}
+
+function getRegistrableSignalObservers(): Array<{ registered?: boolean }> {
+  const signalObservers = (Cadenza.signalBroker as any).signalObservers;
+  return signalObservers ? Array.from(signalObservers.values()) : [];
+}
+
+function getRegistrableIntentNames(): string[] {
+  return Array.from(Cadenza.inquiryBroker.intents.values())
+    .map((intent) => buildIntentRegistryData(intent))
+    .filter(
+      (intentDefinition): intentDefinition is Record<string, unknown> =>
+        intentDefinition !== null,
+    )
+    .map((intentDefinition) => String(intentDefinition.name));
+}
+
+function buildActorRegistrationKey(
+  actor: any,
+  serviceName: string,
+): string | null {
+  const data = buildActorRegistrationData(actor);
+  const name =
+    typeof data.name === "string" && data.name.trim().length > 0
+      ? data.name.trim()
+      : "";
+
+  if (!name) {
+    return null;
+  }
+
+  return `${name}|${data.version}|${serviceName}`;
+}
+
 export default class GraphSyncController {
   private static _instance: GraphSyncController;
   public static get instance(): GraphSyncController {
@@ -776,24 +818,175 @@ export default class GraphSyncController {
       {},
       { concurrency: 10 },
     );
+    const finalizeTaskSync = (emit: any, ctx: Record<string, unknown>) => {
+      const pendingTasks = getRegistrableTasks().filter((task) => !task.registered);
+      if (pendingTasks.length > 0) {
+        this.tasksSynced = false;
+        return false;
+      }
+
+      const shouldEmit = !this.tasksSynced;
+      this.tasksSynced = true;
+      if (shouldEmit) {
+        emit("meta.sync_controller.synced_tasks", {
+          __syncing: true,
+          ...ctx,
+        });
+      }
+
+      return true;
+    };
+    const finalizeRoutineSync = (emit: any, ctx: Record<string, unknown>) => {
+      const pendingRoutines = getRegistrableRoutines().filter(
+        (routine) => !routine.registered,
+      );
+      if (pendingRoutines.length > 0) {
+        this.routinesSynced = false;
+        return false;
+      }
+
+      const shouldEmit = !this.routinesSynced;
+      this.routinesSynced = true;
+      if (shouldEmit) {
+        emit("meta.sync_controller.synced_routines", {
+          __syncing: true,
+          ...ctx,
+        });
+      }
+
+      return true;
+    };
+    const finalizeSignalSync = (emit: any, ctx: Record<string, unknown>) => {
+      const pendingSignals = getRegistrableSignalObservers().filter(
+        (observer) => observer?.registered !== true,
+      );
+      if (pendingSignals.length > 0) {
+        this.signalsSynced = false;
+        return false;
+      }
+
+      const shouldEmit = !this.signalsSynced;
+      this.signalsSynced = true;
+      if (shouldEmit) {
+        emit("meta.sync_controller.synced_signals", {
+          __syncing: true,
+          ...ctx,
+        });
+      }
+
+      return true;
+    };
+    const finalizeIntentSync = (emit: any, ctx: Record<string, unknown>) => {
+      const pendingIntentNames = getRegistrableIntentNames().filter(
+        (intentName) => !this.registeredIntentDefinitions.has(intentName),
+      );
+      if (pendingIntentNames.length > 0) {
+        this.intentsSynced = false;
+        return false;
+      }
+
+      const shouldEmit = !this.intentsSynced;
+      this.intentsSynced = true;
+      if (shouldEmit) {
+        emit("meta.sync_controller.synced_intents", {
+          __syncing: true,
+          ...ctx,
+        });
+      }
+
+      return true;
+    };
+    const finalizeActorSync = (emit: any, ctx: Record<string, unknown>) => {
+      const syncServiceName = resolveSyncServiceName();
+      if (!syncServiceName) {
+        this.actorsSynced = false;
+        return false;
+      }
+
+      const pendingActorKeys = Cadenza.getAllActors()
+        .map((actor) => buildActorRegistrationKey(actor, syncServiceName))
+        .filter((registrationKey): registrationKey is string => Boolean(registrationKey))
+        .filter((registrationKey) => !this.registeredActors.has(registrationKey));
+
+      if (pendingActorKeys.length > 0) {
+        this.actorsSynced = false;
+        return false;
+      }
+
+      const shouldEmit = !this.actorsSynced;
+      this.actorsSynced = true;
+      if (shouldEmit) {
+        emit("meta.sync_controller.synced_actors", {
+          __syncing: true,
+          ...ctx,
+        });
+      }
+
+      return true;
+    };
+    const gatherTaskRegistrationTask = Cadenza.createUniqueMetaTask(
+      "Gather task registration",
+      (ctx, emit) => finalizeTaskSync(emit, ctx),
+      "Completes task registration when all registrable tasks are marked registered.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+    const gatherRoutineRegistrationTask = Cadenza.createUniqueMetaTask(
+      "Gather routine registration",
+      (ctx, emit) => finalizeRoutineSync(emit, ctx),
+      "Completes routine registration when all registrable routines are marked registered.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+    const gatherSignalRegistrationTask = Cadenza.createUniqueMetaTask(
+      "Gather signal registration",
+      (ctx, emit) => finalizeSignalSync(emit, ctx),
+      "Completes signal registration when all signal observers are marked registered.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+    const gatherIntentRegistrationTask = Cadenza.createUniqueMetaTask(
+      "Gather intent registration",
+      (ctx, emit) => finalizeIntentSync(emit, ctx),
+      "Completes intent registration when all registrable intents are marked registered.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+    const gatherActorRegistrationTask = Cadenza.createUniqueMetaTask(
+      "Gather actor registration",
+      (ctx, emit) => finalizeActorSync(emit, ctx),
+      "Completes actor registration when all registrable actors are marked registered.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
 
     this.splitRoutinesTask = Cadenza.createMetaTask(
       "Split routines for registration",
-      (ctx, emit) => {
+      function* (this: GraphSyncController, ctx: any) {
         const { routines } = ctx;
-        if (!routines) return false;
+        if (!routines) return;
         const serviceName = resolveSyncServiceName();
         if (!serviceName) {
-          return false;
+          return;
         }
         Cadenza.debounce("meta.sync_controller.synced_resource", {
           delayMs: 2000,
         });
 
-        let emittedCount = 0;
         for (const routine of routines) {
           if (routine.registered) continue;
-          emit("meta.sync_controller.routine_registration_split", {
+          this.routinesSynced = false;
+          yield {
             __syncing: ctx.__syncing,
             data: {
               name: routine.name,
@@ -803,58 +996,39 @@ export default class GraphSyncController {
               isMeta: routine.isMeta,
             },
             __routineName: routine.name,
-          });
-          emittedCount += 1;
+          };
         }
-        return emittedCount > 0;
-      },
+      }.bind(this),
     );
 
-    Cadenza.createMetaTask("Process split routine registration", (ctx) => ctx)
-      .doOn("meta.sync_controller.routine_registration_split")
-      .then(
-        resolveSyncInsertTask(
-          this.isCadenzaDBReady,
-          "routine",
-          {
-            onConflict: {
-              target: ["name", "version", "service_name"],
-              action: {
-                do: "nothing",
-              },
+    this.splitRoutinesTask.then(
+      resolveSyncInsertTask(
+        this.isCadenzaDBReady,
+        "routine",
+        {
+          onConflict: {
+            target: ["name", "version", "service_name"],
+            action: {
+              do: "nothing",
             },
           },
-          { concurrency: 30 },
-        )?.then(
-          Cadenza.createMetaTask("Register routine", (ctx) => {
-            if (!didSyncInsertSucceed(ctx)) {
-              return;
-            }
+        },
+        { concurrency: 30 },
+      )?.then(
+        Cadenza.createMetaTask("Register routine", (ctx) => {
+          if (!didSyncInsertSucceed(ctx)) {
+            return;
+          }
 
-            Cadenza.debounce("meta.sync_controller.synced_resource", {
-              delayMs: 3000,
-            });
-            Cadenza.getRoutine(ctx.__routineName)!.registered = true;
-            Cadenza.debounce(
-              "meta.sync_controller.routine_registration_settled",
-              { __syncing: true },
-              300,
-            );
+          Cadenza.debounce("meta.sync_controller.synced_resource", {
+            delayMs: 3000,
+          });
+          Cadenza.getRoutine(ctx.__routineName)!.registered = true;
 
-            return true;
-          }),
-        ),
-      );
-
-    Cadenza.createUniqueMetaTask(
-      "Gather routine registration",
-      () => {
-        this.routinesSynced = true;
-        return true;
-      },
-    )
-      .doOn("meta.sync_controller.routine_registration_settled")
-      .emits("meta.sync_controller.synced_routines");
+          return true;
+        }).then(gatherRoutineRegistrationTask),
+      ),
+    );
 
     this.splitTasksInRoutines = Cadenza.createMetaTask(
       "Split tasks in routines",
@@ -958,13 +1132,13 @@ export default class GraphSyncController {
 
     this.splitSignalsTask = Cadenza.createMetaTask(
       "Split signals for registration",
-      (ctx, emit) => {
+      function* (this: GraphSyncController, ctx: any) {
         Cadenza.debounce("meta.sync_controller.synced_resource", {
           delayMs: 3000,
         });
 
         const { signals } = ctx;
-        if (!signals) return false;
+        if (!signals) return;
 
         const filteredSignals = signals
           .filter(
@@ -975,8 +1149,9 @@ export default class GraphSyncController {
         for (const signal of filteredSignals) {
           const { isMeta, isGlobal, domain, action } =
             decomposeSignalName(signal);
+          this.signalsSynced = false;
 
-          emit("meta.sync_controller.signal_registration_split", {
+          yield {
             __syncing: ctx.__syncing,
             data: {
               name: signal,
@@ -986,60 +1161,44 @@ export default class GraphSyncController {
               isMeta,
             },
             __signal: signal,
-          });
+          };
         }
-        return filteredSignals.length > 0;
-      },
+      }.bind(this),
     );
 
-    Cadenza.createMetaTask("Process split signal registration", (ctx) => ctx)
-      .doOn("meta.sync_controller.signal_registration_split")
-      .then(
-        resolveSyncInsertTask(
-          this.isCadenzaDBReady,
-          "signal_registry",
-          {
-            onConflict: {
-              target: ["name"],
-              action: {
-                do: "nothing",
-              },
+    this.splitSignalsTask.then(
+      resolveSyncInsertTask(
+        this.isCadenzaDBReady,
+        "signal_registry",
+        {
+          onConflict: {
+            target: ["name"],
+            action: {
+              do: "nothing",
             },
           },
-          { concurrency: 30 },
-        )?.then(
-          Cadenza.createMetaTask("Process signal registration", (ctx) => {
-            if (!didSyncInsertSucceed(ctx)) {
-              return;
-            }
+        },
+        { concurrency: 30 },
+      )?.then(
+        Cadenza.createMetaTask("Process signal registration", (ctx) => {
+          if (!didSyncInsertSucceed(ctx)) {
+            return;
+          }
 
-            Cadenza.debounce("meta.sync_controller.synced_resource", {
-              delayMs: 3000,
-            });
-            Cadenza.debounce(
-              "meta.sync_controller.signal_registration_settled",
-              { __syncing: true },
-              300,
-            );
+          Cadenza.debounce("meta.sync_controller.synced_resource", {
+            delayMs: 3000,
+          });
 
-            return { signalName: ctx.__signal };
-          }).then(Cadenza.signalBroker.registerSignalTask!),
-        ),
-      );
-
-    Cadenza.createUniqueMetaTask(
-      "Gather signal registration",
-      () => {
-        this.signalsSynced = true;
-        return true;
-      },
-    )
-      .doOn("meta.sync_controller.signal_registration_settled")
-      .emits("meta.sync_controller.synced_signals");
+          return { signalName: ctx.__signal };
+        })
+          .then(Cadenza.signalBroker.registerSignalTask!)
+          .then(gatherSignalRegistrationTask),
+      ),
+    );
 
     this.splitTasksForRegistration = Cadenza.createMetaTask(
       "Split tasks for registration",
-      function* (ctx: any) {
+      function* (this: GraphSyncController, ctx: any) {
         Cadenza.debounce("meta.sync_controller.synced_resource", {
           delayMs: 3000,
         });
@@ -1053,6 +1212,7 @@ export default class GraphSyncController {
         for (const task of tasks) {
           if (task.registered) continue;
           const { __functionString, __getTagCallback } = task.export();
+          this.tasksSynced = false;
 
           if (shouldDebugSyncTaskName(task.name)) {
             logSyncDebug("task_registration_split", {
@@ -1103,7 +1263,7 @@ export default class GraphSyncController {
             __taskName: task.name,
           };
         }
-      },
+      }.bind(this),
     );
 
     const registerTaskTask = resolveSyncInsertTask(
@@ -1141,14 +1301,9 @@ export default class GraphSyncController {
           ...ctx,
           task: Cadenza.get(ctx.__taskName),
         });
-        Cadenza.debounce(
-          "meta.sync_controller.task_registration_settled",
-          { __syncing: true },
-          300,
-        );
 
         return true;
-      }),
+      }).then(gatherTaskRegistrationTask),
     );
 
     if (registerTaskTask) {
@@ -1191,16 +1346,6 @@ export default class GraphSyncController {
       .doOn("meta.task.created")
       .then(this.splitTasksForRegistration);
 
-    Cadenza.createUniqueMetaTask(
-      "Gather task registration",
-      () => {
-        this.tasksSynced = true;
-        return true;
-      },
-    )
-      .doOn("meta.sync_controller.task_registration_settled")
-      .emits("meta.sync_controller.synced_tasks");
-
     this.splitActorsForRegistration = Cadenza.createMetaTask(
       "Split actors for registration",
       function* (this: GraphSyncController, ctx: any) {
@@ -1227,6 +1372,7 @@ export default class GraphSyncController {
           if (this.registeredActors.has(registrationKey)) {
             continue;
           }
+          this.actorsSynced = false;
 
           yield {
             data,
@@ -1257,25 +1403,10 @@ export default class GraphSyncController {
             delayMs: 3000,
           });
           this.registeredActors.add(ctx.__actorRegistrationKey);
-          Cadenza.debounce(
-            "meta.sync_controller.actor_registration_settled",
-            { __syncing: true },
-            300,
-          );
           return true;
-        }),
+        }).then(gatherActorRegistrationTask),
       ),
     );
-
-    Cadenza.createUniqueMetaTask(
-      "Gather actor registration",
-      () => {
-        this.actorsSynced = true;
-        return true;
-      },
-    )
-      .doOn("meta.sync_controller.actor_registration_settled")
-      .emits("meta.sync_controller.synced_actors");
 
     this.registerActorTaskMapTask = Cadenza.createMetaTask(
       "Split actor task maps",
@@ -1444,7 +1575,7 @@ export default class GraphSyncController {
 
     this.splitIntentsTask = Cadenza.createMetaTask(
       "Split intents for registration",
-      function (this: GraphSyncController, ctx: any, emit: any) {
+      function* (this: GraphSyncController, ctx: any) {
         Cadenza.debounce("meta.sync_controller.synced_resource", {
           delayMs: 3000,
         });
@@ -1453,7 +1584,6 @@ export default class GraphSyncController {
           ? ctx.intents
           : Array.from(Cadenza.inquiryBroker.intents.values());
 
-        let emittedCount = 0;
         for (const intent of intents) {
           const intentData = buildIntentRegistryData(intent);
           if (!intentData) {
@@ -1464,51 +1594,33 @@ export default class GraphSyncController {
             continue;
           }
 
-          emit("meta.sync_controller.intent_registration_split", {
+          this.intentsSynced = false;
+          yield {
             __syncing: ctx.__syncing,
             data: intentData,
             __intentName: intentData.name,
-          });
-          emittedCount += 1;
+          };
         }
-        return emittedCount > 0;
       }.bind(this),
     );
 
-    Cadenza.createMetaTask("Process split intent registration", (ctx) => ctx)
-      .doOn("meta.sync_controller.intent_registration_split")
-      .then(
-        insertIntentRegistryTask?.then(
-          Cadenza.createMetaTask("Record intent definition registration", (ctx) => {
-            if (!didSyncInsertSucceed(ctx)) {
-              return;
-            }
+    this.splitIntentsTask.then(
+      insertIntentRegistryTask?.then(
+        Cadenza.createMetaTask("Record intent definition registration", (ctx) => {
+          if (!didSyncInsertSucceed(ctx)) {
+            return;
+          }
 
-            Cadenza.debounce("meta.sync_controller.synced_resource", {
-              delayMs: 3000,
-            });
+          Cadenza.debounce("meta.sync_controller.synced_resource", {
+            delayMs: 3000,
+          });
 
-            this.registeredIntentDefinitions.add(ctx.__intentName);
-            Cadenza.debounce(
-              "meta.sync_controller.intent_registration_settled",
-              { __syncing: true },
-              300,
-            );
+          this.registeredIntentDefinitions.add(ctx.__intentName);
 
-            return true;
-          }),
-        ),
-      );
-
-    Cadenza.createUniqueMetaTask(
-      "Gather intent registration",
-      () => {
-        this.intentsSynced = true;
-        return true;
-      },
-    )
-      .doOn("meta.sync_controller.intent_registration_settled")
-      .emits("meta.sync_controller.synced_intents");
+          return true;
+        }).then(gatherIntentRegistrationTask),
+      ),
+    );
 
     const registerIntentTask = Cadenza.createMetaTask(
       "Record intent registration",
@@ -1861,15 +1973,11 @@ export default class GraphSyncController {
           });
         }
 
-        if (authoritativeTasks.length > 0) {
-          Cadenza.debounce(
-            "meta.sync_controller.task_registration_settled",
-            {
-              __syncing: true,
-              __authoritativeReconciliation: true,
-            },
-            300,
-          );
+        if (authoritativeTasks.length > 0 || changed) {
+          finalizeTaskSync(emit, {
+            ...ctx,
+            __authoritativeReconciliation: true,
+          });
         }
 
         return changed;
@@ -1883,7 +1991,7 @@ export default class GraphSyncController {
 
     const reconcileRoutineRegistrationFromAuthorityTask = Cadenza.createMetaTask(
       "Reconcile routine registration from authority",
-      (ctx) => {
+      (ctx, emit) => {
         const authoritativeRoutines = resolveSyncQueryRows<{
           name?: string;
           version?: number;
@@ -1906,15 +2014,11 @@ export default class GraphSyncController {
           changed = true;
         }
 
-        if (authoritativeRoutines.length > 0) {
-          Cadenza.debounce(
-            "meta.sync_controller.routine_registration_settled",
-            {
-              __syncing: true,
-              __authoritativeReconciliation: true,
-            },
-            300,
-          );
+        if (authoritativeRoutines.length > 0 || changed) {
+          finalizeRoutineSync(emit, {
+            ...ctx,
+            __authoritativeReconciliation: true,
+          });
         }
 
         return changed;
@@ -1928,7 +2032,7 @@ export default class GraphSyncController {
 
     const reconcileSignalRegistrationFromAuthorityTask = Cadenza.createMetaTask(
       "Reconcile signal registration from authority",
-      (ctx) => {
+      (ctx, emit) => {
         const authoritativeSignals = resolveSyncQueryRows<{
           name?: string;
         }>(ctx, "signal_registry");
@@ -1950,15 +2054,11 @@ export default class GraphSyncController {
           changed = true;
         }
 
-        if (authoritativeSignals.length > 0) {
-          Cadenza.debounce(
-            "meta.sync_controller.signal_registration_settled",
-            {
-              __syncing: true,
-              __authoritativeReconciliation: true,
-            },
-            300,
-          );
+        if (authoritativeSignals.length > 0 || changed) {
+          finalizeSignalSync(emit, {
+            ...ctx,
+            __authoritativeReconciliation: true,
+          });
         }
 
         return changed;
@@ -1972,7 +2072,7 @@ export default class GraphSyncController {
 
     const reconcileIntentRegistrationFromAuthorityTask = Cadenza.createMetaTask(
       "Reconcile intent registration from authority",
-      (ctx) => {
+      (ctx, emit) => {
         const authoritativeIntents = resolveSyncQueryRows<{
           name?: string;
         }>(ctx, "intent_registry");
@@ -1992,15 +2092,11 @@ export default class GraphSyncController {
           changed = true;
         }
 
-        if (authoritativeIntents.length > 0) {
-          Cadenza.debounce(
-            "meta.sync_controller.intent_registration_settled",
-            {
-              __syncing: true,
-              __authoritativeReconciliation: true,
-            },
-            300,
-          );
+        if (authoritativeIntents.length > 0 || changed) {
+          finalizeIntentSync(emit, {
+            ...ctx,
+            __authoritativeReconciliation: true,
+          });
         }
 
         return changed;
