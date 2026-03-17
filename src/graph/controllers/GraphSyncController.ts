@@ -403,6 +403,27 @@ function resolveSyncInsertTask(
         queryData,
       );
 
+      if (
+        (tableName === "signal_registry" ||
+          tableName === "directional_task_graph_map") &&
+        originalQueryData.data &&
+        typeof originalQueryData.data === "object" &&
+        !Array.isArray(originalQueryData.data) &&
+        Object.keys(originalQueryData.data as Record<string, unknown>).length === 0
+      ) {
+        console.warn(
+          "[CADENZA_SYNC_EMPTY_INSERT]",
+          summarizeSyncDebugValue({
+            tableName,
+            queryData: originalQueryData,
+            ctx,
+            joinedContexts: Array.isArray((ctx as Record<string, any>).joinedContexts)
+              ? (ctx as Record<string, any>).joinedContexts
+              : [],
+          }),
+        );
+      }
+
       return buildSyncExecutionEnvelope(
         ctx as Record<string, any>,
         originalQueryData,
