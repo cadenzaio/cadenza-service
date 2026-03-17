@@ -1,3 +1,10 @@
+## [2.17.79](https://github.com/cadenzaio/cadenza-service/compare/v2.17.78...v2.17.79) (2026-03-17)
+
+
+### Bug Fixes
+
+* **registry:** trace iot db sync ingestion ([b77d33e](https://github.com/cadenzaio/cadenza-service/commit/b77d33ea609965c8f8639d365f1fff3082cb01c6))
+
 ## [2.17.78](https://github.com/cadenzaio/cadenza-service/compare/v2.17.77...v2.17.78) (2026-03-17)
 
 
