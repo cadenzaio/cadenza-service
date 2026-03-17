@@ -1,3 +1,10 @@
+## [2.17.72](https://github.com/cadenzaio/cadenza-service/compare/v2.17.71...v2.17.72) (2026-03-17)
+
+
+### Bug Fixes
+
+* **metadata:** normalize db trigger payloads ([105d864](https://github.com/cadenzaio/cadenza-service/commit/105d864a6967770d96c9654cd49f615525049dea))
+
 ## [2.17.71](https://github.com/cadenzaio/cadenza-service/compare/v2.17.70...v2.17.71) (2026-03-16)
 
 
