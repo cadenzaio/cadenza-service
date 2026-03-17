@@ -1,3 +1,10 @@
+## [2.17.76](https://github.com/cadenzaio/cadenza-service/compare/v2.17.75...v2.17.76) (2026-03-17)
+
+
+### Bug Fixes
+
+* **registry:** backfill intent transport clients ([bbaac0b](https://github.com/cadenzaio/cadenza-service/commit/bbaac0b7521c9b25afc94a96496a24a380b412a4))
+
 ## [2.17.75](https://github.com/cadenzaio/cadenza-service/compare/v2.17.74...v2.17.75) (2026-03-17)
 
 
