@@ -1,3 +1,10 @@
+## [2.17.75](https://github.com/cadenzaio/cadenza-service/compare/v2.17.74...v2.17.75) (2026-03-17)
+
+
+### Bug Fixes
+
+* **rest:** accept large delegation payloads ([be42ca6](https://github.com/cadenzaio/cadenza-service/commit/be42ca61d85a59b56145557e57b3150659e8a907))
+
 ## [2.17.74](https://github.com/cadenzaio/cadenza-service/compare/v2.17.73...v2.17.74) (2026-03-17)
 
 
