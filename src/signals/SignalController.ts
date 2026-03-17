@@ -1,6 +1,17 @@
 import Cadenza from "../Cadenza";
 import { decomposeSignalName } from "../utils/tools";
 
+function buildSignalDatabaseTriggerContext(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    data: { ...data },
+    queryData: {
+      data: { ...data },
+    },
+  };
+}
+
 /**
  * SignalController is a singleton class that manages signal registration, transmission,
  * and metadata handling within a service instance.
@@ -47,15 +58,16 @@ export default class SignalController {
         const { isMeta, isGlobal, domain, action } =
           decomposeSignalName(signalName);
 
-        emit("global.meta.signal_controller.signal_added", {
-          data: {
+        emit(
+          "global.meta.signal_controller.signal_added",
+          buildSignalDatabaseTriggerContext({
             name: signalName,
             isGlobal,
             domain,
             action,
             isMeta,
-          },
-        });
+          }),
+        );
 
         return ctx;
       },

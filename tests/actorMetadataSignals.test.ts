@@ -164,9 +164,50 @@ describe("Actor metadata signal contracts", () => {
     await waitForCondition(() => Boolean(payload?.data));
 
     const data = payload?.data as AnyObject;
+    const queryData = payload?.queryData as AnyObject;
     expect(readField(data, "predecessor_task_name")).toBe("Registered predecessor");
     expect(readField(data, "task_name")).toBe("Pending successor");
     expect(readField(data, "service_name")).toBe("ActorMetadataService");
     expect(readField(data, "predecessor_service_name")).toBe("ActorMetadataService");
+    expect(readField(queryData?.data as AnyObject, "predecessor_task_name")).toBe(
+      "Registered predecessor",
+    );
+    expect(readField(queryData?.data as AnyObject, "task_name")).toBe(
+      "Pending successor",
+    );
+  });
+
+  it("emits relationship execution metadata with database-ready queryData", async () => {
+    let payload: AnyObject | undefined;
+
+    Cadenza.createMetaTask("Capture relationship execution signal", (ctx) => {
+      payload = ctx;
+      return true;
+    }).doOn("global.meta.graph_metadata.relationship_executed");
+
+    Cadenza.emit("meta.node.mapped", {
+      filter: {
+        taskName: "Relationship successor",
+        predecessorTaskName: "Relationship predecessor",
+      },
+    });
+
+    await waitForCondition(() => Boolean(payload?.queryData));
+
+    const data = payload?.data as AnyObject;
+    const filter = payload?.filter as AnyObject;
+    const queryData = payload?.queryData as AnyObject;
+    expect(readField(data, "execution_count")).toBe("increment");
+    expect(readField(filter, "task_name")).toBe("Relationship successor");
+    expect(readField(filter, "predecessor_task_name")).toBe(
+      "Relationship predecessor",
+    );
+    expect(readField(filter, "service_name")).toBe("ActorMetadataService");
+    expect(readField(queryData?.data as AnyObject, "execution_count")).toBe(
+      "increment",
+    );
+    expect(readField(queryData?.filter as AnyObject, "task_name")).toBe(
+      "Relationship successor",
+    );
   });
 });

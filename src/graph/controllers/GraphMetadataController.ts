@@ -3,6 +3,33 @@ import { formatTimestamp } from "../../utils/tools";
 import { isMetaIntentName } from "../../utils/inquiry";
 import { registerActorSessionPersistenceTasks } from "./registerActorSessionPersistence";
 
+function buildDatabaseTriggerContext(
+  data?: Record<string, unknown> | null,
+  filter?: Record<string, unknown> | null,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const nextData =
+    data && typeof data === "object" ? { ...data } : undefined;
+  const nextFilter =
+    filter && typeof filter === "object" ? { ...filter } : undefined;
+  const queryData: Record<string, unknown> = {};
+
+  if (nextData !== undefined) {
+    queryData.data = nextData;
+  }
+
+  if (nextFilter !== undefined) {
+    queryData.filter = nextFilter;
+  }
+
+  return {
+    ...extra,
+    ...(nextData !== undefined ? { data: nextData } : {}),
+    ...(nextFilter !== undefined ? { filter: nextFilter } : {}),
+    ...(Object.keys(queryData).length > 0 ? { queryData } : {}),
+  };
+}
+
 export default class GraphMetadataController {
   private static _instance: GraphMetadataController;
   public static get instance(): GraphMetadataController {
@@ -12,24 +39,22 @@ export default class GraphMetadataController {
 
   constructor() {
     Cadenza.createMetaTask("Handle task creation", (ctx) => {
-      return {
-        data: {
-          ...ctx.data,
-          serviceName: Cadenza.serviceRegistry.serviceName,
-        },
-      };
+      return buildDatabaseTriggerContext({
+        ...ctx.data,
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
     })
       .doOn("meta.task.created")
       .emits("global.meta.graph_metadata.task_created");
 
     Cadenza.createMetaTask("Handle task update", (ctx) => {
-      return {
-        ...ctx,
-        filter: {
+      return buildDatabaseTriggerContext(
+        (ctx.data as Record<string, unknown> | undefined) ?? undefined,
+        {
           ...ctx.filter,
           serviceName: Cadenza.serviceRegistry.serviceName,
         },
-      };
+      );
     })
       .doOn("meta.task.layer_index_changed", "meta.task.destroyed")
       .emits("global.meta.graph_metadata.task_updated");
@@ -47,13 +72,11 @@ export default class GraphMetadataController {
         return false;
       }
 
-      return {
-        data: {
-          ...ctx.data,
-          serviceName: Cadenza.serviceRegistry.serviceName,
-          predecessorServiceName: Cadenza.serviceRegistry.serviceName,
-        },
-      };
+      return buildDatabaseTriggerContext({
+        ...ctx.data,
+        serviceName: Cadenza.serviceRegistry.serviceName,
+        predecessorServiceName: Cadenza.serviceRegistry.serviceName,
+      });
     })
       .doOn("meta.task.relationship_added")
       .emits("global.meta.graph_metadata.task_relationship_created");
@@ -64,101 +87,91 @@ export default class GraphMetadataController {
 
     Cadenza.createMetaTask("Handle task signal observation", (ctx) => {
       const isGlobal = ctx.signalName.startsWith("global.");
-      return {
-        data: {
-          ...ctx.data,
-          isGlobal,
-          serviceName: Cadenza.serviceRegistry.serviceName,
-        },
-      };
+      return buildDatabaseTriggerContext({
+        ...ctx.data,
+        isGlobal,
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
     })
       .doOn("meta.task.observed_signal")
       .emits("global.meta.graph_metadata.task_signal_observed");
 
     Cadenza.createMetaTask("Handle task signal attachment", (ctx) => {
-      return {
-        data: {
-          ...ctx.data,
-        },
-        filter: {
+      return buildDatabaseTriggerContext(
+        (ctx.data as Record<string, unknown> | undefined) ?? undefined,
+        {
           ...ctx.filter,
           serviceName: Cadenza.serviceRegistry.serviceName,
         },
-      };
+      );
     })
       .doOn("meta.task.attached_signal")
       .emits("global.meta.graph_metadata.task_attached_signal");
 
     Cadenza.createMetaTask("Handle task unsubscribing signal", (ctx) => {
-      return {
-        data: {
+      return buildDatabaseTriggerContext(
+        {
           deleted: true,
         },
-        filter: {
+        {
           ...ctx.filter,
           serviceName: Cadenza.serviceRegistry.serviceName,
         },
-      };
+      );
     })
       .doOn("meta.task.unsubscribed_signal")
       .emits("meta.graph_metadata.task_unsubscribed_signal");
 
     Cadenza.createMetaTask("Handle task detaching signal", (ctx) => {
-      return {
-        data: {
+      return buildDatabaseTriggerContext(
+        {
           deleted: true,
         },
-        filter: {
+        {
           ...ctx.filter,
           serviceName: Cadenza.serviceRegistry.serviceName,
         },
-      };
+      );
     })
       .doOn("meta.task.detached_signal")
       .emits("global.meta.graph_metadata.task_detached_signal");
 
     Cadenza.createMetaTask("Handle routine creation", (ctx) => {
-      return {
-        data: {
-          ...ctx.data,
-          serviceName: Cadenza.serviceRegistry.serviceName,
-        },
-      };
+      return buildDatabaseTriggerContext({
+        ...ctx.data,
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
     })
       .doAfter(Cadenza.registry.registerRoutine)
       .emits("global.meta.graph_metadata.routine_created");
 
     Cadenza.createMetaTask("Handle routine update", (ctx) => {
-      return {
-        ...ctx,
-        filter: {
+      return buildDatabaseTriggerContext(
+        (ctx.data as Record<string, unknown> | undefined) ?? undefined,
+        {
           ...ctx.filter,
           serviceName: Cadenza.serviceRegistry.serviceName,
         },
-      };
+      );
     })
       .doOn("meta.routine.destroyed")
       .emits("global.meta.graph_metadata.routine_updated");
 
     Cadenza.createMetaTask("Handle adding task to routine", (ctx) => {
-      return {
-        data: {
-          ...ctx.data,
-          serviceName: Cadenza.serviceRegistry.serviceName,
-        },
-      };
+      return buildDatabaseTriggerContext({
+        ...ctx.data,
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
     })
       .doOn("meta.routine.task_added")
       .emits("global.meta.graph_metadata.task_added_to_routine");
 
     Cadenza.createMetaTask("Handle new trace", (ctx) => {
-      return {
-        data: {
-          ...ctx.data,
-          service_name: Cadenza.serviceRegistry.serviceName,
-          service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
-        },
-      };
+      return buildDatabaseTriggerContext({
+        ...ctx.data,
+        service_name: Cadenza.serviceRegistry.serviceName,
+        service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
+      });
     })
       .doOn("meta.runner.new_trace", "sub_meta.signal_broker.new_trace")
       .emits("global.meta.graph_metadata.execution_trace_created");
@@ -166,15 +179,11 @@ export default class GraphMetadataController {
     Cadenza.createMetaTask(
       "Handle routine execution creation",
       (ctx) => {
-        return {
-          queryData: {
-            data: {
-              ...ctx.data,
-              serviceName: Cadenza.serviceRegistry.serviceName,
-              serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-            },
-          },
-        };
+        return buildDatabaseTriggerContext({
+          ...ctx.data,
+          serviceName: Cadenza.serviceRegistry.serviceName,
+          serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+        });
       },
       "Handles routine execution creation",
       { concurrency: 100, isSubMeta: true },
@@ -184,8 +193,11 @@ export default class GraphMetadataController {
 
     Cadenza.createMetaTask(
       "Handle routine execution started",
-      () => {
-        return true;
+      (ctx) => {
+        return buildDatabaseTriggerContext(
+          (ctx.data as Record<string, unknown> | undefined) ?? undefined,
+          (ctx.filter as Record<string, unknown> | undefined) ?? undefined,
+        );
       },
       "Handles routine execution started",
       { concurrency: 100, isSubMeta: true },
@@ -196,16 +208,14 @@ export default class GraphMetadataController {
     Cadenza.createMetaTask(
       "Handle routine execution ended",
       (ctx) => {
-        return {
-          data: {
+        return buildDatabaseTriggerContext(
+          {
             ...ctx.data,
             serviceName: Cadenza.serviceRegistry.serviceName,
             serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
           },
-          filter: {
-            ...ctx.filter,
-          },
-        };
+          (ctx.filter as Record<string, unknown> | undefined) ?? undefined,
+        );
       },
       "Handles routine execution ended",
       { concurrency: 100, isSubMeta: true },
@@ -216,13 +226,11 @@ export default class GraphMetadataController {
     Cadenza.createMetaTask(
       "Handle task execution creation",
       (ctx) => {
-        return {
-          data: {
-            ...ctx.data,
-            serviceName: Cadenza.serviceRegistry.serviceName,
-            serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-          },
-        };
+        return buildDatabaseTriggerContext({
+          ...ctx.data,
+          serviceName: Cadenza.serviceRegistry.serviceName,
+          serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+        });
       },
       "Handles task execution creation",
       { concurrency: 100, isSubMeta: true },
@@ -232,8 +240,11 @@ export default class GraphMetadataController {
 
     Cadenza.createMetaTask(
       "Handle task execution mapped",
-      () => {
-        return true;
+      (ctx) => {
+        return buildDatabaseTriggerContext(
+          (ctx.data as Record<string, unknown> | undefined) ?? undefined,
+          (ctx.filter as Record<string, unknown> | undefined) ?? undefined,
+        );
       },
       "Handles task execution mapping",
       { concurrency: 100, isSubMeta: true },
@@ -243,8 +254,11 @@ export default class GraphMetadataController {
 
     Cadenza.createMetaTask(
       "Handle task execution started",
-      () => {
-        return true;
+      (ctx) => {
+        return buildDatabaseTriggerContext(
+          (ctx.data as Record<string, unknown> | undefined) ?? undefined,
+          (ctx.filter as Record<string, unknown> | undefined) ?? undefined,
+        );
       },
       "Handles task execution started",
       { concurrency: 100, isSubMeta: true },
@@ -255,16 +269,14 @@ export default class GraphMetadataController {
     Cadenza.createMetaTask(
       "Handle task execution ended",
       (ctx) => {
-        return {
-          data: {
+        return buildDatabaseTriggerContext(
+          {
             ...ctx.data,
             serviceName: Cadenza.serviceRegistry.serviceName,
             serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
           },
-          filter: {
-            ...ctx.filter,
-          },
-        };
+          (ctx.filter as Record<string, unknown> | undefined) ?? undefined,
+        );
       },
       "Handles task execution ended",
       { concurrency: 100, isSubMeta: true },
@@ -275,16 +287,16 @@ export default class GraphMetadataController {
     Cadenza.createMetaTask(
       "Handle task execution relationship creation",
       (ctx) => {
-        return {
-          data: {
+        return buildDatabaseTriggerContext(
+          {
             executionCount: "increment",
             lastExecuted: formatTimestamp(Date.now()),
           },
-          filter: {
+          {
             ...ctx.filter,
             serviceName: Cadenza.serviceRegistry.serviceName,
           },
-        };
+        );
       },
       "Handles task execution relationship creation",
       { concurrency: 100, isSubMeta: true },
@@ -293,23 +305,19 @@ export default class GraphMetadataController {
       .emits("global.meta.graph_metadata.relationship_executed");
 
     Cadenza.createMetaTask("Handle actor creation", (ctx) => {
-      return {
-        data: {
-          ...ctx.data,
-          service_name: Cadenza.serviceRegistry.serviceName,
-        },
-      };
+      return buildDatabaseTriggerContext({
+        ...ctx.data,
+        service_name: Cadenza.serviceRegistry.serviceName,
+      });
     })
       .doOn("meta.actor.created")
       .emits("global.meta.graph_metadata.actor_created");
 
     Cadenza.createMetaTask("Handle actor task association", (ctx) => {
-      return {
-        data: {
-          ...ctx.data,
-          service_name: Cadenza.serviceRegistry.serviceName,
-        },
-      };
+      return buildDatabaseTriggerContext({
+        ...ctx.data,
+        service_name: Cadenza.serviceRegistry.serviceName,
+      });
     })
       .doOn("meta.actor.task_associated")
       .emits("global.meta.graph_metadata.actor_task_associated");
@@ -318,12 +326,10 @@ export default class GraphMetadataController {
 
     Cadenza.createMetaTask("Handle Intent Creation", (ctx) => {
       const intentName = ctx.data?.name;
-      return {
-        data: {
-          ...ctx.data,
-          isMeta: intentName ? isMetaIntentName(intentName) : false,
-        },
-      };
+      return buildDatabaseTriggerContext({
+        ...ctx.data,
+        isMeta: intentName ? isMetaIntentName(intentName) : false,
+      });
     })
       .doOn("meta.inquiry_broker.added")
       .emits("global.meta.graph_metadata.intent_created");
