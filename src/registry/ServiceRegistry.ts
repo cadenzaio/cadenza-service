@@ -1098,6 +1098,80 @@ export default class ServiceRegistry {
     return buildTransportClientKey(transport);
   }
 
+  private resolveCommunicationTypesForService(serviceName: string): string[] {
+    const communicationTypes = Array.from(
+      new Set(
+        this.deputies
+          .get(serviceName)
+          ?.map((descriptor) => descriptor.communicationType) ?? [],
+      ),
+    );
+
+    if (
+      !communicationTypes.includes("signal") &&
+      this.remoteSignals.has(serviceName)
+    ) {
+      communicationTypes.push("signal");
+    }
+
+    return communicationTypes;
+  }
+
+  private ensureDependeeClientForInstance(
+    instance: ServiceInstanceDescriptor,
+    emit: (signal: string, ctx: AnyObject) => void,
+  ): boolean {
+    if (
+      !instance ||
+      instance.uuid === this.serviceInstanceId ||
+      instance.isFrontend ||
+      !instance.isActive ||
+      instance.isNonResponsive ||
+      instance.isBlocked
+    ) {
+      return false;
+    }
+
+    if (
+      !this.deputies.has(instance.serviceName) &&
+      !this.remoteIntents.has(instance.serviceName) &&
+      !this.remoteSignals.has(instance.serviceName)
+    ) {
+      return false;
+    }
+
+    const transport = this.getRouteableTransport(
+      instance,
+      this.useSocket ? "socket" : "rest",
+    );
+
+    if (!transport || this.hasTransportClientCreated(instance, transport.uuid)) {
+      return false;
+    }
+
+    emit("meta.service_registry.dependee_registered", {
+      serviceName: instance.serviceName,
+      serviceInstanceId: instance.uuid,
+      serviceTransportId: transport.uuid,
+      serviceOrigin: transport.origin,
+      transportProtocols: transport.protocols,
+      communicationTypes: this.resolveCommunicationTypesForService(
+        instance.serviceName,
+      ),
+    });
+    this.markTransportClientCreated(instance, transport.uuid);
+    return true;
+  }
+
+  private ensureDependeeClientsForService(
+    serviceName: string,
+    emit: (signal: string, ctx: AnyObject) => void,
+  ): void {
+    for (const instance of this.instances.get(serviceName) ?? []) {
+      this.ensureDependeeClientForInstance(instance, emit);
+    }
+  }
+
   private hasTransportClientCreated(
     instance: ServiceInstanceDescriptor,
     transportId: string,
@@ -2296,52 +2370,17 @@ export default class ServiceRegistry {
           return true;
         }
 
-        const trackedTransport = this.getRouteableTransport(
-          trackedInstance!,
-          this.useSocket ? "socket" : "rest",
-        );
-
         if (
           this.deputies.has(serviceName) ||
           this.remoteIntents.has(serviceName) ||
           this.remoteSignals.has(serviceName)
         ) {
-          const communicationTypes = Array.from(
-            new Set(
-              this.deputies
-                .get(serviceName)
-                ?.map((d) => d.communicationType) ?? [],
-            ),
+          const connected = this.ensureDependeeClientForInstance(
+            trackedInstance!,
+            emit,
           );
 
-          if (
-            !communicationTypes.includes("signal") &&
-            this.remoteSignals.has(serviceName)
-          ) {
-            communicationTypes.push("signal");
-          }
-
-          if (trackedTransport) {
-            const clientCreated = this.hasTransportClientCreated(
-              trackedInstance!,
-              trackedTransport.uuid,
-            );
-
-            if (!clientCreated) {
-              emit("meta.service_registry.dependee_registered", {
-                serviceName,
-                serviceInstanceId: uuid,
-                serviceTransportId: trackedTransport.uuid,
-                serviceOrigin: trackedTransport.origin,
-                transportProtocols: trackedTransport.protocols,
-                communicationTypes,
-              });
-              this.markTransportClientCreated(
-                trackedInstance!,
-                trackedTransport.uuid,
-              );
-            }
-          } else {
+          if (!connected) {
             emit("meta.service_registry.routeable_transport_missing", {
               serviceName,
               serviceInstanceId: uuid,
@@ -2425,32 +2464,7 @@ export default class ServiceRegistry {
           return true;
         }
 
-        if (!this.hasTransportClientCreated(ownerInstance, transport.uuid)) {
-          const communicationTypes = Array.from(
-            new Set(
-              this.deputies
-                .get(ownerInstance.serviceName)
-                ?.map((descriptor) => descriptor.communicationType) ?? [],
-            ),
-          );
-
-          if (
-            !communicationTypes.includes("signal") &&
-            this.remoteSignals.has(ownerInstance.serviceName)
-          ) {
-            communicationTypes.push("signal");
-          }
-
-          emit("meta.service_registry.dependee_registered", {
-            serviceName: ownerInstance.serviceName,
-            serviceInstanceId: ownerInstance.uuid,
-            serviceTransportId: transport.uuid,
-            serviceOrigin: transport.origin,
-            transportProtocols: transport.protocols,
-            communicationTypes,
-          });
-          this.markTransportClientCreated(ownerInstance, transport.uuid);
-        }
+        this.ensureDependeeClientForInstance(ownerInstance, emit);
 
         return true;
       },
@@ -2554,7 +2568,7 @@ export default class ServiceRegistry {
 
     this.handleGlobalIntentRegistrationTask = Cadenza.createMetaTask(
       "Handle global intent registration",
-      (ctx) => {
+      (ctx, emit) => {
         const intentToTaskMaps = this.normalizeIntentMaps(ctx);
         const sorted = intentToTaskMaps.sort((a, b) => {
           if (a.deleted && !b.deleted) return -1;
@@ -2573,6 +2587,7 @@ export default class ServiceRegistry {
           });
 
           this.registerRemoteIntentDeputy(map);
+          this.ensureDependeeClientsForService(map.serviceName, emit);
         }
 
         return true;

@@ -605,6 +605,85 @@ describe("service registry transport registration", () => {
     ).toEqual([]);
   });
 
+  it("connects existing internal transports when remote intent deputies register after full sync", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const dependeeRegistrations: Array<Record<string, unknown>> = [];
+
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-collector-1";
+
+    Cadenza.createMetaTask(
+      "Capture dependee registration after remote intent sync",
+      (ctx) => {
+        dependeeRegistrations.push(ctx.data ?? ctx);
+        return true;
+      },
+    ).doOn("meta.service_registry.dependee_registered");
+
+    registry.instances.set("IotDbService", [
+      {
+        uuid: "iot-db-1",
+        serviceName: "IotDbService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "iot-db-internal",
+            serviceInstanceId: "iot-db-1",
+            role: "internal",
+            origin: "http://iot-db-service:3001",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+          },
+          {
+            uuid: "iot-db-public",
+            serviceInstanceId: "iot-db-1",
+            role: "public",
+            origin: "http://iot-db.localhost",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+          },
+        ],
+        clientCreatedTransportIds: [],
+      },
+    ]);
+
+    Cadenza.run(registry.handleGlobalIntentRegistrationTask, {
+      intentToTaskMaps: [
+        {
+          intentName: "iot-db-telemetry-insert",
+          taskName: "Normalize telemetry insert queryData",
+          taskVersion: 1,
+          serviceName: "IotDbService",
+        },
+      ],
+    });
+
+    await waitForCondition(() => dependeeRegistrations.length === 1, 1_500);
+
+    expect(dependeeRegistrations[0]).toMatchObject({
+      serviceName: "IotDbService",
+      serviceInstanceId: "iot-db-1",
+      serviceTransportId: "iot-db-internal",
+      serviceOrigin: "http://iot-db-service:3001",
+      transportProtocols: ["rest"],
+    });
+    expect(
+      registry.instances.get("IotDbService")?.[0]?.clientCreatedTransportIds,
+    ).toContain("iot-db-internal");
+  });
+
   it("does not call task.execute directly from resolver wrappers", () => {
     const serviceRegistrySource = fs.readFileSync(
       "/Users/emilforsvall/WebstormProjects/cadenza-workspace/cadenza-service/src/registry/ServiceRegistry.ts",
