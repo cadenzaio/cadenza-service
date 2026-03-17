@@ -30,6 +30,14 @@ interface FetchClientDiagnosticsState {
   updatedAt: number;
 }
 
+interface ParsedFetchResponse {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  data: any;
+}
+
 export default class RestController {
   private static _instance: RestController;
   public static get instance(): RestController {
@@ -146,6 +154,42 @@ export default class RestController {
     }
   }
 
+  private async parseFetchResponse(response: Response): Promise<ParsedFetchResponse> {
+    const contentType = response.headers.get("content-type") ?? "";
+    const rawText = await response.text();
+    const headers = Object.fromEntries(response.headers.entries());
+
+    if (rawText.length === 0) {
+      return {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+        data: {},
+      };
+    }
+
+    if (!contentType.toLowerCase().includes("application/json")) {
+      throw new Error(
+        `Expected JSON response from ${response.url ?? "remote service"} but received ${contentType || "unknown content type"} (HTTP ${response.status}). Body preview: ${rawText.slice(0, 200)}`,
+      );
+    }
+
+    try {
+      return {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+        data: JSON.parse(rawText),
+      };
+    } catch (error) {
+      throw new Error(
+        `Failed to parse JSON response from ${response.url ?? "remote service"} (HTTP ${response.status}). Body preview: ${rawText.slice(0, 200)}. Parse error: ${this.getErrorMessage(error)}`,
+      );
+    }
+  }
+
   private recordFetchClientError(
     fetchId: string,
     serviceName: string,
@@ -250,18 +294,19 @@ export default class RestController {
     };
   }
 
-  fetchDataWithTimeout = async function (
+  fetchDataWithTimeout = async (
     url: string,
     requestInit: RequestInit,
     timeoutMs: number,
-  ): Promise<any> {
+  ): Promise<any> => {
     if (typeof globalThis.fetch !== "function") {
       throw new Error("Browser REST controller requires global fetch.");
     }
 
     const signal = AbortSignal.timeout(timeoutMs);
     const response = await globalThis.fetch(url, { ...requestInit, signal });
-    return await response.json();
+    const parsedResponse = await this.parseFetchResponse(response);
+    return parsedResponse.data;
   };
 
   constructor() {

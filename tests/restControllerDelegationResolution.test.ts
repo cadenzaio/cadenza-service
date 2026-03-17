@@ -149,6 +149,53 @@ describe("RestController delegation resolution", () => {
     expect(failureContext.__deputyExecId.length).toBeGreaterThan(0);
   }, 10_000);
 
+  it("accepts delegation payloads larger than the default body-parser limit", async () => {
+    const networkConfiguredPromise = new Promise<AnyObject>((resolve) => {
+      Cadenza.createEphemeralMetaTask(
+        "Observe rest network configured for large delegation payload test",
+        (ctx) => {
+          resolve(ctx);
+          return true;
+        },
+        "Observes REST network configuration during large payload delegation tests",
+        { register: false },
+      ).doOn("global.meta.rest.network_configured");
+    });
+
+    Cadenza.emit("meta.service_registry.service_inserted", {
+      __isDatabase: false,
+      __networkMode: "dev",
+      __port: 0,
+      __securityProfile: "low",
+      __serviceInstanceId: "rest-delegation-large-payload-test",
+      __serviceName: "RestDelegationLargePayloadTest",
+    });
+
+    const networkContext = await networkConfiguredPromise;
+    const port = networkContext.httpServer?.address()?.port;
+
+    const response = await fetch(`http://localhost:${port}/delegation`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        __remoteRoutineName: "Insert serviceInstance",
+        payloadPadding: "x".repeat(200_000),
+      }),
+    });
+
+    const failureContext = await response.json();
+
+    expect(response.ok).toBe(true);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(failureContext.__status).toBe("error");
+    expect(failureContext.errored).toBe(true);
+    expect(failureContext.__error).toBe(
+      "No task or routine registered for delegation target Insert serviceInstance.",
+    );
+  }, 10_000);
+
   it("serves status checks without requiring a request body", async () => {
     (Cadenza.serviceRegistry as any).serviceName = "RestStatusRouteTest";
     (Cadenza.serviceRegistry as any).serviceInstanceId =

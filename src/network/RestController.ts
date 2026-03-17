@@ -41,6 +41,14 @@ interface FetchClientDiagnosticsState {
   updatedAt: number;
 }
 
+interface ParsedFetchResponse {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  data: any;
+}
+
 /**
  * RestController class is responsible for managing RESTful interactions, including defining
  * server configurations and handling client requests. It serves as a singleton, accessible via
@@ -160,6 +168,49 @@ export default class RestController {
       return JSON.stringify(error);
     } catch {
       return String(error);
+    }
+  }
+
+  private resolveJsonBodyLimit(): string {
+    const configuredLimit = process.env.CADENZA_REST_BODY_LIMIT?.trim();
+    return configuredLimit && configuredLimit.length > 0
+      ? configuredLimit
+      : "10mb";
+  }
+
+  private async parseFetchResponse(response: any): Promise<ParsedFetchResponse> {
+    const contentType = response.headers.get("content-type") ?? "";
+    const rawText = await response.text();
+    const headers = Object.fromEntries(response.headers.entries());
+
+    if (rawText.length === 0) {
+      return {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+        data: {},
+      };
+    }
+
+    if (!contentType.toLowerCase().includes("application/json")) {
+      throw new Error(
+        `Expected JSON response from ${response.url ?? "remote service"} but received ${contentType || "unknown content type"} (HTTP ${response.status}). Body preview: ${rawText.slice(0, 200)}`,
+      );
+    }
+
+    try {
+      return {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+        data: JSON.parse(rawText),
+      };
+    } catch (error) {
+      throw new Error(
+        `Failed to parse JSON response from ${response.url ?? "remote service"} (HTTP ${response.status}). Body preview: ${rawText.slice(0, 200)}. Parse error: ${this.getErrorMessage(error)}`,
+      );
     }
   }
 
@@ -293,17 +344,17 @@ export default class RestController {
    * @returns {Promise<any>} A promise that resolves to the parsed response data if the request is successful.
    * @throws {Error} Throws an error if the request fails due to issues such as timeout or other unexpected errors.
    */
-  fetchDataWithTimeout = async function (
+  fetchDataWithTimeout = async (
     url: string,
     requestInit: any,
     timeoutMs: number,
-  ): Promise<any> {
+  ): Promise<any> => {
     const signal = AbortSignal.timeout(timeoutMs); // Create a signal that aborts after timeoutMs
 
     try {
-      const response = await fetch(url, { ...requestInit, signal }); // Send the request with the signal
-      // Process the response
-      return await response.json();
+      const response = await fetch(url, { ...requestInit, signal });
+      const parsedResponse = await this.parseFetchResponse(response);
+      return parsedResponse.data;
     } catch (error: any) {
       if (error?.name === "AbortError") {
         Cadenza.log(
@@ -387,7 +438,11 @@ export default class RestController {
             console.log("Service inserted...");
 
             const app = express();
-            app.use(bodyParser.json());
+            app.use(
+              bodyParser.json({
+                limit: this.resolveJsonBodyLimit(),
+              }),
+            );
 
             switch (ctx.__securityProfile) {
               case "low":
@@ -635,6 +690,46 @@ export default class RestController {
                     ),
                   );
                 });
+
+                app.use(
+                  (error: any, _req: any, res: any, next: any) => {
+                    if (!error) {
+                      next();
+                      return;
+                    }
+
+                    const statusCode =
+                      typeof error.statusCode === "number"
+                        ? error.statusCode
+                        : typeof error.status === "number"
+                          ? error.status
+                          : error.type === "entity.too.large"
+                            ? 413
+                            : 500;
+                    const message =
+                      error.type === "entity.too.large"
+                        ? `Request payload exceeded REST body limit ${this.resolveJsonBodyLimit()}.`
+                        : this.getErrorMessage(error);
+
+                    Cadenza.log(
+                      "REST request failed before route completion.",
+                      {
+                        error: message,
+                        type: error.type,
+                        statusCode,
+                        path: _req?.path,
+                        method: _req?.method,
+                      },
+                      statusCode >= 500 ? "error" : "warning",
+                    );
+
+                    res.status(statusCode).json({
+                      __status: "error",
+                      errored: true,
+                      __error: message,
+                    });
+                  },
+                );
 
                 return true;
               },
