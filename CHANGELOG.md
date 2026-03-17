@@ -1,3 +1,10 @@
+## [2.17.74](https://github.com/cadenzaio/cadenza-service/compare/v2.17.73...v2.17.74) (2026-03-17)
+
+
+### Bug Fixes
+
+* **sync:** stop empty signal registration fan-out ([3d60da2](https://github.com/cadenzaio/cadenza-service/commit/3d60da2b5316ca7d2b16a3720b595b49bf5ea77b))
+
 ## [2.17.73](https://github.com/cadenzaio/cadenza-service/compare/v2.17.72...v2.17.73) (2026-03-17)
 
 
