@@ -1,3 +1,10 @@
+## [2.17.80](https://github.com/cadenzaio/cadenza-service/compare/v2.17.79...v2.17.80) (2026-03-17)
+
+
+### Bug Fixes
+
+* **sync:** trace gathered sync delivery ([4111f04](https://github.com/cadenzaio/cadenza-service/commit/4111f04cbe164c1392460244c25c654baca4bc44))
+
 ## [2.17.79](https://github.com/cadenzaio/cadenza-service/compare/v2.17.78...v2.17.79) (2026-03-17)
 
 
