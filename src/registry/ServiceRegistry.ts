@@ -2596,6 +2596,10 @@ export default class ServiceRegistry {
 
     const normalizeServiceInstancesFromSync = (ctx: AnyObject) =>
       this.normalizeServiceInstancesFromSync(ctx);
+    const getLocalTraceContext = () => ({
+      localServiceName: this.serviceName,
+      localServiceInstanceId: this.serviceInstanceId,
+    });
 
     Cadenza.createMetaTask("Split service instances", function* (ctx: any) {
       const serviceInstances = normalizeServiceInstancesFromSync(ctx);
@@ -2604,6 +2608,21 @@ export default class ServiceRegistry {
       }
 
       for (const serviceInstance of serviceInstances) {
+        const { localServiceName, localServiceInstanceId } = getLocalTraceContext();
+        if (
+          shouldTraceIotDbRegistryPath(
+            localServiceName,
+            serviceInstance.serviceName,
+          )
+        ) {
+          console.log("[CADENZA_REGISTRY_DEBUG] split_service_instance", {
+            localServiceName,
+            localServiceInstanceId,
+            targetServiceName: serviceInstance.serviceName,
+            targetServiceInstanceId: serviceInstance.uuid,
+            transports: summarizeTransportDescriptors(serviceInstance.transports),
+          });
+        }
         yield { serviceInstance };
       }
     })
@@ -2922,6 +2941,25 @@ export default class ServiceRegistry {
         const serviceInstances = this.normalizeServiceInstancesFromSync(
           inquiryResult as AnyObject,
         );
+
+        if (shouldTraceIotDbRegistryPath(this.serviceName, "IotDbService")) {
+          const tracedInstances = serviceInstances
+            .filter((instance) => instance.serviceName === "IotDbService")
+            .map((instance) => ({
+              uuid: instance.uuid,
+              isActive: instance.isActive,
+              isNonResponsive: instance.isNonResponsive,
+              isBlocked: instance.isBlocked,
+              transports: summarizeTransportDescriptors(instance.transports),
+            }));
+
+          console.log("[CADENZA_REGISTRY_DEBUG] full_sync_instances", {
+            localServiceName: this.serviceName,
+            localServiceInstanceId: this.serviceInstanceId,
+            totalServiceInstances: serviceInstances.length,
+            tracedInstances,
+          });
+        }
 
         return {
           ...ctx,
