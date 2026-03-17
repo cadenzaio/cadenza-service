@@ -2499,12 +2499,16 @@ export default class ServiceRegistry {
       "Tracks remote dependency instances for runtime heartbeat monitoring.",
     ).doOn("meta.service_registry.dependee_registered");
 
+    const normalizeServiceInstancesFromSync = (ctx: AnyObject) =>
+      this.normalizeServiceInstancesFromSync(ctx);
+
     Cadenza.createMetaTask("Split service instances", function* (ctx: any) {
-      if (!ctx.serviceInstances) {
+      const serviceInstances = normalizeServiceInstancesFromSync(ctx);
+      if (serviceInstances.length === 0) {
         return;
       }
 
-      for (const serviceInstance of ctx.serviceInstances) {
+      for (const serviceInstance of serviceInstances) {
         yield { serviceInstance };
       }
     })
