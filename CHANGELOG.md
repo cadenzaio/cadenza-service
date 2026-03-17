@@ -1,3 +1,10 @@
+## [2.17.77](https://github.com/cadenzaio/cadenza-service/compare/v2.17.76...v2.17.77) (2026-03-17)
+
+
+### Bug Fixes
+
+* **registry:** merge sync transports before instance split ([79c35a0](https://github.com/cadenzaio/cadenza-service/commit/79c35a0b8535fa3dfb8b72bd3cd36f9357142c2f))
+
 ## [2.17.76](https://github.com/cadenzaio/cadenza-service/compare/v2.17.75...v2.17.76) (2026-03-17)
 
 
