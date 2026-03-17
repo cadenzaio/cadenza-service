@@ -1,3 +1,10 @@
+## [2.17.78](https://github.com/cadenzaio/cadenza-service/compare/v2.17.77...v2.17.78) (2026-03-17)
+
+
+### Bug Fixes
+
+* **registry:** trace iot db transport routing ([aa2204d](https://github.com/cadenzaio/cadenza-service/commit/aa2204d303f29758537cbb7ec206e5bc7385f958))
+
 ## [2.17.77](https://github.com/cadenzaio/cadenza-service/compare/v2.17.76...v2.17.77) (2026-03-17)
 
 
