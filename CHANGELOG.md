@@ -1,3 +1,10 @@
+## [2.17.73](https://github.com/cadenzaio/cadenza-service/compare/v2.17.72...v2.17.73) (2026-03-17)
+
+
+### Bug Fixes
+
+* **sync:** publish empty authority insert tracing ([0febcc4](https://github.com/cadenzaio/cadenza-service/commit/0febcc429bf241a5f66d550f7600a8cbf79f7284))
+
 ## [2.17.72](https://github.com/cadenzaio/cadenza-service/compare/v2.17.71...v2.17.72) (2026-03-17)
 
 
