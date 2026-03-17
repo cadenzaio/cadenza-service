@@ -211,6 +211,30 @@ function normalizeServiceRegistryInsertResult(
   return result;
 }
 
+function shouldTraceIotDbRegistryPath(
+  localServiceName: string | null | undefined,
+  targetServiceName: string | null | undefined,
+): boolean {
+  return targetServiceName === "IotDbService" && localServiceName !== "IotDbService";
+}
+
+function summarizeTransportDescriptors(
+  transports: Array<
+    Pick<
+      ServiceTransportDescriptor,
+      "uuid" | "serviceInstanceId" | "role" | "origin" | "protocols"
+    >
+  >,
+) {
+  return transports.map((transport) => ({
+    uuid: transport.uuid,
+    serviceInstanceId: transport.serviceInstanceId,
+    role: transport.role,
+    origin: transport.origin,
+    protocols: transport.protocols,
+  }));
+}
+
 function resolveServiceRegistryInsertTask(
   tableName: string,
   queryData: Record<string, unknown> = {},
@@ -1144,6 +1168,30 @@ export default class ServiceRegistry {
       instance,
       this.useSocket ? "socket" : "rest",
     );
+
+    if (shouldTraceIotDbRegistryPath(this.serviceName, instance.serviceName)) {
+      console.log("[CADENZA_REGISTRY_DEBUG] ensure_dependee_client_for_instance", {
+        localServiceName: this.serviceName,
+        localServiceInstanceId: this.serviceInstanceId,
+        targetServiceName: instance.serviceName,
+        targetServiceInstanceId: instance.uuid,
+        useSocket: this.useSocket,
+        routeableRole: this.getRoutingTransportRole(),
+        hasDeputies: this.deputies.has(instance.serviceName),
+        hasRemoteIntents: this.remoteIntents.has(instance.serviceName),
+        hasRemoteSignals: this.remoteSignals.has(instance.serviceName),
+        clientCreatedTransportIds: instance.clientCreatedTransportIds ?? [],
+        transports: summarizeTransportDescriptors(instance.transports),
+        selectedTransport: transport
+          ? {
+              uuid: transport.uuid,
+              role: transport.role,
+              origin: transport.origin,
+              protocols: transport.protocols,
+            }
+          : null,
+      });
+    }
 
     if (!transport || this.hasTransportClientCreated(instance, transport.uuid)) {
       return false;
@@ -2358,6 +2406,27 @@ export default class ServiceRegistry {
             trackedInstance.reportedAt ?? new Date().toISOString();
         }
 
+        if (shouldTraceIotDbRegistryPath(this.serviceName, serviceName)) {
+          console.log("[CADENZA_REGISTRY_DEBUG] handle_instance_update", {
+            localServiceName: this.serviceName,
+            localServiceInstanceId: this.serviceInstanceId,
+            targetServiceName: serviceName,
+            targetServiceInstanceId: uuid,
+            existingInstance: !!existing,
+            deleted,
+            remoteInterest:
+              this.deputies.has(serviceName) ||
+              this.remoteIntents.has(serviceName) ||
+              this.remoteSignals.has(serviceName),
+            hasDeputies: this.deputies.has(serviceName),
+            hasRemoteIntents: this.remoteIntents.has(serviceName),
+            hasRemoteSignals: this.remoteSignals.has(serviceName),
+            transports: trackedInstance
+              ? summarizeTransportDescriptors(trackedInstance.transports)
+              : [],
+          });
+        }
+
         if (!serviceInstance.isBootstrapPlaceholder) {
           this.reconcileBootstrapPlaceholderInstance(serviceName, uuid, emit);
         }
@@ -2426,6 +2495,32 @@ export default class ServiceRegistry {
           if (ownerInstance) {
             break;
           }
+        }
+
+        if (
+          shouldTraceIotDbRegistryPath(
+            this.serviceName,
+            ownerInstance?.serviceName ?? ctx.serviceName ?? undefined,
+          )
+        ) {
+          console.log("[CADENZA_REGISTRY_DEBUG] handle_transport_update", {
+            localServiceName: this.serviceName,
+            localServiceInstanceId: this.serviceInstanceId,
+            transport: {
+              uuid: transport.uuid,
+              serviceInstanceId: transport.serviceInstanceId,
+              role: transport.role,
+              origin: transport.origin,
+              protocols: transport.protocols,
+              deleted: transport.deleted,
+            },
+            ownerFound: !!ownerInstance,
+            ownerServiceName: ownerInstance?.serviceName,
+            ownerInstanceId: ownerInstance?.uuid,
+            ownerTransports: ownerInstance
+              ? summarizeTransportDescriptors(ownerInstance.transports)
+              : [],
+          });
         }
 
         if (!ownerInstance) {
@@ -2939,6 +3034,51 @@ export default class ServiceRegistry {
         let retries = __retries ?? 0;
         let triedInstances = __triedInstances ?? [];
         const preferredRole = this.getRoutingTransportRole();
+        const allInstances = this.instances.get(__serviceName) ?? [];
+        const candidateDiagnostics = shouldTraceIotDbRegistryPath(
+          this.serviceName,
+          __serviceName ?? undefined,
+        )
+          ? allInstances.map((instance) => ({
+              uuid: instance.uuid,
+              isActive: instance.isActive,
+              isNonResponsive: instance.isNonResponsive,
+              isBlocked: instance.isBlocked,
+              isFrontend: instance.isFrontend,
+              transports: summarizeTransportDescriptors(instance.transports),
+              selectedTransport:
+                instance.isFrontend
+                  ? null
+                  : this.selectTransportForInstance(
+                      instance,
+                      context,
+                      preferredRole,
+                    )
+                    ? {
+                        uuid: this.selectTransportForInstance(
+                          instance,
+                          context,
+                          preferredRole,
+                        )!.uuid,
+                        role: this.selectTransportForInstance(
+                          instance,
+                          context,
+                          preferredRole,
+                        )!.role,
+                        origin: this.selectTransportForInstance(
+                          instance,
+                          context,
+                          preferredRole,
+                        )!.origin,
+                        protocols: this.selectTransportForInstance(
+                          instance,
+                          context,
+                          preferredRole,
+                        )!.protocols,
+                      }
+                    : null,
+            }))
+          : undefined;
 
         const instances = this.instances
           .get(__serviceName)
@@ -2991,6 +3131,21 @@ export default class ServiceRegistry {
               (a.numberOfRunningGraphs ?? 0) - (b.numberOfRunningGraphs ?? 0)
             );
           });
+
+        if (candidateDiagnostics) {
+          console.log("[CADENZA_REGISTRY_DEBUG] get_balanced_instance", {
+            localServiceName: this.serviceName,
+            localServiceInstanceId: this.serviceInstanceId,
+            targetServiceName: __serviceName,
+            preferredRole,
+            useSocket: this.useSocket,
+            targetServiceInstanceId,
+            retries,
+            triedInstances,
+            candidateDiagnostics,
+            filteredInstanceIds: instances?.map((instance) => instance.uuid) ?? [],
+          });
+        }
 
         if (!instances || instances.length === 0 || retries > this.retryCount) {
           context.errored = true;
