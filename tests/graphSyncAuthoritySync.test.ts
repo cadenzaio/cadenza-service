@@ -507,6 +507,37 @@ describe("graph sync authority rows", () => {
     });
   });
 
+  it("stops signal registration fan-out when no signal name can be resolved", async () => {
+    const addSignalSpy = vi.spyOn(Cadenza.signalBroker, "addSignal");
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+    const baselineCalls = addSignalSpy.mock.calls.length;
+
+    const processSignalRegistrationTask = Cadenza.get(
+      "Process signal registration",
+    ) as any;
+
+    Cadenza.run(processSignalRegistrationTask, {
+      __success: true,
+      rowCount: 1,
+      queryData: {
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "nothing",
+          },
+        },
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const postInitCalls = addSignalSpy.mock.calls.slice(baselineCalls);
+    expect(postInitCalls.some(([signalName]) => signalName === undefined)).toBe(false);
+  });
+
   it("skips task-to-routine sync until both routines and tasks are registered", async () => {
     const taskToRoutineRows: Array<Record<string, unknown>> = [];
 

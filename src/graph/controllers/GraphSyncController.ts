@@ -1473,7 +1473,7 @@ export default class GraphSyncController {
 
         const signalName = resolveSignalNameFromSyncContext(ctx);
         if (!signalName) {
-          return true;
+          return false;
         }
 
         const signalObservers = (Cadenza.signalBroker as any).signalObservers;
