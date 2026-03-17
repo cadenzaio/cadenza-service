@@ -43,6 +43,8 @@ import {
 
 const META_SERVICE_REGISTRY_FULL_SYNC_INTENT =
   "meta-service-registry-full-sync";
+const CADENZA_DB_GATHERED_SYNC_SIGNAL =
+  "global.meta.cadenza_db.gathered_sync_data";
 const META_RUNTIME_STATUS_HEARTBEAT_TICK_SIGNAL =
   "meta.service_registry.runtime_status.heartbeat_tick";
 const META_RUNTIME_STATUS_MONITOR_TICK_SIGNAL =
@@ -2693,6 +2695,31 @@ export default class ServiceRegistry {
           if (!a.deleted && b.deleted) return 1;
           return 0;
         });
+
+        if (ctx.__signalName === CADENZA_DB_GATHERED_SYNC_SIGNAL) {
+          const relevantIntentNames = sorted
+            .filter(
+              (map) =>
+                map.intentName === META_SERVICE_REGISTRY_FULL_SYNC_INTENT ||
+                map.intentName === "Query service_instance" ||
+                map.intentName === "Query service_instance_transport",
+            )
+            .map((map) => ({
+              intentName: map.intentName,
+              serviceName: map.serviceName,
+              taskName: map.taskName,
+              taskVersion: map.taskVersion,
+              deleted: !!map.deleted,
+            }));
+
+          console.log("[CADENZA_SYNC_DEBUG] gathered_sync_intent_registration", {
+            localServiceName: this.serviceName,
+            localServiceInstanceId: this.serviceInstanceId,
+            signalName: ctx.__signalName,
+            totalIntentMaps: sorted.length,
+            relevantIntentNames,
+          });
+        }
 
         for (const map of sorted) {
           if (map.deleted) {

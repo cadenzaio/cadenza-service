@@ -1350,6 +1350,14 @@ export default class CadenzaService {
     } else {
       this.emit("meta.create_service_requested", initContext);
       this.createMetaTask("Create signal transmission for sync", (ctx) => {
+        if (ctx.serviceName) {
+          console.log("[CADENZA_SYNC_DEBUG] create_sync_signal_transmission", {
+            localServiceName: serviceName,
+            localServiceInstanceId: serviceId,
+            targetServiceName: ctx.serviceName,
+            signalName: "global.meta.cadenza_db.gathered_sync_data",
+          });
+        }
         this.createSignalTransmissionTask(
           "global.meta.cadenza_db.gathered_sync_data",
           ctx.serviceName,

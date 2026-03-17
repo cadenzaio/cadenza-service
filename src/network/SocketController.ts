@@ -1230,6 +1230,29 @@ export default class SocketController {
           });
 
           socket.on("signal", (signalCtx, callback?: unknown) => {
+            if (
+              signalCtx?.__signalName === "global.meta.cadenza_db.gathered_sync_data"
+            ) {
+              console.log("[CADENZA_SYNC_DEBUG] received_sync_signal_socket", {
+                localServiceName: Cadenza.serviceRegistry.serviceName,
+                localServiceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                signalName: signalCtx.__signalName,
+                intentToTaskMaps: Array.isArray(signalCtx.intentToTaskMaps)
+                  ? signalCtx.intentToTaskMaps.length
+                  : 0,
+                signalToTaskMaps: Array.isArray(signalCtx.signalToTaskMaps)
+                  ? signalCtx.signalToTaskMaps.length
+                  : 0,
+                serviceInstances: Array.isArray(signalCtx.serviceInstances)
+                  ? signalCtx.serviceInstances.length
+                  : 0,
+                serviceInstanceTransports: Array.isArray(
+                  signalCtx.serviceInstanceTransports,
+                )
+                  ? signalCtx.serviceInstanceTransports.length
+                  : 0,
+              });
+            }
             if (Cadenza.signalBroker.listObservedSignals().includes(signalCtx.__signalName)) {
               if (isSocketAckCallback(callback)) {
                 callback({
@@ -1564,6 +1587,33 @@ export default class SocketController {
             async (signalCtx, emitter) => {
               if (signalCtx.__signalName === undefined) {
                 return;
+              }
+
+              if (
+                signalCtx.__signalName === "global.meta.cadenza_db.gathered_sync_data"
+              ) {
+                console.log("[CADENZA_SYNC_DEBUG] transmit_sync_signal_socket", {
+                  localServiceName: Cadenza.serviceRegistry.serviceName,
+                  localServiceInstanceId:
+                    Cadenza.serviceRegistry.serviceInstanceId,
+                  targetServiceName: serviceName,
+                  targetUrl: url,
+                  signalName: signalCtx.__signalName,
+                  intentToTaskMaps: Array.isArray(signalCtx.intentToTaskMaps)
+                    ? signalCtx.intentToTaskMaps.length
+                    : 0,
+                  signalToTaskMaps: Array.isArray(signalCtx.signalToTaskMaps)
+                    ? signalCtx.signalToTaskMaps.length
+                    : 0,
+                  serviceInstances: Array.isArray(signalCtx.serviceInstances)
+                    ? signalCtx.serviceInstances.length
+                    : 0,
+                  serviceInstanceTransports: Array.isArray(
+                    signalCtx.serviceInstanceTransports,
+                  )
+                    ? signalCtx.serviceInstanceTransports.length
+                    : 0,
+                });
               }
 
               delete signalCtx.__broadcast;

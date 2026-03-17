@@ -644,6 +644,30 @@ export default class RestController {
                   try {
                     ctx = req.body;
                     if (
+                      ctx?.__signalName === "global.meta.cadenza_db.gathered_sync_data"
+                    ) {
+                      console.log("[CADENZA_SYNC_DEBUG] received_sync_signal_rest", {
+                        localServiceName: Cadenza.serviceRegistry.serviceName,
+                        localServiceInstanceId:
+                          Cadenza.serviceRegistry.serviceInstanceId,
+                        signalName: ctx.__signalName,
+                        intentToTaskMaps: Array.isArray(ctx.intentToTaskMaps)
+                          ? ctx.intentToTaskMaps.length
+                          : 0,
+                        signalToTaskMaps: Array.isArray(ctx.signalToTaskMaps)
+                          ? ctx.signalToTaskMaps.length
+                          : 0,
+                        serviceInstances: Array.isArray(ctx.serviceInstances)
+                          ? ctx.serviceInstances.length
+                          : 0,
+                        serviceInstanceTransports: Array.isArray(
+                          ctx.serviceInstanceTransports,
+                        )
+                          ? ctx.serviceInstanceTransports.length
+                          : 0,
+                      });
+                    }
+                    if (
                       !Cadenza.signalBroker
                         .listObservedSignals()
                         .includes(ctx.__signalName)
@@ -1135,6 +1159,30 @@ export default class RestController {
           async (ctx, emit) => {
             if (ctx.__signalName === undefined) {
               return;
+            }
+
+            if (ctx.__signalName === "global.meta.cadenza_db.gathered_sync_data") {
+              console.log("[CADENZA_SYNC_DEBUG] transmit_sync_signal_rest", {
+                localServiceName: Cadenza.serviceRegistry.serviceName,
+                localServiceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                targetServiceName: serviceName,
+                targetUrl: URL,
+                signalName: ctx.__signalName,
+                intentToTaskMaps: Array.isArray(ctx.intentToTaskMaps)
+                  ? ctx.intentToTaskMaps.length
+                  : 0,
+                signalToTaskMaps: Array.isArray(ctx.signalToTaskMaps)
+                  ? ctx.signalToTaskMaps.length
+                  : 0,
+                serviceInstances: Array.isArray(ctx.serviceInstances)
+                  ? ctx.serviceInstances.length
+                  : 0,
+                serviceInstanceTransports: Array.isArray(
+                  ctx.serviceInstanceTransports,
+                )
+                  ? ctx.serviceInstanceTransports.length
+                  : 0,
+              });
             }
 
             fetchDiagnostics.signalTransmissions++;
