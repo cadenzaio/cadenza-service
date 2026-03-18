@@ -116,6 +116,13 @@ export default class DatabaseTask extends DeputyTask {
     const metadata = context.getMetadata();
     const dynamicQueryData = ctx.queryData ?? {};
     delete ctx.queryData;
+    const nextQueryData: DbOperationPayload = {
+      ...this.queryData,
+      data: {
+        ...ctx.data,
+      },
+      ...dynamicQueryData,
+    };
 
     const deputyContext = {
       ...ctx,
@@ -136,13 +143,15 @@ export default class DatabaseTask extends DeputyTask {
           metadata.__blockRemoteExecution ?? ctx.__blockRemoteExecution ?? false,
         __deputyTaskName: this.name,
       },
-      queryData: {
-        ...this.queryData,
-        data: {
-          ...ctx.data,
-        },
-        ...dynamicQueryData,
-      },
+      data: nextQueryData.data ?? ctx.data,
+      batch: nextQueryData.batch ?? ctx.batch,
+      transaction: nextQueryData.transaction ?? ctx.transaction,
+      onConflict: Object.prototype.hasOwnProperty.call(nextQueryData, "onConflict")
+        ? nextQueryData.onConflict
+        : undefined,
+      filter: nextQueryData.filter ?? ctx.filter,
+      fields: nextQueryData.fields ?? ctx.fields,
+      queryData: nextQueryData,
     };
 
     return this.taskFunction(deputyContext, emit, inquire, progressCallback);

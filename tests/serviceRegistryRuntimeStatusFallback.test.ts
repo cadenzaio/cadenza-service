@@ -471,6 +471,99 @@ describe("service registry runtime status fallback", () => {
     ).toBe(true);
   });
 
+  it("preserves public bootstrap transport for frontend runtimes when the resolved instance has only internal transports", () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "DemoFrontend";
+    registry.serviceInstanceId = "frontend-1";
+    registry.isFrontend = true;
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "cadenza-db",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        isBootstrapPlaceholder: true,
+        transports: [
+          {
+            uuid: "cadenza-db-public-bootstrap",
+            serviceInstanceId: "cadenza-db",
+            role: "public",
+            origin: "http://cadenza-db.localhost",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+          },
+        ],
+      },
+      {
+        uuid: "resolved-cadenza-db",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        isBootstrapPlaceholder: false,
+        transports: [
+          {
+            uuid: "resolved-cadenza-db-internal",
+            serviceInstanceId: "resolved-cadenza-db",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+          },
+        ],
+      },
+    ]);
+
+    (registry as {
+      reconcileBootstrapPlaceholderInstance: (
+        serviceName: string,
+        resolvedInstanceId: string,
+        emit: (signalName: string, ctx: Record<string, unknown>) => void,
+      ) => void;
+    }).reconcileBootstrapPlaceholderInstance(
+      "CadenzaDB",
+      "resolved-cadenza-db",
+      () => {},
+    );
+
+    const instances = registry.instances.get("CadenzaDB");
+    expect(instances).toEqual([
+      expect.objectContaining({
+        uuid: "resolved-cadenza-db",
+        transports: expect.arrayContaining([
+          expect.objectContaining({
+            uuid: "resolved-cadenza-db-internal",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+          }),
+          expect.objectContaining({
+            uuid: "cadenza-db-public-bootstrap",
+            serviceInstanceId: "resolved-cadenza-db",
+            role: "public",
+            origin: "http://cadenza-db.localhost",
+          }),
+        ]),
+      }),
+    ]);
+  });
+
   it("adopts the handshake-reported instance id for bootstrap placeholders", async () => {
     const registry = ServiceRegistry.instance as any;
     registry.serviceName = "OrdersService";

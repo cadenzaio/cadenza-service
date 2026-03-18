@@ -364,7 +364,6 @@ function resolveSyncInsertTask(
   options: Record<string, unknown> = {},
 ): SyncTaskGraph | undefined {
   const localInsertTask = Cadenza.getLocalCadenzaDBInsertTask(tableName);
-  const debugTable = shouldDebugSyncTable(tableName);
 
   if (!localInsertTask && !isCadenzaDBReady) {
     return undefined;
@@ -384,17 +383,6 @@ function resolveSyncInsertTask(
       isHidden: true,
     });
 
-  if (debugTable) {
-    logSyncDebug("insert_task_resolved", {
-      tableName,
-      localInsertTaskName: localInsertTask?.name ?? null,
-      remoteInsertTaskName: isCadenzaDBReady ? targetTask.name : null,
-      targetTaskName: targetTask.name,
-      queryData,
-      options,
-    });
-  }
-
   const prepareExecutionTask = Cadenza.createMetaTask(
     `Prepare graph sync insert for ${tableName}`,
     (ctx) => {
@@ -413,14 +401,14 @@ function resolveSyncInsertTask(
       ) {
         console.warn(
           "[CADENZA_SYNC_EMPTY_INSERT]",
-          summarizeSyncDebugValue({
+          {
             tableName,
             queryData: originalQueryData,
             ctx,
             joinedContexts: Array.isArray((ctx as Record<string, any>).joinedContexts)
               ? (ctx as Record<string, any>).joinedContexts
               : [],
-          }),
+          },
         );
       }
 
@@ -435,40 +423,6 @@ function resolveSyncInsertTask(
       isHidden: true,
     },
   );
-
-  if (debugTable) {
-    prepareExecutionTask.then(
-      Cadenza.createMetaTask(
-        `Log prepared graph sync insert execution for ${tableName}`,
-        (ctx) => {
-          if (tableName === "task") {
-            if (!shouldDebugTaskSyncPayload(ctx as Record<string, any>)) {
-              return ctx;
-            }
-
-            logSyncDebug("insert_prepare", {
-              tableName,
-              targetTaskName: targetTask.name,
-              payload: buildTaskSyncDebugPayload(ctx as Record<string, any>),
-            });
-            return ctx;
-          }
-
-          logSyncDebug("insert_prepare", {
-            tableName,
-            targetTaskName: targetTask.name,
-            ctx,
-          });
-          return ctx;
-        },
-        `Logs prepared ${tableName} sync insert payloads.`,
-        {
-          register: false,
-          isHidden: true,
-        },
-      ),
-    );
-  }
 
   const finalizeExecutionTask = Cadenza.createMetaTask(
     `Finalize graph sync insert for ${tableName}`,
@@ -490,26 +444,6 @@ function resolveSyncInsertTask(
             ? ctx.queryData
             : originalQueryData,
       };
-
-      if (debugTable) {
-        if (tableName === "task") {
-          if (shouldDebugTaskSyncPayload(normalizedContext)) {
-            logSyncDebug("insert_finalize", {
-              tableName,
-              targetTaskName: targetTask.name,
-              success: didSyncInsertSucceed(normalizedContext),
-              payload: buildTaskSyncDebugPayload(normalizedContext),
-            });
-          }
-        } else {
-          logSyncDebug("insert_finalize", {
-            tableName,
-            targetTaskName: targetTask.name,
-            success: didSyncInsertSucceed(normalizedContext),
-            ctx: normalizedContext,
-          });
-        }
-      }
 
       return normalizedContext;
     },
@@ -550,221 +484,6 @@ const AUTHORITY_QUERY_RESULT_KEYS = {
 } as const;
 
 const EARLY_SYNC_REQUEST_DELAYS_MS = [2000, 10000, 30000] as const;
-const SYNC_DEBUG_PREFIX = "[CADENZA_SYNC_DEBUG]";
-const SYNC_DEBUG_ENABLED =
-  typeof process !== "undefined" &&
-  typeof process.env === "object" &&
-  process.env.CADENZA_SYNC_DEBUG === "true";
-const SYNC_DEBUG_TABLES = new Set<string>(["intent_to_task_map", "task"]);
-const SYNC_DEBUG_TASK_NAMES = new Set<string>([
-  "Query service_instance",
-  "Query service_instance_transport",
-  "Query intent_to_task_map",
-  "Query signal_to_task_map",
-  "Prepare for signal sync",
-  "Compile sync data and broadcast",
-  "Forward service instance sync",
-  "Forward service transport sync",
-  "Forward intent to task map sync",
-  "Forward signal to task map sync",
-  "Normalize telemetry ingest payload",
-  "Get telemetry session state",
-  "Normalize anomaly detect input",
-  "Read anomaly runtime session",
-  "Normalize prediction compute input",
-  "Normalize telemetry insert queryData",
-]);
-const SYNC_DEBUG_ROUTINE_NAMES = new Set<string>(["Sync services"]);
-const SYNC_DEBUG_INTENT_NAMES = new Set<string>([
-  "meta-service-registry-full-sync",
-  "runner-traffic-runtime-get",
-  "iot-telemetry-ingest",
-  "iot-telemetry-session-get",
-  "iot-anomaly-detect",
-  "iot-anomaly-runtime-get",
-  "iot-prediction-compute",
-  "iot-db-telemetry-insert",
-  "query-pg-cadenza-db-postgres-actor-service_instance",
-  "query-pg-cadenza-db-postgres-actor-service_instance_transport",
-  "query-pg-cadenza-db-postgres-actor-intent_to_task_map",
-  "query-pg-cadenza-db-postgres-actor-signal_to_task_map",
-]);
-
-function shouldDebugSyncTable(tableName: string): boolean {
-  return SYNC_DEBUG_ENABLED && SYNC_DEBUG_TABLES.has(tableName);
-}
-
-function shouldDebugSyncTaskName(taskName: unknown): boolean {
-  return (
-    SYNC_DEBUG_ENABLED &&
-    typeof taskName === "string" &&
-    SYNC_DEBUG_TASK_NAMES.has(taskName)
-  );
-}
-
-function shouldDebugSyncRoutineName(routineName: unknown): boolean {
-  return (
-    SYNC_DEBUG_ENABLED &&
-    typeof routineName === "string" && SYNC_DEBUG_ROUTINE_NAMES.has(routineName)
-  );
-}
-
-function shouldDebugSyncIntentName(intentName: unknown): boolean {
-  return (
-    SYNC_DEBUG_ENABLED &&
-    typeof intentName === "string" &&
-    SYNC_DEBUG_INTENT_NAMES.has(intentName)
-  );
-}
-
-function summarizeSyncDebugValue(value: unknown, depth: number = 0): unknown {
-  if (value === null || value === undefined) {
-    return value;
-  }
-
-  if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return value;
-  }
-
-  if (value instanceof Set) {
-    return {
-      __type: "Set",
-      size: value.size,
-      values: Array.from(value)
-        .slice(0, 8)
-        .map((item) => summarizeSyncDebugValue(item, depth + 1)),
-    };
-  }
-
-  if (value instanceof Map) {
-    return {
-      __type: "Map",
-      size: value.size,
-    };
-  }
-
-  if (Array.isArray(value)) {
-    return {
-      __type: "Array",
-      length: value.length,
-      items: value
-        .slice(0, 5)
-        .map((item) => summarizeSyncDebugValue(item, depth + 1)),
-    };
-  }
-
-  if (typeof value === "object") {
-    if (depth >= 2) {
-      return "[object]";
-    }
-
-    const output: Record<string, unknown> = {};
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([key]) =>
-        ![
-          "functionString",
-          "tagIdGetter",
-          "__functionString",
-          "__getTagCallback",
-          "joinedContexts",
-          "task",
-          "taskInstance",
-          "tasks",
-        ].includes(key),
-      )
-      .slice(0, 12);
-
-    for (const [key, nestedValue] of entries) {
-      output[key] = summarizeSyncDebugValue(nestedValue, depth + 1);
-    }
-
-    return output;
-  }
-
-  return String(value);
-}
-
-function logSyncDebug(event: string, payload: Record<string, unknown>): void {
-  console.log(`${SYNC_DEBUG_PREFIX} ${event}`, summarizeSyncDebugValue(payload));
-}
-
-function buildTaskSyncDebugPayload(ctx: Record<string, any>): Record<string, unknown> {
-  const data =
-    ctx.data && typeof ctx.data === "object"
-      ? (ctx.data as Record<string, unknown>)
-      : {};
-  const queryData =
-    ctx.queryData && typeof ctx.queryData === "object"
-      ? (ctx.queryData as Record<string, unknown>)
-      : {};
-  const queryDataData =
-    queryData.data && typeof queryData.data === "object"
-      ? (queryData.data as Record<string, unknown>)
-      : {};
-  const taskPayload = Object.keys(queryDataData).length > 0 ? queryDataData : data;
-  const functionString =
-    typeof taskPayload.functionString === "string"
-      ? taskPayload.functionString
-      : typeof taskPayload.function_string === "string"
-        ? taskPayload.function_string
-        : undefined;
-  const tagIdGetter =
-    typeof taskPayload.tagIdGetter === "string"
-      ? taskPayload.tagIdGetter
-      : typeof taskPayload.tag_id_getter === "string"
-        ? taskPayload.tag_id_getter
-        : undefined;
-  const signals =
-    taskPayload.signals && typeof taskPayload.signals === "object"
-      ? (taskPayload.signals as Record<string, unknown>)
-      : {};
-  const intents =
-    taskPayload.intents && typeof taskPayload.intents === "object"
-      ? (taskPayload.intents as Record<string, unknown>)
-      : {};
-
-  return {
-    taskName:
-      taskPayload.name ??
-      taskPayload.taskName ??
-      taskPayload.task_name ??
-      ctx.__taskName ??
-      null,
-    serviceName:
-      taskPayload.service_name ??
-      taskPayload.serviceName ??
-      ctx.__syncServiceName ??
-      null,
-    functionStringLength: functionString?.length ?? null,
-    tagIdGetterLength: tagIdGetter?.length ?? null,
-    isMeta: taskPayload.isMeta ?? taskPayload.is_meta ?? null,
-    isSubMeta: taskPayload.isSubMeta ?? taskPayload.is_sub_meta ?? null,
-    isHidden: taskPayload.isHidden ?? taskPayload.is_hidden ?? null,
-    signalsEmitsCount: Array.isArray(signals.emits) ? signals.emits.length : null,
-    signalsObservedCount: Array.isArray(signals.observed)
-      ? signals.observed.length
-      : null,
-    intentHandlesCount: Array.isArray(intents.handles)
-      ? intents.handles.length
-      : null,
-    intentInquiresCount: Array.isArray(intents.inquires)
-      ? intents.inquires.length
-      : null,
-    rowCount: ctx.rowCount ?? null,
-    errored: ctx.errored ?? false,
-    success: ctx.__success ?? null,
-    error: ctx.__error ?? null,
-  };
-}
-
-function shouldDebugTaskSyncPayload(ctx: Record<string, any>): boolean {
-  const payload = buildTaskSyncDebugPayload(ctx);
-  return shouldDebugSyncTaskName(payload.taskName);
-}
 
 type AuthorityQueryTableName = keyof typeof AUTHORITY_QUERY_RESULT_KEYS;
 
@@ -1333,20 +1052,6 @@ export default class GraphSyncController {
                 continue;
               }
 
-              if (
-                shouldDebugSyncRoutineName(routine.name) ||
-                shouldDebugSyncTaskName(nextTask.name)
-              ) {
-                logSyncDebug("task_to_routine_split", {
-                  routineName: routine.name,
-                  routineVersion: routine.version,
-                  taskName: nextTask.name,
-                  taskVersion: nextTask.version,
-                  serviceName,
-                  registered: nextTask.registered,
-                });
-              }
-
               yield {
                 __syncing: ctx.__syncing,
                 data: {
@@ -1515,21 +1220,6 @@ export default class GraphSyncController {
           const { __functionString, __getTagCallback } = task.export();
           this.tasksSynced = false;
 
-          if (shouldDebugSyncTaskName(task.name)) {
-            logSyncDebug("task_registration_split", {
-              taskName: task.name,
-              taskVersion: task.version,
-              serviceName,
-              register: task.register,
-              registered: task.registered,
-              hidden: task.hidden,
-              exportFunctionLength: __functionString?.length ?? null,
-              exportTagGetterLength: __getTagCallback?.length ?? null,
-              observedSignals: Array.from(task.observedSignals),
-              handledIntents: Array.from(task.handlesIntents as Set<string>),
-            });
-          }
-
           yield {
             __syncing: ctx.__syncing,
             data: {
@@ -1585,14 +1275,6 @@ export default class GraphSyncController {
     const registerTaskTask = Cadenza.createMetaTask(
       "Record registration",
       (ctx, emit) => {
-        if (shouldDebugSyncTaskName(ctx.__taskName)) {
-          logSyncDebug("task_registration_result", {
-            taskName: ctx.__taskName,
-            success: didSyncInsertSucceed(ctx),
-            ctx,
-          });
-        }
-
         if (!didSyncInsertSucceed(ctx)) {
           return;
         }
@@ -1625,17 +1307,6 @@ export default class GraphSyncController {
         const task =
           ctx.taskInstance ??
           (ctx.data?.name ? Cadenza.get(String(ctx.data.name)) : undefined);
-
-        if (shouldDebugSyncTaskName(task?.name ?? ctx?.data?.name)) {
-          logSyncDebug("task_created_for_immediate_sync", {
-            incomingTaskName: ctx?.data?.name ?? null,
-            resolvedTaskName: task?.name ?? null,
-            exists: Boolean(task),
-            hidden: task?.hidden ?? null,
-            register: task?.register ?? null,
-            registered: task?.registered ?? null,
-          });
-        }
 
         if (!task || task.hidden || !task.register || task.registered) {
           return false;
@@ -1850,18 +1521,6 @@ export default class GraphSyncController {
             continue;
           }
 
-          if (shouldDebugSyncTaskName(task.name)) {
-            logSyncDebug("signal_to_task_map_split", {
-              taskName: task.name,
-              signalName: _signal,
-              rawSignal: signal,
-              serviceName,
-              observerRegistered: (Cadenza.signalBroker as any).signalObservers?.get(
-                _signal,
-              )?.registered,
-            });
-          }
-
           yield {
             __syncing: ctx.__syncing,
             data: {
@@ -1990,23 +1649,6 @@ export default class GraphSyncController {
         task.__registeredIntents = task.__registeredIntents ?? new Set<string>();
         task.__invalidMetaIntentWarnings =
           task.__invalidMetaIntentWarnings ?? new Set<string>();
-        const shouldDebugTask = shouldDebugSyncTaskName(task.name);
-
-        if (shouldDebugTask) {
-          logSyncDebug("intent_map_task_state", {
-            taskName: task.name,
-            taskVersion: task.version,
-            serviceName,
-            registered: task.registered,
-            register: task.register,
-            hidden: task.hidden,
-            handledIntents: Array.from(task.handlesIntents as Set<string>),
-            registeredIntents: Array.from(task.__registeredIntents),
-            tasksSynced: this.tasksSynced,
-            intentsSynced: this.intentsSynced,
-          });
-        }
-
         let emittedCount = 0;
         for (const intent of task.handlesIntents as Set<string>) {
           if (task.__registeredIntents.has(intent)) continue;
@@ -2038,19 +1680,6 @@ export default class GraphSyncController {
             continue;
           }
 
-          if (
-            shouldDebugSyncTaskName(task.name) ||
-            shouldDebugSyncIntentName(intent)
-          ) {
-            logSyncDebug("intent_to_task_map_split", {
-              taskName: task.name,
-              taskVersion: task.version,
-              intentName: intent,
-              serviceName,
-              intentDefinition,
-            });
-          }
-
           yield {
             __syncing: ctx.__syncing,
             data: {
@@ -2072,16 +1701,6 @@ export default class GraphSyncController {
           emittedCount += 1;
         }
 
-        if (shouldDebugTask && emittedCount === 0) {
-          logSyncDebug("intent_map_task_noop", {
-            taskName: task.name,
-            taskVersion: task.version,
-            serviceName,
-            handledIntents: Array.from(task.handlesIntents as Set<string>),
-            registeredIntents: Array.from(task.__registeredIntents),
-          });
-        }
-
         return emittedCount > 0;
       }.bind(this),
     );
@@ -2090,17 +1709,6 @@ export default class GraphSyncController {
       (ctx) => {
         if (!ctx.__intentDefinition || !ctx.__intentMapData) {
           return false;
-        }
-
-        if (
-          shouldDebugSyncTaskName(ctx.__taskName) ||
-          shouldDebugSyncIntentName(ctx.__intent)
-        ) {
-          logSyncDebug("intent_definition_prepare", {
-            taskName: ctx.__taskName,
-            intentName: ctx.__intent,
-            intentDefinition: ctx.__intentDefinition,
-          });
         }
 
         return {
@@ -2114,17 +1722,6 @@ export default class GraphSyncController {
       (ctx) => {
         if (!ctx.__intentMapData) {
           return false;
-        }
-
-        if (
-          shouldDebugSyncTaskName(ctx.__taskName) ||
-          shouldDebugSyncIntentName(ctx.__intent)
-        ) {
-          logSyncDebug("intent_map_payload_restore", {
-            taskName: ctx.__taskName,
-            intentName: ctx.__intent,
-            intentMapData: ctx.__intentMapData,
-          });
         }
 
         return {

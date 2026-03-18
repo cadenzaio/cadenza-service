@@ -227,6 +227,128 @@ describe("frontend runtime mode", () => {
     );
   });
 
+  it("keeps public routing after internal runtime status updates", async () => {
+    Cadenza.createCadenzaService("BrowserApp", "Frontend app", {
+      isFrontend: true,
+      useSocket: false,
+      cadenzaDB: {
+        connect: false,
+      },
+      customServiceId: "browser-app-3c",
+    });
+
+    await waitForCondition(
+      () => ServiceRegistry.instance.serviceInstanceId === "browser-app-3c",
+    );
+
+    const delegatedPayloads: AnyObject[] = [];
+
+    Cadenza.createMetaTask("Fake fetch inquiry transport for public route", (ctx, emit) => {
+      delegatedPayloads.push(ctx);
+      emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+        orders: [{ id: "order-2" }],
+      });
+      return true;
+    }).doOn("meta.service_registry.selected_instance_for_fetch:orders-public-2");
+
+    Cadenza.emit("global.meta.cadenza_db.gathered_sync_data", {
+      signalToTaskMaps: [],
+      intentToTaskMaps: [
+        {
+          intentName: "orders-lookup",
+          serviceName: "OrdersService",
+          taskName: "LookupOrders",
+          taskVersion: 1,
+        },
+      ],
+      serviceInstances: [
+        {
+          uuid: "orders-2",
+          serviceName: "OrdersService",
+          isActive: true,
+          isNonResponsive: false,
+          isBlocked: false,
+          isFrontend: false,
+          health: {},
+          transports: [
+            {
+              uuid: "orders-public-2",
+              service_instance_id: "orders-2",
+              role: "public",
+              origin: "http://orders.example:7000",
+              protocols: ["rest", "socket"],
+            },
+          ],
+        },
+      ],
+    });
+
+    await waitForCondition(() => {
+      const ordersInstance = (ServiceRegistry.instance as any).instances
+        .get("OrdersService")
+        ?.find((instance: AnyObject) => instance.uuid === "orders-2");
+      return Boolean(ordersInstance);
+    });
+
+    const applied = (ServiceRegistry.instance as any).applyRuntimeStatusReport({
+      serviceName: "OrdersService",
+      serviceInstanceId: "orders-2",
+      transportId: "orders-internal-2",
+      transportRole: "internal",
+      transportOrigin: "http://orders-internal:3000",
+      transportProtocols: ["rest"],
+      isActive: true,
+      isNonResponsive: false,
+      isBlocked: false,
+      numberOfRunningGraphs: 1,
+      state: "healthy",
+      acceptingWork: true,
+      health: {},
+      reportedAt: new Date().toISOString(),
+    });
+    expect(applied).toBe(true);
+
+    await waitForCondition(() => {
+      const observer =
+        Cadenza.inquiryBroker.inquiryObservers.get("orders-lookup");
+      return Boolean(observer && observer.tasks.size === 1);
+    });
+
+    const response = await Cadenza.inquire(
+      "orders-lookup",
+      {
+        accountId: "acct-2",
+      },
+      {
+        overallTimeoutMs: 500,
+      },
+    );
+
+    expect(response.orders).toEqual([{ id: "order-2" }]);
+    expect(delegatedPayloads).toHaveLength(1);
+    expect(delegatedPayloads[0]?.__transportOrigin).toBe(
+      "http://orders.example:7000",
+    );
+
+    const ordersInstance = (ServiceRegistry.instance as any).instances
+      .get("OrdersService")
+      ?.find((instance: AnyObject) => instance.uuid === "orders-2");
+    expect(ordersInstance?.transports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          uuid: "orders-public-2",
+          role: "public",
+          origin: "http://orders.example:7000",
+        }),
+        expect.objectContaining({
+          uuid: "orders-internal-2",
+          role: "internal",
+          origin: "http://orders-internal:3000",
+        }),
+      ]),
+    );
+  });
+
   it("rejects requireComplete inquiries when no eligible responders exist", async () => {
     await expect(
       Cadenza.inquire(

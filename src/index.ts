@@ -26,6 +26,8 @@ import {
   type RetryPolicy,
   type IdempotencyPolicy,
   type SessionPolicy,
+  type RuntimeValidationPolicy,
+  type RuntimeValidationScope,
   DebounceTask,
   EphemeralTask,
   GraphRoutine,
@@ -49,6 +51,10 @@ import ServiceRegistry, {
   DeputyDescriptor,
 } from "./registry/ServiceRegistry";
 import SignalController from "./signals/SignalController";
+import {
+  RUNTIME_VALIDATION_INTENTS,
+  RUNTIME_VALIDATION_SIGNALS,
+} from "./runtime/RuntimeValidationController";
 import DatabaseController from "@service-database-controller";
 import {
   BootstrapOptions,
@@ -147,6 +153,8 @@ export type {
   TaskFunction,
   DebounceOptions,
   EphemeralTaskOptions,
+  RuntimeValidationPolicy,
+  RuntimeValidationScope,
 };
 export {
   Actor,
@@ -164,4 +172,6 @@ export {
   DebounceTask,
   EphemeralTask,
   GraphRoutine,
+  RUNTIME_VALIDATION_INTENTS,
+  RUNTIME_VALIDATION_SIGNALS,
 };

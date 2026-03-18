@@ -2073,7 +2073,6 @@ export default class DatabaseController {
         } else {
           result = await this.deleteFunction(registration, tableName, operationPayload);
         }
-
         context = {
           ...context,
           ...result,

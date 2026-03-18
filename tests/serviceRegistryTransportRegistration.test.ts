@@ -463,6 +463,83 @@ describe("service registry transport registration", () => {
     });
   });
 
+  it("mirrors remote service_instance insert payload onto root data", async () => {
+    resetRuntimeState();
+
+    const capturedContexts: Array<Record<string, unknown>> = [];
+
+    vi.spyOn(Cadenza, "createCadenzaDBInsertTask").mockImplementation(
+      () =>
+        Cadenza.createMetaTask(
+          "Mock remote service_instance insert",
+          (ctx) => {
+            capturedContexts.push({
+              data: ctx.data,
+              batch: ctx.batch,
+              onConflict: ctx.onConflict,
+              queryData: ctx.queryData,
+            });
+
+            return {
+              ...ctx,
+              uuid:
+                (ctx.data as AnyObject | undefined)?.uuid ??
+                (ctx.queryData as AnyObject | undefined)?.data?.uuid ??
+                "missing-uuid",
+            };
+          },
+          "Captures remote service_instance insert payloads for resolver tests.",
+          {
+            register: false,
+            isHidden: true,
+          },
+        ),
+    );
+
+    Cadenza.bootstrap();
+    Cadenza.setMode("production");
+
+    const registry = ServiceRegistry.instance as any;
+    const result = await registry.insertServiceInstanceTask.taskFunction(
+      {
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "nothing",
+          },
+        },
+        data: {
+          uuid: "frontend-1",
+          process_pid: 123,
+          service_name: "DemoFrontend",
+          is_active: true,
+        },
+      },
+      Cadenza.emit.bind(Cadenza),
+    );
+
+    expect(capturedContexts).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "frontend-1",
+          process_pid: 123,
+          service_name: "DemoFrontend",
+        }),
+        onConflict: undefined,
+        queryData: expect.objectContaining({
+          data: expect.objectContaining({
+            uuid: "frontend-1",
+            process_pid: 123,
+            service_name: "DemoFrontend",
+          }),
+        }),
+      }),
+    ]);
+    expect(result).toMatchObject({
+      uuid: "frontend-1",
+    });
+  });
+
   it("preserves local instance identity when remote service inserts return authority metadata", async () => {
     resetRuntimeState();
 
@@ -768,6 +845,73 @@ describe("service registry transport registration", () => {
         }),
       ]),
     );
+  });
+
+  it("reconciles gathered sync transmitters from self sync payloads and requests one extra sync wave", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const syncTickRequests: Array<Record<string, unknown>> = [];
+
+    registry.serviceName = "CadenzaDB";
+    registry.serviceInstanceId = "cadenza-db-1";
+
+    Cadenza.createMetaTask("Capture gathered sync follow-up tick", (ctx) => {
+      syncTickRequests.push(ctx);
+      return true;
+    }).doOn("meta.cadenza_db.sync_tick");
+
+    Cadenza.run(registry.reconcileGatheredSyncTransmissionsTask, {
+      __signalName: "global.meta.cadenza_db.gathered_sync_data",
+      serviceInstances: [
+        {
+          uuid: "telemetry-1",
+          serviceName: "TelemetryCollectorService",
+          isActive: true,
+          isNonResponsive: false,
+          isBlocked: false,
+          isFrontend: false,
+          isDatabase: false,
+        },
+      ],
+    });
+
+    await waitForCondition(
+      () =>
+        registry.gatheredSyncTransmissionServices?.has(
+          "TelemetryCollectorService",
+        ) === true,
+      1_500,
+    );
+
+    expect(registry.gatheredSyncTransmissionServices).toEqual(
+      new Set(["TelemetryCollectorService"]),
+    );
+    await waitForCondition(() => syncTickRequests.length === 1, 1_500);
+
+    expect(syncTickRequests).toEqual([
+      expect.objectContaining({
+        __syncing: true,
+        __reason: "gathered_sync_transmissions_reconciled",
+      }),
+    ]);
+
+    Cadenza.run(registry.reconcileGatheredSyncTransmissionsTask, {
+      __signalName: "global.meta.cadenza_db.gathered_sync_data",
+      serviceInstances: [
+        {
+          uuid: "telemetry-1",
+          serviceName: "TelemetryCollectorService",
+          isActive: true,
+          isNonResponsive: false,
+          isBlocked: false,
+          isFrontend: false,
+          isDatabase: false,
+        },
+      ],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(syncTickRequests).toHaveLength(1);
   });
 
   it("does not call task.execute directly from resolver wrappers", () => {

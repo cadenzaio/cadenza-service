@@ -879,10 +879,17 @@ export default class SocketController {
           const communicationTypes = this.normalizeCommunicationTypes(
             input.communicationTypes,
           );
+          const transportProtocols = Array.isArray(input.transportProtocols)
+            ? input.transportProtocols.map((entry: unknown) => String(entry))
+            : [];
           const serviceName = String(input.serviceName ?? "");
           const serviceTransportId = String(input.serviceTransportId ?? "");
           const serviceOrigin = String(input.serviceOrigin ?? "");
           const parsedOrigin = parseTransportOrigin(serviceOrigin);
+
+          if (!transportProtocols.includes("socket")) {
+            return false;
+          }
 
           if (!serviceTransportId || !serviceOrigin || !parsedOrigin) {
             Cadenza.log(
@@ -915,7 +922,7 @@ export default class SocketController {
               serviceName,
               serviceTransportId,
               serviceOrigin,
-              transportProtocols: input.transportProtocols,
+              transportProtocols,
               url,
             });
           };
@@ -941,9 +948,7 @@ export default class SocketController {
             serviceName,
             serviceTransportId,
             serviceOrigin,
-            transportProtocols: Array.isArray(input.transportProtocols)
-              ? input.transportProtocols.map((entry: unknown) => String(entry))
-              : [],
+            transportProtocols,
             url,
             destroyed: false,
             updatedAt: Date.now(),
@@ -1230,29 +1235,6 @@ export default class SocketController {
           });
 
           socket.on("signal", (signalCtx, callback?: unknown) => {
-            if (
-              signalCtx?.__signalName === "global.meta.cadenza_db.gathered_sync_data"
-            ) {
-              console.log("[CADENZA_SYNC_DEBUG] received_sync_signal_socket", {
-                localServiceName: Cadenza.serviceRegistry.serviceName,
-                localServiceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-                signalName: signalCtx.__signalName,
-                intentToTaskMaps: Array.isArray(signalCtx.intentToTaskMaps)
-                  ? signalCtx.intentToTaskMaps.length
-                  : 0,
-                signalToTaskMaps: Array.isArray(signalCtx.signalToTaskMaps)
-                  ? signalCtx.signalToTaskMaps.length
-                  : 0,
-                serviceInstances: Array.isArray(signalCtx.serviceInstances)
-                  ? signalCtx.serviceInstances.length
-                  : 0,
-                serviceInstanceTransports: Array.isArray(
-                  signalCtx.serviceInstanceTransports,
-                )
-                  ? signalCtx.serviceInstanceTransports.length
-                  : 0,
-              });
-            }
             if (Cadenza.signalBroker.listObservedSignals().includes(signalCtx.__signalName)) {
               if (isSocketAckCallback(callback)) {
                 callback({
@@ -1589,33 +1571,6 @@ export default class SocketController {
                 return;
               }
 
-              if (
-                signalCtx.__signalName === "global.meta.cadenza_db.gathered_sync_data"
-              ) {
-                console.log("[CADENZA_SYNC_DEBUG] transmit_sync_signal_socket", {
-                  localServiceName: Cadenza.serviceRegistry.serviceName,
-                  localServiceInstanceId:
-                    Cadenza.serviceRegistry.serviceInstanceId,
-                  targetServiceName: serviceName,
-                  targetUrl: url,
-                  signalName: signalCtx.__signalName,
-                  intentToTaskMaps: Array.isArray(signalCtx.intentToTaskMaps)
-                    ? signalCtx.intentToTaskMaps.length
-                    : 0,
-                  signalToTaskMaps: Array.isArray(signalCtx.signalToTaskMaps)
-                    ? signalCtx.signalToTaskMaps.length
-                    : 0,
-                  serviceInstances: Array.isArray(signalCtx.serviceInstances)
-                    ? signalCtx.serviceInstances.length
-                    : 0,
-                  serviceInstanceTransports: Array.isArray(
-                    signalCtx.serviceInstanceTransports,
-                  )
-                    ? signalCtx.serviceInstanceTransports.length
-                    : 0,
-                });
-              }
-
               delete signalCtx.__broadcast;
 
               const response =
@@ -1670,7 +1625,7 @@ export default class SocketController {
                 communicationTypes,
                 serviceTransportId,
                 serviceOrigin,
-                transportProtocols: input.transportProtocols,
+                transportProtocols,
                 handshakeData: {
                   instanceId: Cadenza.serviceRegistry.serviceInstanceId,
                   serviceName: Cadenza.serviceRegistry.serviceName,

@@ -127,6 +127,23 @@ describe("SocketController delegation cleanup", () => {
     ).toBe(true);
   });
 
+  it("does not initialize a socket client for REST-only handshakes", async () => {
+    SocketController.instance;
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceInstanceId: "remote-rest-only",
+      communicationTypes: ["signal"],
+      serviceName: "RestOnlyService",
+      serviceTransportId: "rest-only-transport",
+      serviceOrigin: "http://rest-only.localhost:3001",
+      transportProtocols: ["rest"],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(__getLastSocket()).toBeNull();
+  });
+
   it("does not accumulate pending delegation/timer counters across failed retries", async () => {
     const controller = SocketController.instance as any;
 

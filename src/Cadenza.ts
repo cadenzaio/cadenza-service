@@ -15,6 +15,8 @@ import Cadenza, {
   GraphRunner,
   InquiryBroker,
   Intent,
+  RuntimeValidationPolicy,
+  RuntimeValidationScope,
   SignalBroker,
   Task,
   TaskFunction,
@@ -28,6 +30,7 @@ import SignalTransmissionTask from "./graph/definition/SignalTransmissionTask";
 import RestController from "@service-rest-controller";
 import SocketController from "./network/SocketController";
 import SignalController from "./signals/SignalController";
+import RuntimeValidationController from "./runtime/RuntimeValidationController";
 import { DbOperationPayload, DbOperationType } from "./types/queryData";
 import GraphMetadataController from "./graph/controllers/GraphMetadataController";
 import { registerActorSessionPersistenceTasks } from "./graph/controllers/registerActorSessionPersistence";
@@ -149,6 +152,13 @@ export default class CadenzaService {
     this.isBootstrapped = true;
 
     Cadenza.bootstrap();
+    Cadenza.setRuntimeInquiryDelegate((inquiry, context, options) =>
+      this.inquire(
+        inquiry,
+        context,
+        (options ?? {}) as DistributedInquiryOptions,
+      ),
+    );
     this.signalBroker = Cadenza.signalBroker;
     this.inquiryBroker = Cadenza.inquiryBroker;
     this.runner = Cadenza.runner;
@@ -157,7 +167,7 @@ export default class CadenzaService {
     this.serviceRegistry = ServiceRegistry.instance;
     RestController.instance;
     SocketController.instance;
-    console.log("BOOTSTRAPPED");
+    RuntimeValidationController.instance;
   }
 
   private static ensureTransportControllers(isFrontend: boolean): void {
@@ -359,6 +369,52 @@ export default class CadenzaService {
   public static defineIntent(intent: Intent): Intent {
     this.inquiryBroker?.addIntent(intent);
     return intent;
+  }
+
+  public static getRuntimeValidationPolicy(): RuntimeValidationPolicy {
+    this.bootstrap();
+    return Cadenza.getRuntimeValidationPolicy();
+  }
+
+  public static setRuntimeValidationPolicy(
+    policy: RuntimeValidationPolicy = {},
+  ): RuntimeValidationPolicy {
+    this.bootstrap();
+    return Cadenza.setRuntimeValidationPolicy(policy);
+  }
+
+  public static replaceRuntimeValidationPolicy(
+    policy: RuntimeValidationPolicy = {},
+  ): RuntimeValidationPolicy {
+    this.bootstrap();
+    return Cadenza.replaceRuntimeValidationPolicy(policy);
+  }
+
+  public static clearRuntimeValidationPolicy(): void {
+    this.bootstrap();
+    Cadenza.clearRuntimeValidationPolicy();
+  }
+
+  public static getRuntimeValidationScopes(): RuntimeValidationScope[] {
+    this.bootstrap();
+    return Cadenza.getRuntimeValidationScopes();
+  }
+
+  public static upsertRuntimeValidationScope(
+    scope: RuntimeValidationScope,
+  ): RuntimeValidationScope {
+    this.bootstrap();
+    return Cadenza.upsertRuntimeValidationScope(scope);
+  }
+
+  public static removeRuntimeValidationScope(id: string): void {
+    this.bootstrap();
+    Cadenza.removeRuntimeValidationScope(id);
+  }
+
+  public static clearRuntimeValidationScopes(): void {
+    this.bootstrap();
+    Cadenza.clearRuntimeValidationScopes();
   }
 
   private static getInquiryResponderDescriptor(task: Task): InquiryResponderDescriptor {
@@ -1314,8 +1370,6 @@ export default class CadenzaService {
       });
     });
 
-    console.log("Creating service...");
-
     const initContext = {
       data: {
         name: serviceName,
@@ -1349,18 +1403,13 @@ export default class CadenzaService {
       }).doOn("meta.fetch.handshake_complete");
     } else {
       this.emit("meta.create_service_requested", initContext);
-      this.createMetaTask("Create signal transmission for sync", (ctx) => {
-        if (ctx.serviceName) {
-          console.log("[CADENZA_SYNC_DEBUG] create_sync_signal_transmission", {
-            localServiceName: serviceName,
-            localServiceInstanceId: serviceId,
-            targetServiceName: ctx.serviceName,
-            signalName: "global.meta.cadenza_db.gathered_sync_data",
-          });
-        }
-        this.createSignalTransmissionTask(
-          "global.meta.cadenza_db.gathered_sync_data",
-          ctx.serviceName,
+      this.createMetaTask("Create signal transmission for sync", (ctx, emit) => {
+        emit(
+          "meta.service_registry.gathered_sync_transmission_reconcile_requested",
+          {
+            serviceName: ctx.serviceName,
+            __reason: "handshake",
+          },
         );
       }).doOn("meta.rest.handshake", "meta.socket.handshake");
     }

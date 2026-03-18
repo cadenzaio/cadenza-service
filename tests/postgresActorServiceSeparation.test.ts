@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GraphContext } from "@cadenza.io/core";
 
 import Cadenza from "../src/Cadenza";
 import DatabaseController from "../src/database/DatabaseController";
@@ -258,6 +259,86 @@ describe("PostgresActor and database service separation", () => {
 
     expect((defaultInsertTask as any).serviceName).toBe("MetricsDB");
     expect(defaultInsertTask.name).toBe("Insert telemetry in MetricsDB");
+  });
+
+  it("preserves root insert payload fields when delegating remote database inserts", async () => {
+    const delegatedContexts: Array<Record<string, unknown>> = [];
+
+    const insertTask = Cadenza.createDatabaseInsertTask("telemetry", "MetricsDB", {
+      onConflict: {
+        target: ["uuid"],
+        action: {
+          do: "nothing",
+        },
+      },
+    }) as any;
+
+    const resultPromise = insertTask.execute(
+      new GraphContext({
+        data: {
+          uuid: "telemetry-1",
+        },
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "update",
+            set: {
+              uuid: "excluded",
+            },
+          },
+        },
+      }),
+      (signal: string, ctx: Record<string, unknown>) => {
+        if (signal !== "meta.deputy.delegation_requested") {
+          return;
+        }
+
+        delegatedContexts.push({
+          data: ctx.data,
+          onConflict: ctx.onConflict,
+          queryData: ctx.queryData,
+        });
+
+        queueMicrotask(() => {
+          Cadenza.emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+            ...ctx,
+            __success: true,
+          });
+        });
+      },
+      async () => ({}),
+      () => undefined,
+      {
+        nodeId: "node-1",
+        routineExecId: "routine-1",
+      },
+    );
+
+    const result = await resultPromise;
+
+    expect(delegatedContexts).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "telemetry-1",
+        }),
+        onConflict: expect.objectContaining({
+          target: ["uuid"],
+        }),
+        queryData: expect.objectContaining({
+          data: expect.objectContaining({
+            uuid: "telemetry-1",
+          }),
+          onConflict: expect.objectContaining({
+            target: ["uuid"],
+          }),
+        }),
+      }),
+    ]);
+    expect(result).toMatchObject({
+      data: expect.objectContaining({
+        uuid: "telemetry-1",
+      }),
+    });
   });
 
   it("allows one inquiry intent to fan out across multiple generated table tasks", () => {
