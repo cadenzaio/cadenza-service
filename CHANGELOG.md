@@ -1,3 +1,10 @@
+## [2.18.1](https://github.com/cadenzaio/cadenza-service/compare/v2.18.0...v2.18.1) (2026-03-18)
+
+
+### Bug Fixes
+
+* **validation:** disable meta db task validation by default ([e1089e4](https://github.com/cadenzaio/cadenza-service/commit/e1089e41715abd9113fcb1199dc4096c5f3eafaa))
+
 # [2.18.0](https://github.com/cadenzaio/cadenza-service/compare/v2.17.80...v2.18.0) (2026-03-18)
 
 
