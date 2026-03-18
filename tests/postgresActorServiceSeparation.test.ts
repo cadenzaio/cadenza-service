@@ -183,6 +183,53 @@ describe("PostgresActor and database service separation", () => {
     );
   });
 
+  it("disables generated db task input validation by default for meta actors", () => {
+    const controller = DatabaseController.instance;
+
+    const registration = controller.createPostgresActor(
+      "MetaRegistry",
+      schema,
+      "Meta registry actor",
+      {
+        databaseName: "meta_registry",
+        ownerServiceName: "CadenzaDB",
+        isMeta: true,
+      },
+    );
+
+    expect(() =>
+      (controller as unknown as {
+        generateDatabaseTasks: (value: unknown) => void;
+      }).generateDatabaseTasks(registration),
+    ).not.toThrow();
+
+    expect(Cadenza.get("Insert telemetry")?.validateInputContext).toBe(false);
+    expect(Cadenza.get("Query telemetry")?.validateInputContext).toBe(false);
+  });
+
+  it("keeps generated db task input validation enabled for non-meta actors", () => {
+    const controller = DatabaseController.instance;
+
+    const registration = controller.createPostgresActor(
+      "BusinessMetrics",
+      schema,
+      "Business metrics actor",
+      {
+        databaseName: "business_metrics",
+        ownerServiceName: "MetricsService",
+      },
+    );
+
+    expect(() =>
+      (controller as unknown as {
+        generateDatabaseTasks: (value: unknown) => void;
+      }).generateDatabaseTasks(registration),
+    ).not.toThrow();
+
+    expect(Cadenza.get("Insert telemetry")?.validateInputContext).toBe(true);
+    expect(Cadenza.get("Query telemetry")?.validateInputContext).toBe(true);
+  });
+
   it("does not create a database service when the PostgresActor setup fails", async () => {
     const controller = DatabaseController.instance;
     const registration = {

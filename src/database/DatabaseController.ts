@@ -211,6 +211,12 @@ function normalizeIntentToken(value: string): string {
   return normalized;
 }
 
+function shouldValidateGeneratedDbTaskInput(
+  registration: PostgresActorRegistration,
+): boolean {
+  return registration.options.securityProfile !== "low" && !registration.options.isMeta;
+}
+
 function buildPostgresActorName(name: string): string {
   return `${String(name ?? "").trim()}PostgresActor`;
 }
@@ -1900,7 +1906,7 @@ export default class DatabaseController {
         {
           isMeta: registration.options.isMeta,
           isSubMeta: registration.options.isMeta,
-          validateInputContext: registration.options.securityProfile !== "low",
+          validateInputContext: shouldValidateGeneratedDbTaskInput(registration),
           inputSchema: querySchema,
         },
       ).respondsTo(intentName);
@@ -1954,7 +1960,7 @@ export default class DatabaseController {
       {
         isMeta: registration.options.isMeta,
         isSubMeta: registration.options.isMeta,
-        validateInputContext: registration.options.securityProfile !== "low",
+        validateInputContext: shouldValidateGeneratedDbTaskInput(registration),
         inputSchema: insertSchema,
       },
     ).respondsTo(upsertIntentName);
@@ -2146,7 +2152,7 @@ export default class DatabaseController {
       {
         isMeta: registration.options.isMeta,
         isSubMeta: registration.options.isMeta,
-        validateInputContext: registration.options.securityProfile !== "low",
+        validateInputContext: shouldValidateGeneratedDbTaskInput(registration),
         inputSchema: schema,
       },
     )
