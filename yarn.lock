@@ -16,10 +16,10 @@
   resolved "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.28.5.tgz"
   integrity sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q==
 
-"@cadenza.io/core@^3.24.0":
-  version "3.24.0"
-  resolved "https://registry.yarnpkg.com/@cadenza.io/core/-/core-3.24.0.tgz#bb74e6dd2df308d5b5265c44802aa0d950a8850f"
-  integrity sha512-xQEvyBAQRi8Bi/dzTbfTMZOJo2rNrcUnczPUnTk9G5hZ61rCkjAHupEsD5CS33xJlZqNAf0FPpFep6Aw3G/esA==
+"@cadenza.io/core@^3.25.0":
+  version "3.25.0"
+  resolved "https://registry.yarnpkg.com/@cadenza.io/core/-/core-3.25.0.tgz#13b23db1166be0162642ea0cc11106b0b037b8e2"
+  integrity sha512-4M7OYSpLvdQfgvBz3Ls4RdPYvDVWle7TnIfPwYiW8qQIxCGX+Qr9Qsw8oEpUvWbMRE1ccSJnd+Fbn+nkNZkSSA==
   dependencies:
     "@types/uuid" "^10.0.0"
     uuid "^10.0.0"
