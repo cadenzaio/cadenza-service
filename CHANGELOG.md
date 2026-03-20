@@ -1,3 +1,10 @@
+## [2.18.2](https://github.com/cadenzaio/cadenza-service/compare/v2.18.1...v2.18.2) (2026-03-20)
+
+
+### Bug Fixes
+
+* **sync:** stabilize bootstrap convergence ([f7d6f36](https://github.com/cadenzaio/cadenza-service/commit/f7d6f3639a672ddaa43bacccf859a802dccb4485))
+
 ## [2.18.1](https://github.com/cadenzaio/cadenza-service/compare/v2.18.0...v2.18.1) (2026-03-18)
 
 
