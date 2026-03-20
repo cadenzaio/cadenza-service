@@ -58,6 +58,14 @@ describe("RestController browser registration", () => {
       __serviceName: "DemoFrontend",
       __serviceInstanceId: "demo-frontend-1",
       __isFrontend: true,
+      __declaredTransports: [
+        {
+          uuid: "demo-frontend-public",
+          role: "public",
+          origin: "http://frontend.localhost",
+          protocols: ["rest"],
+        },
+      ],
     });
 
     const registrationContext = await registrationPromise;
@@ -76,6 +84,14 @@ describe("RestController browser registration", () => {
         service_name: "DemoFrontend",
       }),
     );
-    expect(registrationContext.__transportData).toEqual([]);
+    expect(registrationContext.__transportData).toEqual([
+      expect.objectContaining({
+        uuid: "demo-frontend-public",
+        service_instance_id: "demo-frontend-1",
+        role: "public",
+        origin: "http://frontend.localhost",
+        protocols: ["rest"],
+      }),
+    ]);
   });
 });

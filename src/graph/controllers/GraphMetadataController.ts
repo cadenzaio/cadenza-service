@@ -108,6 +108,15 @@ export default class GraphMetadataController {
       .doOn("meta.task.attached_signal")
       .emits("global.meta.graph_metadata.task_attached_signal");
 
+    Cadenza.createMetaTask("Handle task intent association", (ctx) => {
+      return buildDatabaseTriggerContext({
+        ...(ctx.data as Record<string, unknown> | undefined),
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
+    })
+      .doOn("meta.task.intent_associated")
+      .emits("global.meta.graph_metadata.task_intent_associated");
+
     Cadenza.createMetaTask("Handle task unsubscribing signal", (ctx) => {
       return buildDatabaseTriggerContext(
         {

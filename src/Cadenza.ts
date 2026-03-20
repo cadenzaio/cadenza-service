@@ -121,6 +121,52 @@ export default class CadenzaService {
   protected static hydratedInquiryResults: Map<string, AnyObject> = new Map();
   protected static frontendSyncScheduled = false;
 
+  private static replayRegisteredTaskIntentAssociations(): void {
+    for (const task of this.registry.tasks.values()) {
+      if (!task.register || task.isHidden || task.handlesIntents.size === 0) {
+        continue;
+      }
+
+      for (const intentName of task.handlesIntents) {
+        task.emitWithMetadata("meta.task.intent_associated", {
+          data: {
+            intentName,
+            taskName: task.name,
+            taskVersion: task.version,
+          },
+          taskInstance: task,
+          __isSubMeta: task.isSubMeta,
+        });
+      }
+    }
+  }
+
+  private static replayRegisteredTaskSignalObservations(): void {
+    for (const task of this.registry.tasks.values()) {
+      if (!task.register || task.isHidden || task.observedSignals.size === 0) {
+        continue;
+      }
+
+      for (const signalName of task.observedSignals) {
+        task.emitWithMetadata("meta.task.observed_signal", {
+          data: {
+            signalName,
+            taskName: task.name,
+            taskVersion: task.version,
+          },
+          taskInstance: task,
+          signalName,
+          __isSubMeta: task.isSubMeta,
+        });
+      }
+    }
+  }
+
+  private static replayRegisteredTaskGraphMetadata(): void {
+    this.replayRegisteredTaskSignalObservations();
+    this.replayRegisteredTaskIntentAssociations();
+  }
+
   private static buildLegacyLocalCadenzaDBTaskName(
     tableName: string,
     operation: DbOperationType,
@@ -1257,6 +1303,7 @@ export default class CadenzaService {
     const serviceId = options.customServiceId ?? uuid();
     this.serviceRegistry.serviceName = serviceName;
     this.serviceRegistry.serviceInstanceId = serviceId;
+    this.serviceRegistry.connectsToCadenzaDB = !!options.cadenzaDB?.connect;
     this.setHydrationResults(options.hydration);
 
     const explicitFrontendMode = options.isFrontend;
@@ -1292,6 +1339,24 @@ export default class CadenzaService {
     this.serviceRegistry.useSocket = !!options.useSocket;
     this.serviceRegistry.retryCount = options.retryCount ?? 3;
     this.ensureTransportControllers(isFrontend);
+
+    if (!isFrontend) {
+      this.createMetaTask(
+        "Initialize graph metadata controller after initial sync",
+        () => {
+          GraphMetadataController.instance;
+          return true;
+        },
+        "Delays direct graph-metadata registration until the bootstrap sync has completed.",
+        {
+          register: false,
+          isHidden: true,
+        },
+      ).doOn("meta.service_registry.initial_sync_complete");
+      GraphSyncController.instance.isCadenzaDBReady =
+        serviceName === "CadenzaDB";
+      GraphSyncController.instance.init();
+    }
 
     const resolvedBootstrapEndpoint = options.cadenzaDB?.connect
       ? resolveBootstrapEndpoint({
@@ -1414,15 +1479,14 @@ export default class CadenzaService {
       }).doOn("meta.rest.handshake", "meta.socket.handshake");
     }
 
-    this.createMetaTask("Handle service setup completion", () => {
+    this.createMetaTask("Handle service setup completion", (ctx, emit) => {
+      if (options.cadenzaDB?.connect) {
+        this.serviceRegistry.bootstrapFullSync(emit, ctx, "service_setup_completed");
+      }
+
       if (isFrontend) {
         registerActorSessionPersistenceTasks();
         this.ensureFrontendSyncLoop();
-      } else {
-        GraphMetadataController.instance;
-        GraphSyncController.instance.isCadenzaDBReady =
-          serviceName === "CadenzaDB" || !!options.cadenzaDB?.connect;
-        GraphSyncController.instance.init();
       }
 
       this.log("Service created.");
@@ -1454,7 +1518,19 @@ export default class CadenzaService {
             is_blocked: false,
             health: {},
           },
-          __transportData: [],
+          __transportData: declaredTransports.map((transport) => ({
+            uuid: transport.uuid,
+            service_instance_id: serviceId,
+            role: transport.role,
+            origin: transport.origin,
+            protocols: transport.protocols ?? ["rest", "socket"],
+            ...(transport.securityProfile
+              ? { security_profile: transport.securityProfile }
+              : {}),
+            ...(transport.authStrategy
+              ? { auth_strategy: transport.authStrategy }
+              : {}),
+          })),
           __serviceName: serviceName,
           __serviceInstanceId: serviceId,
           __useSocket: options.useSocket,

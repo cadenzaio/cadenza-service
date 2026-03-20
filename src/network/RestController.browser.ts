@@ -38,6 +38,8 @@ interface ParsedFetchResponse {
   data: any;
 }
 
+const FETCH_HANDSHAKE_TIMEOUT_MS = 5000;
+
 export default class RestController {
   private static _instance: RestController;
   public static get instance(): RestController {
@@ -341,7 +343,21 @@ export default class RestController {
             is_blocked: false,
             health: {},
           },
-          __transportData: [],
+          __transportData: Array.isArray(ctx.__declaredTransports)
+            ? ctx.__declaredTransports.map((transport: any) => ({
+                uuid: transport.uuid,
+                service_instance_id: ctx.__serviceInstanceId,
+                role: transport.role,
+                origin: transport.origin,
+                protocols: transport.protocols ?? ["rest", "socket"],
+                ...(transport.securityProfile
+                  ? { security_profile: transport.securityProfile }
+                  : {}),
+                ...(transport.authStrategy
+                  ? { auth_strategy: transport.authStrategy }
+                  : {}),
+              }))
+            : [],
         });
 
         return true;
@@ -358,6 +374,7 @@ export default class RestController {
         if (!serviceName || !URL || !fetchId) {
           return false;
         }
+        const clientTaskSuffix = `${URL} (${fetchId})`;
         const fetchDiagnostics = this.ensureFetchClientDiagnostics(
           fetchId,
           serviceName,
@@ -366,12 +383,12 @@ export default class RestController {
         fetchDiagnostics.destroyed = false;
         fetchDiagnostics.updatedAt = Date.now();
 
-        if (Cadenza.get(`Send Handshake to ${URL}`)) {
+        if (Cadenza.get(`Send Handshake to ${clientTaskSuffix}`)) {
           return;
         }
 
         const handshakeTask = Cadenza.createMetaTask(
-          `Send Handshake to ${URL}`,
+          `Send Handshake to ${clientTaskSuffix}`,
           async (handshakeCtx, emit) => {
             try {
               const response = await this.fetchDataWithTimeout(
@@ -383,7 +400,7 @@ export default class RestController {
                   method: "POST",
                   body: JSON.stringify(handshakeCtx.handshakeData),
                 },
-                1000,
+                FETCH_HANDSHAKE_TIMEOUT_MS,
               );
               if (response.__status !== "success") {
                 const error =
@@ -435,7 +452,7 @@ export default class RestController {
           );
 
         const delegateTask = Cadenza.createMetaTask(
-          `Delegate flow to REST server ${URL}`,
+          `Delegate flow to REST server ${clientTaskSuffix}`,
           async (delegateCtx, emit) => {
             if (delegateCtx.__remoteRoutineName === undefined) {
               return;
@@ -488,7 +505,7 @@ export default class RestController {
           .attachSignal("meta.fetch.delegated");
 
         const transmitTask = Cadenza.createMetaTask(
-          `Transmit signal to server ${URL}`,
+          `Transmit signal to server ${clientTaskSuffix}`,
           async (signalCtx, emit) => {
             if (signalCtx.__signalName === undefined) {
               return;
@@ -534,7 +551,7 @@ export default class RestController {
           .attachSignal("meta.fetch.transmitted");
 
         const statusTask = Cadenza.createMetaTask(
-          `Request status from ${URL}`,
+          `Request status from ${clientTaskSuffix}`,
           async (statusCtx) => {
             fetchDiagnostics.statusChecks++;
             fetchDiagnostics.updatedAt = Date.now();
@@ -564,7 +581,7 @@ export default class RestController {
           .emits("meta.fetch.status_checked")
           .emitsOnFail("meta.fetch.status_check_failed");
 
-        Cadenza.createEphemeralMetaTask("Destroy fetch client", () => {
+        Cadenza.createEphemeralMetaTask(`Destroy fetch client ${fetchId}`, () => {
           fetchDiagnostics.connected = false;
           fetchDiagnostics.destroyed = true;
           fetchDiagnostics.updatedAt = Date.now();

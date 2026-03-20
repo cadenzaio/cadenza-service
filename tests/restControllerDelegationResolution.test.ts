@@ -20,6 +20,20 @@ function resetRuntimeState() {
   (RestController as any)._instance = undefined;
 }
 
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs = 1_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for condition");
+}
+
 describe("RestController delegation resolution", () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
@@ -296,5 +310,56 @@ describe("RestController delegation resolution", () => {
         joinedContexts: [{ __metadata: { __syncing: true } }],
       }),
     ).toBe(120_000);
+  });
+
+  it("creates a fresh fetch delegation client when the same URL is re-registered with a new transport id", async () => {
+    const sharedRegistration = {
+      serviceName: "OrdersService",
+      serviceInstanceId: "orders-1",
+      serviceOrigin: "http://orders-service:8080",
+      communicationTypes: ["rest"],
+      transportProtocols: ["rest"],
+    };
+
+    Cadenza.emit("meta.service_registry.dependee_registered", {
+      ...sharedRegistration,
+      serviceTransportId: "orders-public-1",
+    });
+
+    Cadenza.emit("meta.service_registry.dependee_registered", {
+      ...sharedRegistration,
+      serviceTransportId: "orders-public-2",
+    });
+
+    await waitForCondition(
+      () =>
+        Boolean(
+          Cadenza.get(
+            "Delegate flow to REST server http://orders-service:8080 (orders-public-2)",
+          ),
+        ),
+      1_000,
+    );
+
+    expect(
+      Cadenza.get(
+        "Send Handshake to http://orders-service:8080 (orders-public-1)",
+      ),
+    ).toBeDefined();
+    expect(
+      Cadenza.get(
+        "Send Handshake to http://orders-service:8080 (orders-public-2)",
+      ),
+    ).toBeDefined();
+    expect(
+      Cadenza.get(
+        "Delegate flow to REST server http://orders-service:8080 (orders-public-1)",
+      ),
+    ).toBeDefined();
+    expect(
+      Cadenza.get(
+        "Delegate flow to REST server http://orders-service:8080 (orders-public-2)",
+      ),
+    );
   });
 });

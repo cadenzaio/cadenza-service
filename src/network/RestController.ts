@@ -49,6 +49,8 @@ interface ParsedFetchResponse {
   data: any;
 }
 
+const FETCH_HANDSHAKE_TIMEOUT_MS = 5000;
+
 /**
  * RestController class is responsible for managing RESTful interactions, including defining
  * server configurations and handling client requests. It serves as a singleton, accessible via
@@ -430,7 +432,21 @@ export default class RestController {
                   is_blocked: false,
                   health: {},
                 },
-                __transportData: [],
+                __transportData: Array.isArray(ctx.__declaredTransports)
+                  ? ctx.__declaredTransports.map((transport: any) => ({
+                      uuid: transport.uuid,
+                      service_instance_id: ctx.__serviceInstanceId,
+                      role: transport.role,
+                      origin: transport.origin,
+                      protocols: transport.protocols ?? ["rest", "socket"],
+                      ...(transport.securityProfile
+                        ? { security_profile: transport.securityProfile }
+                        : {}),
+                      ...(transport.authStrategy
+                        ? { auth_strategy: transport.authStrategy }
+                        : {}),
+                    }))
+                  : [],
               });
               return;
             }
@@ -898,6 +914,23 @@ export default class RestController {
                     };
                     ctx.__transportData = transportData;
 
+                    if (
+                      process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+                      process.env.CADENZA_INSTANCE_DEBUG === "true"
+                    ) {
+                      console.log("[CADENZA_INSTANCE_DEBUG] configure_network_emit", {
+                        serviceName: ctx.__serviceName,
+                        serviceInstanceId: ctx.__serviceInstanceId,
+                        isDatabase: ctx.__isDatabase === true,
+                        transportCount: transportData.length,
+                        transports: transportData.map((transport) => ({
+                          role: transport.role,
+                          origin: transport.origin,
+                          protocols: transport.protocols,
+                        })),
+                      });
+                    }
+
                     delete ctx.__app;
 
                     Cadenza.emit(
@@ -973,6 +1006,7 @@ export default class RestController {
         if (!serviceName || !URL || !fetchId) {
           return false;
         }
+        const clientTaskSuffix = `${URL} (${fetchId})`;
         const fetchDiagnostics = this.ensureFetchClientDiagnostics(
           fetchId,
           serviceName,
@@ -981,13 +1015,13 @@ export default class RestController {
         fetchDiagnostics.destroyed = false;
         fetchDiagnostics.updatedAt = Date.now();
 
-        if (Cadenza.get(`Send Handshake to ${URL}`)) {
-          console.error("Fetch client already exists", URL);
+        if (Cadenza.get(`Send Handshake to ${clientTaskSuffix}`)) {
+          console.error("Fetch client already exists", { URL, fetchId });
           return;
         }
 
         const handshakeTask = Cadenza.createMetaTask(
-          `Send Handshake to ${URL}`,
+          `Send Handshake to ${clientTaskSuffix}`,
           async (ctx, emit) => {
             try {
               const response = await this.fetchDataWithTimeout(
@@ -999,7 +1033,7 @@ export default class RestController {
                   method: "POST",
                   body: JSON.stringify(ctx.handshakeData),
                 },
-                1000,
+                FETCH_HANDSHAKE_TIMEOUT_MS,
               );
               if (response.__status !== "success") {
                 const error =
@@ -1068,7 +1102,7 @@ export default class RestController {
           );
 
         const delegateTask = Cadenza.createMetaTask(
-          `Delegate flow to REST server ${URL}`,
+          `Delegate flow to REST server ${clientTaskSuffix}`,
           async (ctx, emit) => {
             if (ctx.__remoteRoutineName === undefined) {
               return;
@@ -1131,7 +1165,7 @@ export default class RestController {
           .attachSignal("meta.fetch.delegated");
 
         const transmitTask = Cadenza.createMetaTask(
-          `Transmit signal to server ${URL}`,
+          `Transmit signal to server ${clientTaskSuffix}`,
           async (ctx, emit) => {
             if (ctx.__signalName === undefined) {
               return;
@@ -1195,7 +1229,7 @@ export default class RestController {
           .attachSignal("meta.fetch.transmitted");
 
         const statusTask = Cadenza.createMetaTask(
-          `Request status from ${URL}`,
+          `Request status from ${clientTaskSuffix}`,
           async (ctx) => {
             fetchDiagnostics.statusChecks++;
             fetchDiagnostics.updatedAt = Date.now();
@@ -1240,7 +1274,7 @@ export default class RestController {
           .emits("meta.fetch.status_checked")
           .emitsOnFail("meta.fetch.status_check_failed");
 
-        Cadenza.createEphemeralMetaTask("Destroy fetch client", () => {
+        Cadenza.createEphemeralMetaTask(`Destroy fetch client ${fetchId}`, () => {
           fetchDiagnostics.connected = false;
           fetchDiagnostics.destroyed = true;
           fetchDiagnostics.updatedAt = Date.now();

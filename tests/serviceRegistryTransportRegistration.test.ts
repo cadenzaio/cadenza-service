@@ -250,8 +250,13 @@ describe("service registry transport registration", () => {
         uuid: "orders-instance-1",
         service_name: "OrdersService",
       }),
+      onConflict: expect.objectContaining({
+        target: ["uuid"],
+      }),
     });
-    expect(insertPayloads[0]).not.toHaveProperty("onConflict");
+    expect(insertPayloads[0].onConflict).not.toMatchObject({
+      target: ["name"],
+    });
   });
 
   it("registers rest-only transports when socket serving is disabled", async () => {
@@ -525,12 +530,17 @@ describe("service registry transport registration", () => {
           process_pid: 123,
           service_name: "DemoFrontend",
         }),
-        onConflict: undefined,
+        onConflict: expect.objectContaining({
+          target: ["uuid"],
+        }),
         queryData: expect.objectContaining({
           data: expect.objectContaining({
             uuid: "frontend-1",
             process_pid: 123,
             service_name: "DemoFrontend",
+          }),
+          onConflict: expect.objectContaining({
+            target: ["uuid"],
           }),
         }),
       }),
@@ -759,6 +769,76 @@ describe("service registry transport registration", () => {
     expect(
       registry.instances.get("IotDbService")?.[0]?.clientCreatedTransportIds,
     ).toContain("iot-db-internal");
+  });
+
+  it("backfills dependee clients when deputy registration happens after an authoritative transport update", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const dependeeRegistrations: Array<Record<string, unknown>> = [];
+
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-collector-1";
+
+    Cadenza.createMetaTask(
+      "Capture dependee registration after deputy registration",
+      (ctx) => {
+        dependeeRegistrations.push(ctx.data ?? ctx);
+        return true;
+      },
+    ).doOn("meta.service_registry.dependee_registered");
+
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "cadenza-db-1",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "cadenza-db-internal-authority",
+            serviceInstanceId: "cadenza-db-1",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+          },
+        ],
+        clientCreatedTransportIds: ["cadenza-db-internal-bootstrap"],
+      },
+    ]);
+
+    Cadenza.emit("meta.deputy.created", {
+      serviceName: "CadenzaDB",
+      remoteRoutineName: "Insert intent_to_task_map",
+      localTaskName: "Insert intent_to_task_map in CadenzaDB",
+      communicationType: "rest",
+    });
+
+    await waitForCondition(() => dependeeRegistrations.length === 1, 1_500);
+
+    expect(dependeeRegistrations[0]).toMatchObject({
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-1",
+      serviceTransportId: "cadenza-db-internal-authority",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+    expect(
+      registry.instances.get("CadenzaDB")?.[0]?.clientCreatedTransportIds,
+    ).toEqual(
+      expect.arrayContaining([
+        "cadenza-db-internal-bootstrap",
+        "cadenza-db-internal-authority",
+      ]),
+    );
   });
 
   it("merges top-level sync transports into split service instances before dependee backfill", async () => {

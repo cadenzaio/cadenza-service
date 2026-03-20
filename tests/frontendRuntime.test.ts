@@ -148,6 +148,23 @@ describe("frontend runtime mode", () => {
     expect(signalEvents).toEqual([]);
   });
 
+  it("does not mark a connected non-authority service as authority-ready", async () => {
+    Cadenza.createCadenzaService("WorkerService", "Worker app", {
+      isFrontend: false,
+      useSocket: false,
+      cadenzaDB: {
+        connect: true,
+        address: "cadenza-db-service",
+        port: 8080,
+      },
+      customServiceId: "worker-service-1",
+    });
+
+    await waitForCondition(() => ServiceRegistry.instance.serviceName === "WorkerService");
+
+    expect(GraphSyncController.instance.isCadenzaDBReady).toBe(false);
+  });
+
   it("routes distributed inquiries in frontend mode through remote intent deputies", async () => {
     Cadenza.createCadenzaService("BrowserApp", "Frontend app", {
       isFrontend: true,

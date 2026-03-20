@@ -51,6 +51,21 @@ const META_RUNTIME_STATUS_HEARTBEAT_TICK_SIGNAL =
   "meta.service_registry.runtime_status.heartbeat_tick";
 const META_RUNTIME_STATUS_MONITOR_TICK_SIGNAL =
   "meta.service_registry.runtime_status.monitor_tick";
+const EARLY_FULL_SYNC_DELAYS_MS = [
+  100,
+  1500,
+  5000,
+  12000,
+  25000,
+  45000,
+  70000,
+] as const;
+const BOOTSTRAP_FULL_SYNC_RESPONDER_TASKS = [
+  "Query service_instance",
+  "Query service_instance_transport",
+  "Query signal_to_task_map",
+  "Query intent_to_task_map",
+] as const;
 const INTERNAL_RUNTIME_STATUS_TASK_NAMES = new Set([
   "Track local routine start",
   "Track local routine end",
@@ -320,6 +335,47 @@ function resolveServiceRegistryInsertTask(
         ctx,
       );
 
+      if (
+        tableName === "service_instance" &&
+        (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+          process.env.CADENZA_INSTANCE_DEBUG === "true")
+      ) {
+        console.log("[CADENZA_INSTANCE_DEBUG] finalize_service_registry_insert", {
+          tableName,
+          hasNormalized: !!normalized,
+          normalizedKeys:
+            normalized && typeof normalized === "object"
+              ? Object.keys(normalized as AnyObject)
+              : [],
+          uuid:
+            normalized && typeof normalized === "object"
+              ? (normalized as AnyObject).uuid ??
+                (normalized as AnyObject).data?.uuid ??
+                (normalized as AnyObject).queryData?.data?.uuid ??
+                null
+              : null,
+          serviceName:
+            normalized && typeof normalized === "object"
+              ? (normalized as AnyObject).__serviceName ??
+                (normalized as AnyObject).data?.service_name ??
+                (normalized as AnyObject).queryData?.data?.service_name ??
+                null
+              : null,
+          errored:
+            normalized && typeof normalized === "object"
+              ? (normalized as AnyObject).errored === true
+              : false,
+          error:
+            normalized && typeof normalized === "object"
+              ? (normalized as AnyObject).__error ?? null
+              : null,
+          inquiryMeta:
+            normalized && typeof normalized === "object"
+              ? (normalized as AnyObject).__inquiryMeta ?? null
+              : null,
+        });
+      }
+
       if (!normalized || typeof normalized !== "object") {
         return normalized as any;
       }
@@ -375,6 +431,30 @@ function resolveServiceRegistryInsertTask(
         const executionSignal = localInsertTask
           ? localExecutionRequestedSignal
           : remoteExecutionRequestedSignal;
+
+        if (
+          tableName === "service_instance" &&
+          (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+            process.env.CADENZA_INSTANCE_DEBUG === "true")
+        ) {
+          console.log("[CADENZA_INSTANCE_DEBUG] resolve_service_registry_insert", {
+            tableName,
+            executionSignal,
+            hasLocalInsertTask: !!localInsertTask,
+            serviceName: ctx.__serviceName ?? ctx.data?.service_name ?? null,
+            serviceInstanceId: ctx.__serviceInstanceId ?? ctx.data?.uuid ?? null,
+            hasData: !!ctx.data,
+            dataKeys:
+              ctx.data && typeof ctx.data === "object"
+                ? Object.keys(ctx.data)
+                : [],
+            registrationKeys:
+              ctx.__registrationData &&
+              typeof ctx.__registrationData === "object"
+                ? Object.keys(ctx.__registrationData)
+                : [],
+          });
+        }
 
         if (
           localInsertTask &&
@@ -607,6 +687,7 @@ export default class ServiceRegistry {
   useSocket: boolean = false;
   retryCount: number = 3;
   isFrontend: boolean = false;
+  connectsToCadenzaDB: boolean = false;
 
   handleInstanceUpdateTask: Task;
   handleTransportUpdateTask: Task;
@@ -668,23 +749,52 @@ export default class ServiceRegistry {
     isGlobal: boolean;
     deleted?: boolean;
   }> {
-    return this.readArrayPayload(ctx, [
+    const arrayPayload = this.readArrayPayload(ctx, [
       "signalToTaskMaps",
       "signal_to_task_maps",
       "signalToTaskMap",
       "signal_to_task_map",
-    ])
-      .map((map) => ({
+    ]);
+
+    if (arrayPayload.length > 0) {
+      return arrayPayload
+        .map((map) => ({
+          signalName: String(
+            map.signalName ?? map.signal_name ?? "",
+          ).trim(),
+          serviceName: String(
+            map.serviceName ?? map.service_name ?? "",
+          ).trim(),
+          isGlobal: Boolean(map.isGlobal ?? map.is_global ?? false),
+          deleted: Boolean(map.deleted),
+        }))
+        .filter((map) => map.signalName && map.serviceName);
+    }
+
+    const single =
+      (ctx as any).signalToTaskMap ??
+      (ctx as any).signal_to_task_map ??
+      (ctx as any).data ??
+      (((ctx as any).signalName ?? (ctx as any).signal_name)
+        ? ctx
+        : undefined);
+
+    if (!single || typeof single !== "object") {
+      return [];
+    }
+
+    return [
+      {
         signalName: String(
-          map.signalName ?? map.signal_name ?? "",
+          (single as any).signalName ?? (single as any).signal_name ?? "",
         ).trim(),
         serviceName: String(
-          map.serviceName ?? map.service_name ?? "",
+          (single as any).serviceName ?? (single as any).service_name ?? "",
         ).trim(),
-        isGlobal: Boolean(map.isGlobal ?? map.is_global ?? false),
-        deleted: Boolean(map.deleted),
-      }))
-      .filter((map) => map.signalName && map.serviceName);
+        isGlobal: Boolean((single as any).isGlobal ?? (single as any).is_global ?? false),
+        deleted: Boolean((single as any).deleted),
+      },
+    ].filter((map) => map.signalName && map.serviceName);
   }
 
   private normalizeIntentMaps(ctx: AnyObject): Array<{
@@ -861,10 +971,7 @@ export default class ServiceRegistry {
       this.gatheredSyncTransmissionServices.delete(serviceName);
     }
 
-    if (
-      createdRecipients.length > 0 &&
-      ctx.__signalName === CADENZA_DB_GATHERED_SYNC_SIGNAL
-    ) {
+    if (createdRecipients.length > 0) {
       emit("meta.cadenza_db.sync_tick", {
         __syncing: true,
         __reason: "gathered_sync_transmissions_reconciled",
@@ -970,6 +1077,72 @@ export default class ServiceRegistry {
     }
   }
 
+  private registerBootstrapFullSyncDeputies(
+    emit: (signal: string, ctx: AnyObject) => void,
+    ctx?: AnyObject,
+  ): boolean {
+    if (!this.serviceName || this.serviceName === "CadenzaDB") {
+      return false;
+    }
+
+    Cadenza.inquiryBroker.addIntent({
+      name: META_SERVICE_REGISTRY_FULL_SYNC_INTENT,
+    });
+
+    for (const taskName of BOOTSTRAP_FULL_SYNC_RESPONDER_TASKS) {
+      this.registerRemoteIntentDeputy({
+        intentName: META_SERVICE_REGISTRY_FULL_SYNC_INTENT,
+        serviceName: "CadenzaDB",
+        taskName,
+        taskVersion: 1,
+      });
+    }
+
+    this.ensureDependeeClientsForService("CadenzaDB", emit, ctx);
+    return true;
+  }
+
+  private hasBootstrapFullSyncDeputies(): boolean {
+    if (!this.serviceName || this.serviceName === "CadenzaDB") {
+      return true;
+    }
+
+    return BOOTSTRAP_FULL_SYNC_RESPONDER_TASKS.every((taskName) =>
+      this.remoteIntentDeputiesByKey.has(
+        this.buildRemoteIntentDeputyKey({
+          intentName: META_SERVICE_REGISTRY_FULL_SYNC_INTENT,
+          serviceName: "CadenzaDB",
+          taskName,
+          taskVersion: 1,
+        }),
+      ),
+    );
+  }
+
+  private scheduleEarlyFullSyncRequests(reason: string): boolean {
+    for (const delayMs of EARLY_FULL_SYNC_DELAYS_MS) {
+      Cadenza.schedule(
+        "meta.sync_requested",
+        {
+          __syncing: false,
+          __reason: reason,
+        },
+        delayMs,
+      );
+    }
+
+    return true;
+  }
+
+  public bootstrapFullSync(
+    emit: (signal: string, ctx: AnyObject) => void,
+    ctx?: AnyObject,
+    reason = "local_instance_inserted",
+  ): boolean {
+    this.registerBootstrapFullSyncDeputies(emit, ctx);
+    return this.scheduleEarlyFullSyncRequests(reason);
+  }
+
   public getInquiryResponderDescriptor(task: Task): InquiryResponderDescriptor {
     const remote = this.remoteIntentDeputiesByTask.get(task);
 
@@ -1004,6 +1177,10 @@ export default class ServiceRegistry {
     }
 
     return this.getInstance(this.serviceName, this.serviceInstanceId);
+  }
+
+  hasLocalInstanceRegistered() {
+    return Boolean(this.getLocalInstance());
   }
 
   private summarizeTransportForDebug(
@@ -2739,7 +2916,10 @@ export default class ServiceRegistry {
       "Handles registration of remote signals",
     )
       .emits("meta.service_registry.registered_global_signals")
-      .doOn("global.meta.cadenza_db.gathered_sync_data");
+      .doOn(
+        "global.meta.cadenza_db.gathered_sync_data",
+        "global.meta.graph_metadata.task_signal_observed",
+      );
 
     this.reconcileGatheredSyncTransmissionsTask = Cadenza.createMetaTask(
       "Reconcile gathered sync signal transmissions",
@@ -2922,7 +3102,7 @@ export default class ServiceRegistry {
 
     this.handleSocketStatusUpdateTask = Cadenza.createMetaTask(
       "Handle Socket Status Update",
-      (ctx) => {
+      (ctx, emit) => {
         const report = this.normalizeRuntimeStatusReport(ctx);
         if (!report) {
           return false;
@@ -2980,6 +3160,20 @@ export default class ServiceRegistry {
           return false;
         }
 
+        const updatedInstance = this.getInstance(
+          report.serviceName,
+          report.serviceInstanceId,
+        );
+        if (
+          updatedInstance &&
+          !updatedInstance.isFrontend &&
+          (this.deputies.has(report.serviceName) ||
+            this.remoteIntents.has(report.serviceName) ||
+            this.remoteSignals.has(report.serviceName))
+        ) {
+          this.ensureDependeeClientForInstance(updatedInstance, emit, ctx);
+        }
+
         this.registerDependee(report.serviceName, report.serviceInstanceId);
         this.lastHeartbeatAtByInstance.set(report.serviceInstanceId, Date.now());
         this.missedHeartbeatsByInstance.set(report.serviceInstanceId, 0);
@@ -2991,9 +3185,36 @@ export default class ServiceRegistry {
       "Handles status update from socket broadcast",
     ).doOn("meta.socket_client.status_received");
 
+    Cadenza.createMetaTask(
+      "Request full sync after CadenzaDB fetch handshake",
+      (ctx) => {
+        const serviceName =
+          typeof ctx.serviceName === "string"
+            ? ctx.serviceName.trim()
+            : typeof ctx.__serviceName === "string"
+              ? ctx.__serviceName.trim()
+              : "";
+
+        if (serviceName !== "CadenzaDB") {
+          return false;
+        }
+
+        return this.scheduleEarlyFullSyncRequests("cadenza_db_fetch_handshake");
+      },
+      "Schedules a few early service-registry full-sync retries after the authority fetch transport comes up.",
+    ).doOn("meta.fetch.handshake_complete");
+
     this.fullSyncTask = Cadenza.createMetaTask(
       "Full sync",
       async (ctx) => {
+        if (
+          this.connectsToCadenzaDB &&
+          this.serviceName !== "CadenzaDB" &&
+          !this.hasBootstrapFullSyncDeputies()
+        ) {
+          return false;
+        }
+
         const inquiryResult = await Cadenza.inquire(
           META_SERVICE_REGISTRY_FULL_SYNC_INTENT,
           {
@@ -3061,7 +3282,7 @@ export default class ServiceRegistry {
 
     this.handleDeputyRegistrationTask = Cadenza.createMetaTask(
       "Handle Deputy Registration",
-      (ctx) => {
+      (ctx, emit) => {
         const { serviceName } = ctx;
 
         if (!this.deputies.has(serviceName)) this.deputies.set(serviceName, []);
@@ -3073,6 +3294,8 @@ export default class ServiceRegistry {
           localTaskName: ctx.localTaskName,
           communicationType: ctx.communicationType,
         });
+
+        this.ensureDependeeClientsForService(serviceName, emit, ctx);
       },
     ).doOn("meta.deputy.created");
 
@@ -3751,9 +3974,29 @@ export default class ServiceRegistry {
       .emits("meta.service_registry.service_inserted")
       .emitsOnFail("meta.service_registry.service_insertion_failed");
 
-    this.insertServiceInstanceTask = resolveServiceRegistryInsertTask(
+    const insertServiceInstanceResolverTask = resolveServiceRegistryInsertTask(
       "service_instance",
-      {},
+      {
+        onConflict: {
+          target: ["uuid"],
+          action: {
+            do: "update",
+            set: {
+              process_pid: "excluded",
+              is_primary: "excluded",
+              service_name: "excluded",
+              is_database: "excluded",
+              is_frontend: "excluded",
+              is_blocked: "excluded",
+              is_non_responsive: "excluded",
+              is_active: "excluded",
+              last_active: "excluded",
+              health: "excluded",
+              deleted: "false",
+            },
+          },
+        },
+      },
       {
         inputSchema: {
           type: "object",
@@ -3809,7 +4052,9 @@ export default class ServiceRegistry {
         retryCount: 5,
         retryDelay: 1000,
       },
-    ).then(
+    ).emitsOnFail("meta.service_registry.instance_insertion_failed");
+
+    this.insertServiceInstanceTask = insertServiceInstanceResolverTask.then(
         Cadenza.createMetaTask(
           "Setup service",
           (ctx) => {
@@ -3830,6 +4075,35 @@ export default class ServiceRegistry {
               !normalizedLocalInstance?.uuid ||
               !normalizedLocalInstance.serviceName
             ) {
+              if (
+                process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+                process.env.CADENZA_INSTANCE_DEBUG === "true"
+              ) {
+                console.log("[CADENZA_INSTANCE_DEBUG] setup_service_rejected_instance", {
+                  hasServiceInstance: !!serviceInstance,
+                  hasData: !!data,
+                  hasQueryDataData: !!queryData?.data,
+                  serviceInstanceKeys:
+                    serviceInstance && typeof serviceInstance === "object"
+                      ? Object.keys(serviceInstance)
+                      : [],
+                  dataKeys:
+                    data && typeof data === "object" ? Object.keys(data) : [],
+                  queryDataDataKeys:
+                    queryData?.data && typeof queryData.data === "object"
+                      ? Object.keys(queryData.data)
+                      : [],
+                  normalizedLocalInstance,
+                  transportCount: Array.isArray(ctx.__transportData)
+                    ? ctx.__transportData.length
+                    : Array.isArray(ctx.transportData)
+                      ? ctx.transportData.length
+                      : 0,
+                  errored: ctx.errored === true,
+                  error: ctx.__error ?? null,
+                  inquiryMeta: ctx.__inquiryMeta ?? null,
+                });
+              }
               return false;
             }
 
@@ -3896,8 +4170,57 @@ export default class ServiceRegistry {
       );
 
     Cadenza.createMetaTask(
+      "Retry local service instance registration after failed insert",
+      (ctx) => {
+        const serviceName = String(
+          ctx.__serviceName ?? ctx.data?.service_name ?? this.serviceName ?? "",
+        ).trim();
+
+        if (!serviceName || serviceName !== this.serviceName) {
+          return false;
+        }
+
+        Cadenza.schedule(
+          "meta.service_registry.instance_registration_requested",
+          { ...ctx },
+          5000,
+        );
+
+        return true;
+      },
+      "Retries local service instance registration only after the previous insert attempt has failed.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    ).doOn("meta.service_registry.instance_insertion_failed");
+
+    Cadenza.createMetaTask(
       "Prepare service instance registration",
       (ctx) => {
+        if (
+          process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+          process.env.CADENZA_INSTANCE_DEBUG === "true"
+        ) {
+          console.log("[CADENZA_INSTANCE_DEBUG] prepare_service_instance_registration", {
+            serviceName:
+              ctx.data?.service_name ?? ctx.__serviceName ?? this.serviceName ?? null,
+            serviceInstanceId:
+              ctx.data?.uuid ?? ctx.__serviceInstanceId ?? this.serviceInstanceId ?? null,
+            hasData: !!ctx.data,
+            dataKeys:
+              ctx.data && typeof ctx.data === "object"
+                ? Object.keys(ctx.data)
+                : [],
+            transportCount: Array.isArray(ctx.__transportData)
+              ? ctx.__transportData.length
+              : Array.isArray(ctx.transportData)
+                ? ctx.transportData.length
+                : 0,
+            skipRemoteExecution: ctx.__skipRemoteExecution === true,
+          });
+        }
+
         const serviceName = String(
           ctx.data?.service_name ?? ctx.__serviceName ?? this.serviceName ?? "",
         ).trim();

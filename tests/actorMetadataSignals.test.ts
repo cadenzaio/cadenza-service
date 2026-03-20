@@ -210,4 +210,36 @@ describe("Actor metadata signal contracts", () => {
       "Relationship successor",
     );
   });
+
+  it("emits task-intent association metadata with intent_to_task_map field contract", async () => {
+    let payload: AnyObject | undefined;
+
+    Cadenza.createMetaTask("Capture task intent association signal", (ctx) => {
+      payload = ctx;
+      return true;
+    }).doOn("global.meta.graph_metadata.task_intent_associated");
+
+    Cadenza.emit("meta.task.intent_associated", {
+      data: {
+        intentName: "orders-contract-sync",
+        taskName: "Task intent association contract",
+        taskVersion: 1,
+      },
+    });
+
+    await waitForCondition(() => Boolean(payload?.data));
+
+    const data = payload?.data as AnyObject;
+    const queryData = payload?.queryData as AnyObject;
+    expect(readField(data, "intent_name")).toBe("orders-contract-sync");
+    expect(readField(data, "task_name")).toBe("Task intent association contract");
+    expect(readField(data, "task_version")).toBe(1);
+    expect(readField(data, "service_name")).toBe("ActorMetadataService");
+    expect(readField(queryData?.data as AnyObject, "intent_name")).toBe(
+      "orders-contract-sync",
+    );
+    expect(readField(queryData?.data as AnyObject, "task_name")).toBe(
+      "Task intent association contract",
+    );
+  });
 });

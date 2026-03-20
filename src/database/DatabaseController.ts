@@ -95,6 +95,9 @@ const AUTHORITY_SYNC_DEBUG_TASK_NAMES = new Set<string>([
   "Prepare for signal sync",
 ]);
 const AUTHORITY_SYNC_DEBUG_ROUTINE_NAMES = new Set<string>(["Sync services"]);
+const INTENT_MAP_DEBUG_ENABLED =
+  process.env.CADENZA_INTENT_MAP_DEBUG === "1" ||
+  process.env.CADENZA_INTENT_MAP_DEBUG === "true";
 
 function logAuthoritySyncDebug(
   event: string,
@@ -162,6 +165,17 @@ function shouldDebugAuthoritySyncPayload(
   }
 
   return false;
+}
+
+function logIntentMapSetupDebug(
+  event: string,
+  payload: Record<string, unknown>,
+): void {
+  if (!INTENT_MAP_DEBUG_ENABLED) {
+    return;
+  }
+
+  console.log("[CADENZA_INTENT_MAP_DEBUG]", event, payload);
 }
 
 function buildAuthoritySyncDebugSummary(
@@ -871,6 +885,21 @@ export default class DatabaseController {
             if (!registration.tasksGenerated) {
               this.generateDatabaseTasks(registration);
               registration.tasksGenerated = true;
+              const localTasks = Array.from(Cadenza.registry.tasks.values());
+              logIntentMapSetupDebug("generated_database_tasks", {
+                actorName: registration.actorName,
+                ownerServiceName: registration.ownerServiceName,
+                totalLocalTasks: localTasks.length,
+                generatedTaskNames: localTasks
+                  .map((task) => task.name)
+                  .filter((taskName) =>
+                    /(Query|Insert|Update|Delete|COUNT|EXISTS|ONE|AGGREGATE|UPSERT) /.test(
+                      taskName,
+                    ),
+                  )
+                  .slice(0, 24),
+              });
+              Cadenza.schedule("meta.sync_requested", { __syncing: true }, 250);
             }
 
             const nowIso = new Date().toISOString();
