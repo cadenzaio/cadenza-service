@@ -76,6 +76,10 @@ export type NetworkMode =
   | "auto"
   | "dev";
 
+const POSTGRES_SETUP_DEBUG_ENABLED =
+  process.env.CADENZA_POSTGRES_SETUP_DEBUG === "1" ||
+  process.env.CADENZA_POSTGRES_SETUP_DEBUG === "true";
+
 export type ServerOptions = {
   customServiceId?: string; // TODO
   loadBalance?: boolean;
@@ -103,6 +107,11 @@ export interface DatabaseOptions {
   ownerServiceName?: string | null;
 }
 
+const DEFAULT_DEPUTY_TASK_CONCURRENCY = 50;
+const DEFAULT_DEPUTY_TASK_TIMEOUT_MS = 120_000;
+const DEFAULT_DATABASE_PROXY_TASK_CONCURRENCY = 50;
+const DEFAULT_DATABASE_PROXY_TASK_TIMEOUT_MS = 120_000;
+
 /**
  * The CadenzaService class serves as a central service layer providing various utility methods for managing tasks, signals, logging, and service interactions.
  * This class handles the initialization (`bootstrap`) and validation of services, as well as the creation of tasks associated with services and signals.
@@ -116,6 +125,7 @@ export default class CadenzaService {
   public static serviceRegistry: ServiceRegistry;
   protected static isBootstrapped = false;
   protected static serviceCreated = false;
+  protected static bootstrapSyncCompleted = false;
   protected static defaultDatabaseServiceName: string | null = null;
   protected static warnedInvalidMetaIntentResponderKeys: Set<string> = new Set();
   protected static hydratedInquiryResults: Map<string, AnyObject> = new Map();
@@ -370,6 +380,14 @@ export default class CadenzaService {
     Cadenza.setMode(mode);
   }
 
+  public static hasCompletedBootstrapSync(): boolean {
+    return !this.serviceCreated || this.bootstrapSyncCompleted;
+  }
+
+  public static markBootstrapSyncCompleted(): void {
+    this.bootstrapSyncCompleted = true;
+  }
+
   /**
    * Emits a signal with the specified data using the associated broker.
    *
@@ -498,6 +516,84 @@ export default class CadenzaService {
     };
   }
 
+  private static shouldPersistInquiry(
+    inquiry: string,
+    _context: AnyObject,
+  ): boolean {
+    return !isMetaIntentName(inquiry);
+  }
+
+  private static splitInquiryPersistenceContext(
+    context: AnyObject,
+  ): { context: AnyObject; metadata: AnyObject } {
+    const businessContext: AnyObject = {};
+    const metadata: AnyObject =
+      context?.__metadata && typeof context.__metadata === "object"
+        ? { ...context.__metadata }
+        : {};
+
+    for (const [key, value] of Object.entries(context ?? {})) {
+      if (key === "__metadata") {
+        continue;
+      }
+
+      if (key.startsWith("__")) {
+        metadata[key] = value;
+        continue;
+      }
+
+      businessContext[key] = value;
+    }
+
+    return {
+      context: businessContext,
+      metadata,
+    };
+  }
+
+  private static buildInquiryPersistenceStartData(
+    inquiryId: string,
+    inquiry: string,
+    context: AnyObject,
+    startedAt: number,
+  ): AnyObject {
+    const normalizedTaskVersion = Number(context?.__inquirySourceTaskVersion);
+    const { context: inquiryContext, metadata } =
+      this.splitInquiryPersistenceContext(context);
+
+    return {
+      uuid: inquiryId,
+      name: inquiry,
+      taskName:
+        typeof context?.__inquirySourceTaskName === "string"
+          ? context.__inquirySourceTaskName
+          : null,
+      taskVersion:
+        Number.isFinite(normalizedTaskVersion) && normalizedTaskVersion > 0
+          ? normalizedTaskVersion
+          : null,
+      taskExecutionId:
+        typeof context?.__inquirySourceTaskExecutionId === "string"
+          ? context.__inquirySourceTaskExecutionId
+          : null,
+      serviceName: this.serviceRegistry.serviceName,
+      serviceInstanceId: this.serviceRegistry.serviceInstanceId,
+      executionTraceId:
+        typeof (context?.__metadata?.__executionTraceId ??
+          context?.__executionTraceId) === "string"
+          ? context.__metadata?.__executionTraceId ?? context.__executionTraceId
+          : null,
+      routineExecutionId:
+        typeof context?.__inquirySourceRoutineExecutionId === "string"
+          ? context.__inquirySourceRoutineExecutionId
+          : null,
+      context: inquiryContext,
+      metadata,
+      isMeta: false,
+      sentAt: formatTimestamp(startedAt),
+    };
+  }
+
   public static async inquire(
     inquiry: string,
     context: AnyObject,
@@ -520,6 +616,24 @@ export default class CadenzaService {
         }))
       : [];
     const isMetaInquiry = isMetaIntentName(inquiry);
+    const startedAt = Date.now();
+    const persistInquiry = this.shouldPersistInquiry(inquiry, context);
+    const logicalInquiryId = persistInquiry ? uuid() : null;
+    const inquiryStartData = logicalInquiryId
+      ? this.buildInquiryPersistenceStartData(
+          logicalInquiryId,
+          inquiry,
+          context,
+          startedAt,
+        )
+      : null;
+
+    if (inquiryStartData) {
+      this.emit("meta.inquiry_broker.inquiry_started", {
+        data: inquiryStartData,
+      });
+    }
+
     const responders = allResponders.filter(({ task, descriptor }) => {
       const shouldExecute = shouldExecuteInquiryResponder(inquiry, task.isMeta);
 
@@ -559,6 +673,22 @@ export default class CadenzaService {
         responders: [],
       } as DistributedInquiryMeta;
 
+      if (logicalInquiryId) {
+        this.emit("meta.inquiry_broker.inquiry_completed", {
+          data: {
+            fulfilledAt: formatTimestamp(startedAt),
+            duration: 0,
+            metadata: {
+              ...(inquiryStartData?.metadata ?? {}),
+              inquiryMeta,
+            },
+          },
+          filter: {
+            uuid: logicalInquiryId,
+          },
+        });
+      }
+
       if (options.requireComplete) {
         throw {
           __inquiryMeta: inquiryMeta,
@@ -577,8 +707,6 @@ export default class CadenzaService {
     const overallTimeoutMs = options.overallTimeoutMs ?? options.timeout ?? 0;
     const requireComplete = options.requireComplete ?? false;
     const perResponderTimeoutMs = options.perResponderTimeoutMs;
-
-    const startedAt = Date.now();
     const statuses: InquiryResponderStatus[] = [];
     const statusByTask = new Map<Task, InquiryResponderStatus>();
     for (const responder of responders) {
@@ -635,10 +763,27 @@ export default class CadenzaService {
           statuses,
           allResponders.length,
         );
+        const finishedAt = Date.now();
         const responseContext = {
           ...mergedContext,
           __inquiryMeta: inquiryMeta,
         };
+
+        if (logicalInquiryId) {
+          this.emit("meta.inquiry_broker.inquiry_completed", {
+            data: {
+              fulfilledAt: formatTimestamp(finishedAt),
+              duration: finishedAt - startedAt,
+              metadata: {
+                ...(inquiryStartData?.metadata ?? {}),
+                inquiryMeta,
+              },
+            },
+            filter: {
+              uuid: logicalInquiryId,
+            },
+          });
+        }
 
         if (
           requireComplete &&
@@ -664,7 +809,7 @@ export default class CadenzaService {
 
       for (const responder of responders) {
         const { task, descriptor } = responder;
-        const inquiryId = uuid();
+        const responderInquiryId = uuid();
         startTimeByTask.set(task, Date.now());
 
         const resolverTask = this.createEphemeralMetaTask(
@@ -700,13 +845,14 @@ export default class CadenzaService {
           },
           "Resolves distributed inquiry responder result",
           { register: false },
-        ).doOn(`meta.node.graph_completed:${inquiryId}`);
+        ).doOn(`meta.node.graph_completed:${responderInquiryId}`);
 
         resolverTasks.push(resolverTask);
 
         const executionContext: AnyObject = {
           ...context,
-          __routineExecId: inquiryId,
+          ...(logicalInquiryId ? { __inquiryId: logicalInquiryId } : {}),
+          __routineExecId: responderInquiryId,
           __isInquiry: true,
         };
 
@@ -914,8 +1060,8 @@ export default class CadenzaService {
     const name = `${routineName} (Proxy)`;
 
     options = {
-      concurrency: 100,
-      timeout: 0,
+      concurrency: DEFAULT_DEPUTY_TASK_CONCURRENCY,
+      timeout: DEFAULT_DEPUTY_TASK_TIMEOUT_MS,
       register: true,
       isUnique: false,
       isMeta: false,
@@ -1047,8 +1193,8 @@ export default class CadenzaService {
     }
 
     options = {
-      concurrency: 100,
-      timeout: 0,
+      concurrency: DEFAULT_DATABASE_PROXY_TASK_CONCURRENCY,
+      timeout: DEFAULT_DATABASE_PROXY_TASK_TIMEOUT_MS,
       register: true,
       isUnique: false,
       isMeta: true,
@@ -1121,8 +1267,8 @@ export default class CadenzaService {
     const taskName = `${operation.charAt(0).toUpperCase() + operation.slice(1)} ${tableName}`;
 
     options = {
-      concurrency: 100,
-      timeout: 0,
+      concurrency: DEFAULT_DATABASE_PROXY_TASK_CONCURRENCY,
+      timeout: DEFAULT_DATABASE_PROXY_TASK_TIMEOUT_MS,
       register: true,
       isUnique: false,
       isMeta: false,
@@ -1301,6 +1447,7 @@ export default class CadenzaService {
     this.validateServiceName(serviceName);
 
     const serviceId = options.customServiceId ?? uuid();
+    this.bootstrapSyncCompleted = false;
     this.serviceRegistry.serviceName = serviceName;
     this.serviceRegistry.serviceInstanceId = serviceId;
     this.serviceRegistry.connectsToCadenzaDB = !!options.cadenzaDB?.connect;
@@ -1344,6 +1491,7 @@ export default class CadenzaService {
       this.createMetaTask(
         "Initialize graph metadata controller after initial sync",
         () => {
+          this.markBootstrapSyncCompleted();
           GraphMetadataController.instance;
           return true;
         },
@@ -1439,14 +1587,14 @@ export default class CadenzaService {
       data: {
         name: serviceName,
         description: description,
-        displayName: options.displayName ?? "",
-        isMeta: options.isMeta,
+        display_name: options.displayName ?? "",
+        is_meta: options.isMeta,
       },
       __registrationData: {
         name: serviceName,
         description: description,
-        displayName: options.displayName ?? "",
-        isMeta: options.isMeta,
+        display_name: options.displayName ?? "",
+        is_meta: options.isMeta,
       },
       __serviceName: serviceName,
       __serviceInstanceId: serviceId,
@@ -1681,10 +1829,35 @@ export default class CadenzaService {
     );
 
     const createServiceTaskName = `Create database service ${name} after ${registration.actorName} setup`;
+    const traceSetupDoneTaskName = `Trace database service ${name} setup done`;
+    if (POSTGRES_SETUP_DEBUG_ENABLED && !this.get(traceSetupDoneTaskName)) {
+      this.createMetaTask(
+        traceSetupDoneTaskName,
+        (ctx) => {
+          console.log("[CADENZA_POSTGRES_SETUP_DEBUG] setup_done_signal_observed", {
+            serviceName: name,
+            actorName: registration.actorName,
+            payloadKeys: Object.keys(ctx ?? {}),
+          });
+          return true;
+        },
+        "Debug trace for PostgresActor setup-done signal delivery.",
+        { isHidden: true, register: false },
+      ).doOn(registration.setupDoneSignal);
+    }
     if (!this.get(createServiceTaskName)) {
       this.createMetaTask(
         createServiceTaskName,
         () => {
+          if (POSTGRES_SETUP_DEBUG_ENABLED) {
+            console.log(
+              "[CADENZA_POSTGRES_SETUP_DEBUG] create_database_service_task_fired",
+              {
+                serviceName: name,
+                actorName: registration.actorName,
+              },
+            );
+          }
           this.createCadenzaService(name, description, serviceOptions);
           return true;
         },
@@ -2333,6 +2506,7 @@ export default class CadenzaService {
     this.serviceRegistry?.reset();
     this.isBootstrapped = false;
     this.serviceCreated = false;
+    this.bootstrapSyncCompleted = false;
     this.defaultDatabaseServiceName = null;
     this.warnedInvalidMetaIntentResponderKeys = new Set();
     this.hydratedInquiryResults = new Map();

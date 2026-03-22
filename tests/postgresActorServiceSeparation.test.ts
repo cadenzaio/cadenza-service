@@ -183,6 +183,40 @@ describe("PostgresActor and database service separation", () => {
     );
   });
 
+  it("emits snake_case service registration payloads during service bootstrap", async () => {
+    const emitSpy = vi.spyOn(Cadenza, "emit");
+    Cadenza.createCadenzaService("MetricsDB", "Metrics DB service", {
+      cadenzaDB: {
+        connect: false,
+      },
+    });
+
+    await waitForCondition(() =>
+      emitSpy.mock.calls.some(
+        ([signalName]) => signalName === "meta.create_service_requested",
+      ),
+    );
+
+    const createServiceCall = emitSpy.mock.calls.find(
+      ([signalName]) => signalName === "meta.create_service_requested",
+    );
+
+    expect(createServiceCall?.[1]).toMatchObject({
+      data: {
+        name: "MetricsDB",
+        description: "Metrics DB service",
+        display_name: "",
+        is_meta: false,
+      },
+      __registrationData: {
+        name: "MetricsDB",
+        description: "Metrics DB service",
+        display_name: "",
+        is_meta: false,
+      },
+    });
+  });
+
   it("disables generated db task input validation by default for meta actors", () => {
     const controller = DatabaseController.instance;
 
@@ -386,6 +420,51 @@ describe("PostgresActor and database service separation", () => {
         uuid: "telemetry-1",
       }),
     });
+  });
+
+  it("uses hardened deputy and database proxy defaults", () => {
+    const deputyTask = Cadenza.createDeputyTask("Query MetricsDB", "MetricsDB");
+    const databaseTask = Cadenza.createDatabaseInsertTask("telemetry", "MetricsDB");
+
+    expect(deputyTask.concurrency).toBe(50);
+    expect(deputyTask.timeout).toBe(120_000);
+    expect(databaseTask.concurrency).toBe(50);
+    expect(databaseTask.timeout).toBe(120_000);
+  });
+
+  it("caps generated insert and upsert tasks with shared write-task throttles", () => {
+    const controller = DatabaseController.instance;
+    const registration = controller.createPostgresActor(
+      "MetricsDB",
+      schema,
+      "Metrics database actor",
+      {
+        databaseName: "metrics_db",
+        ownerServiceName: "MetricsService",
+      },
+    );
+
+    expect(() =>
+      (controller as unknown as {
+        generateDatabaseTasks: (value: unknown) => void;
+      }).generateDatabaseTasks(registration),
+    ).not.toThrow();
+
+    const insertTask = Cadenza.get("Insert telemetry");
+    const upsertTask = Cadenza.get("UPSERT telemetry");
+
+    expect(insertTask).toBeDefined();
+    expect(upsertTask).toBeDefined();
+    expect(insertTask?.concurrency).toBe(200);
+    expect(insertTask?.timeout).toBe(120_000);
+    expect(insertTask?.getTag({} as any)).toBe(
+      "insert:metrics-db-postgres-actor:telemetry",
+    );
+    expect(upsertTask?.concurrency).toBe(200);
+    expect(upsertTask?.timeout).toBe(120_000);
+    expect(upsertTask?.getTag({} as any)).toBe(
+      "upsert:metrics-db-postgres-actor:telemetry",
+    );
   });
 
   it("allows one inquiry intent to fan out across multiple generated table tasks", () => {

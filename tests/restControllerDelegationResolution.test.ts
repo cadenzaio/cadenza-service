@@ -163,6 +163,55 @@ describe("RestController delegation resolution", () => {
     expect(failureContext.__deputyExecId.length).toBeGreaterThan(0);
   }, 10_000);
 
+  it("hoists inquiry lineage from delegation metadata onto direct REST requests", async () => {
+    const networkConfiguredPromise = new Promise<AnyObject>((resolve) => {
+      Cadenza.createEphemeralMetaTask(
+        "Observe rest network configured for inquiry lineage hoist",
+        (ctx) => {
+          resolve(ctx);
+          return true;
+        },
+        "Observes REST network configuration during delegation inquiry lineage tests",
+        { register: false },
+      ).doOn("global.meta.rest.network_configured");
+    });
+
+    Cadenza.emit("meta.service_registry.service_inserted", {
+      __isDatabase: false,
+      __networkMode: "dev",
+      __port: 0,
+      __securityProfile: "low",
+      __serviceInstanceId: "rest-delegation-inquiry-lineage-test",
+      __serviceName: "RestDelegationInquiryLineageTest",
+    });
+
+    const networkContext = await networkConfiguredPromise;
+    const port = networkContext.httpServer?.address()?.port;
+
+    const response = await fetch(`http://localhost:${port}/delegation`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        __remoteRoutineName: "Insert serviceInstance",
+        __metadata: {
+          __inquiryId: "inquiry-1",
+          __executionTraceId: "trace-1",
+          __inquirySourceTaskExecutionId: "task-exec-1",
+        },
+      }),
+    });
+
+    const failureContext = await response.json();
+
+    expect(response.ok).toBe(true);
+    expect(failureContext.__status).toBe("error");
+    expect(failureContext.__inquiryId).toBe("inquiry-1");
+    expect(failureContext.__executionTraceId).toBe("trace-1");
+    expect(failureContext.__inquirySourceTaskExecutionId).toBe("task-exec-1");
+  }, 10_000);
+
   it("accepts delegation payloads larger than the default body-parser limit", async () => {
     const networkConfiguredPromise = new Promise<AnyObject>((resolve) => {
       Cadenza.createEphemeralMetaTask(

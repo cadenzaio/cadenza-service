@@ -1462,6 +1462,10 @@ export default class SocketController {
               );
             },
             "Handshakes with socket server",
+            {
+              register: false,
+              isHidden: true,
+            },
           ).doOn(`meta.socket_client.connected:${fetchId}`);
 
           runtimeHandle.delegateTask = Cadenza.createMetaTask(
@@ -1557,6 +1561,10 @@ export default class SocketController {
               }
             },
             `Delegate flow to service ${serviceName} with address ${url}`,
+            {
+              register: false,
+              isHidden: true,
+            },
           )
             .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
             .attachSignal(
@@ -1593,6 +1601,10 @@ export default class SocketController {
               return response;
             },
             `Transmits signal to service ${serviceName} with address ${url}`,
+            {
+              register: false,
+              isHidden: true,
+            },
           )
             .doOn(`meta.service_registry.selected_instance_for_socket:${fetchId}`)
             .attachSignal("meta.socket_client.transmitted");
@@ -1645,6 +1657,10 @@ export default class SocketController {
               });
             },
             "Shuts down the socket client",
+            {
+              register: false,
+              isHidden: true,
+            },
           )
             .doOn(
               `meta.socket_shutdown_requested:${fetchId}`,

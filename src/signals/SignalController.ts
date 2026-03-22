@@ -4,10 +4,19 @@ import { decomposeSignalName } from "../utils/tools";
 function buildSignalDatabaseTriggerContext(
   data: Record<string, unknown>,
 ): Record<string, unknown> {
+  const onConflict = {
+    target: ["name"],
+    action: {
+      do: "nothing" as const,
+    },
+  };
+
   return {
     data: { ...data },
+    onConflict,
     queryData: {
       data: { ...data },
+      onConflict,
     },
   };
 }
@@ -54,7 +63,23 @@ export default class SignalController {
     Cadenza.createMetaTask(
       "Handle Signal Registration",
       (ctx, emit) => {
+        if (!Cadenza.hasCompletedBootstrapSync()) {
+          return false;
+        }
+
         const { signalName } = ctx;
+        const signalObserver = (Cadenza.signalBroker as any).signalObservers?.get(
+          signalName,
+        );
+
+        if (signalObserver?.registered || signalObserver?.registrationRequested) {
+          return false;
+        }
+
+        if (signalObserver) {
+          signalObserver.registrationRequested = true;
+        }
+
         const { isMeta, isGlobal, domain, action } =
           decomposeSignalName(signalName);
 
@@ -62,10 +87,10 @@ export default class SignalController {
           "global.meta.signal_controller.signal_added",
           buildSignalDatabaseTriggerContext({
             name: signalName,
-            isGlobal,
+            is_global: isGlobal,
             domain,
             action,
-            isMeta,
+            is_meta: isMeta,
           }),
         );
 
@@ -78,12 +103,46 @@ export default class SignalController {
 
     Cadenza.createMetaTask(
       "Add data to signal emission",
-      (ctx) => {
+      (ctx, emit) => {
         const signalEmission = ctx.__signalEmission;
         delete ctx.__signalEmission;
 
         if (!signalEmission) {
           return false;
+        }
+
+        if (
+          typeof signalEmission.signalName === "string" &&
+          signalEmission.signalName.trim().length > 0 &&
+          !(Cadenza.signalBroker as any).signalObservers?.has(signalEmission.signalName)
+        ) {
+          Cadenza.signalBroker.addSignal(signalEmission.signalName);
+        } else {
+          const signalObserver = (Cadenza.signalBroker as any).signalObservers?.get(
+            signalEmission.signalName,
+          );
+
+          if (
+            signalObserver &&
+            signalObserver.registered !== true &&
+            signalObserver.registrationRequested !== true &&
+            Cadenza.hasCompletedBootstrapSync()
+          ) {
+            signalObserver.registrationRequested = true;
+            const { isMeta, isGlobal, domain, action } = decomposeSignalName(
+              signalEmission.signalName,
+            );
+            emit(
+              "global.meta.signal_controller.signal_added",
+              buildSignalDatabaseTriggerContext({
+                name: signalEmission.signalName,
+                is_global: isGlobal,
+                domain,
+                action,
+                is_meta: isMeta,
+              }),
+            );
+          }
         }
 
         return {

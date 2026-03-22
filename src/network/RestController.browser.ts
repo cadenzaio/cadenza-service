@@ -442,7 +442,13 @@ export default class RestController {
             return handshakeCtx;
           },
           "Sends handshake request",
-          { retryCount: 5, retryDelay: 1000, retryDelayFactor: 1.5 },
+          {
+            retryCount: 5,
+            retryDelay: 1000,
+            retryDelayFactor: 1.5,
+            register: false,
+            isHidden: true,
+          },
         )
           .doOn(`meta.fetch.handshake_requested:${fetchId}`)
           .emits("meta.fetch.handshake_complete")
@@ -496,6 +502,10 @@ export default class RestController {
             return resultContext;
           },
           "Sends delegation request",
+          {
+            register: false,
+            isHidden: true,
+          },
         )
           .doOn(
             `meta.service_registry.selected_instance_for_fetch:${fetchId}`,
@@ -545,6 +555,10 @@ export default class RestController {
             return response;
           },
           "Sends signal request",
+          {
+            register: false,
+            isHidden: true,
+          },
         )
           .doOn(`meta.service_registry.selected_instance_for_fetch:${fetchId}`)
           .emitsOnFail("meta.fetch.signal_transmission_failed")
@@ -576,20 +590,32 @@ export default class RestController {
             }
           },
           "Requests status",
+          {
+            register: false,
+            isHidden: true,
+          },
         )
           .doOn("meta.fetch.status_check_requested")
           .emits("meta.fetch.status_checked")
           .emitsOnFail("meta.fetch.status_check_failed");
 
-        Cadenza.createEphemeralMetaTask(`Destroy fetch client ${fetchId}`, () => {
-          fetchDiagnostics.connected = false;
-          fetchDiagnostics.destroyed = true;
-          fetchDiagnostics.updatedAt = Date.now();
-          handshakeTask.destroy();
-          delegateTask.destroy();
-          transmitTask.destroy();
-          statusTask.destroy();
-        })
+        Cadenza.createEphemeralMetaTask(
+          `Destroy fetch client ${fetchId}`,
+          () => {
+            fetchDiagnostics.connected = false;
+            fetchDiagnostics.destroyed = true;
+            fetchDiagnostics.updatedAt = Date.now();
+            handshakeTask.destroy();
+            delegateTask.destroy();
+            transmitTask.destroy();
+            statusTask.destroy();
+          },
+          "",
+          {
+            register: false,
+            isHidden: true,
+          },
+        )
           .doOn(
             `meta.fetch.destroy_requested:${fetchId}`,
             `meta.socket_client.disconnected:${fetchId}`,

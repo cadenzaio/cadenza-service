@@ -78,6 +78,16 @@ const INTERNAL_RUNTIME_STATUS_TASK_NAMES = new Set([
   "Collect distributed readiness",
   "Get status",
 ]);
+const SERVICE_REGISTRY_TRACE_SERVICE = (
+  process.env.CADENZA_SERVICE_REGISTRY_TRACE_SERVICE ?? ""
+).trim();
+
+function shouldTraceServiceRegistry(serviceName: string | null | undefined): boolean {
+  return (
+    SERVICE_REGISTRY_TRACE_SERVICE.length > 0 &&
+    serviceName === SERVICE_REGISTRY_TRACE_SERVICE
+  );
+}
 
 function buildServiceRegistryInsertQueryData(
   ctx: AnyObject,
@@ -230,6 +240,80 @@ function normalizeServiceRegistryInsertResult(
   return result;
 }
 
+function resolveServiceInstanceRegistrationPayload(
+  ctx: AnyObject,
+  fallbackServiceName?: string | null,
+  fallbackServiceInstanceId?: string | null,
+): AnyObject | null {
+  const candidateSources: unknown[] = [
+    ctx.__registrationData,
+    ctx.queryData?.data,
+    ctx.__resolverQueryData?.data,
+    ctx.__resolverOriginalContext?.__registrationData,
+    ctx.__resolverOriginalContext?.queryData?.data,
+    ctx.data,
+    ctx.__resolverOriginalContext?.data,
+  ];
+
+  let resolvedData: AnyObject | null = null;
+
+  for (const candidate of candidateSources) {
+    if (
+      candidate &&
+      typeof candidate === "object" &&
+      !Array.isArray(candidate)
+    ) {
+      resolvedData = {
+        ...(candidate as AnyObject),
+      };
+      break;
+    }
+  }
+
+  if (!resolvedData) {
+    return null;
+  }
+
+  const resolvedUuid = String(
+    resolvedData.uuid ??
+      ctx.__serviceInstanceId ??
+      ctx.__resolverOriginalContext?.__serviceInstanceId ??
+      fallbackServiceInstanceId ??
+      "",
+  ).trim();
+  const resolvedServiceName = String(
+    resolvedData.service_name ??
+      ctx.__serviceName ??
+      ctx.__resolverOriginalContext?.__serviceName ??
+      fallbackServiceName ??
+      "",
+  ).trim();
+  const resolvedProcessPid =
+    typeof resolvedData.process_pid === "number"
+      ? resolvedData.process_pid
+      : typeof ctx.__resolverOriginalContext?.data?.process_pid === "number"
+        ? ctx.__resolverOriginalContext.data.process_pid
+        : typeof ctx.__resolverOriginalContext?.__registrationData?.process_pid ===
+              "number"
+          ? ctx.__resolverOriginalContext.__registrationData.process_pid
+          : typeof ctx.queryData?.data?.process_pid === "number"
+            ? ctx.queryData.data.process_pid
+            : typeof ctx.__registrationData?.process_pid === "number"
+              ? ctx.__registrationData.process_pid
+              : null;
+
+  if (!resolvedUuid || !resolvedServiceName || resolvedProcessPid === null) {
+    return null;
+  }
+
+  return {
+    ...resolvedData,
+    uuid: resolvedUuid,
+    service_name: resolvedServiceName,
+    process_pid: resolvedProcessPid,
+  };
+}
+
 function summarizeTransportDescriptors(
   transports: Array<
     Pick<
@@ -297,13 +381,33 @@ function resolveServiceRegistryInsertTask(
           delegationContext.__blockRemoteExecution ??
           false;
 
-        return {
+        const nextContext = {
           ...delegationContext,
           __resolverOriginalContext: {
             ...ctx,
           },
           __resolverQueryData: nextQueryData,
         };
+
+        if (
+          (tableName === "service_instance" || tableName === "service") &&
+          (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+            process.env.CADENZA_INSTANCE_DEBUG === "true")
+        ) {
+          console.log("[CADENZA_INSTANCE_DEBUG] prepare_service_registry_insert_execution", {
+            tableName,
+            signalName,
+            resolverRequestId: ctx.__resolverRequestId ?? null,
+            hasData: nextQueryData.data !== undefined,
+            queryDataKeys: Object.keys(nextQueryData),
+            dataKeys:
+              nextQueryData.data && typeof nextQueryData.data === "object"
+                ? Object.keys(nextQueryData.data as AnyObject)
+                : [],
+          });
+        }
+
+        return nextContext;
       },
       `Prepares ${tableName} service-registry insert payloads for runner execution.`,
       {
@@ -336,7 +440,7 @@ function resolveServiceRegistryInsertTask(
       );
 
       if (
-        tableName === "service_instance" &&
+        (tableName === "service_instance" || tableName === "service") &&
         (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
           process.env.CADENZA_INSTANCE_DEBUG === "true")
       ) {
@@ -407,6 +511,24 @@ function resolveServiceRegistryInsertTask(
         Cadenza.createEphemeralMetaTask(
           `Resolve service registry insert execution for ${tableName} (${resolverRequestId})`,
           (resultCtx) => {
+            if (
+              (tableName === "service_instance" || tableName === "service") &&
+              (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+                process.env.CADENZA_INSTANCE_DEBUG === "true")
+            ) {
+              console.log("[CADENZA_INSTANCE_DEBUG] resolve_service_registry_insert_signal", {
+                tableName,
+                resolverRequestId,
+                incomingResolverRequestId: resultCtx.__resolverRequestId ?? null,
+                errored: resultCtx.errored === true,
+                error: resultCtx.__error ?? null,
+                keys:
+                  resultCtx && typeof resultCtx === "object"
+                    ? Object.keys(resultCtx)
+                    : [],
+              });
+            }
+
             if (resultCtx.__resolverRequestId !== resolverRequestId) {
               return false;
             }
@@ -433,7 +555,7 @@ function resolveServiceRegistryInsertTask(
           : remoteExecutionRequestedSignal;
 
         if (
-          tableName === "service_instance" &&
+          (tableName === "service_instance" || tableName === "service") &&
           (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
             process.env.CADENZA_INSTANCE_DEBUG === "true")
         ) {
@@ -1036,6 +1158,16 @@ export default class ServiceRegistry {
 
     this.remoteIntentDeputiesByKey.set(key, descriptor);
     this.remoteIntentDeputiesByTask.set(deputyTask, descriptor);
+
+    if (shouldTraceServiceRegistry(this.serviceName)) {
+      console.log("[CADENZA_SERVICE_REGISTRY_TRACE] register_remote_intent_deputy", {
+        localServiceName: this.serviceName,
+        intentName: map.intentName,
+        remoteServiceName: map.serviceName,
+        remoteTaskName: map.taskName,
+        remoteTaskVersion: map.taskVersion,
+      });
+    }
   }
 
   private unregisterRemoteIntentDeputy(map: {
@@ -1424,6 +1556,7 @@ export default class ServiceRegistry {
     if (
       !instance ||
       instance.uuid === this.serviceInstanceId ||
+      instance.serviceName === this.serviceName ||
       instance.isFrontend ||
       !instance.isActive ||
       instance.isNonResponsive ||
@@ -1469,6 +1602,10 @@ export default class ServiceRegistry {
     emit: (signal: string, ctx: AnyObject) => void,
     ctx?: AnyObject,
   ): void {
+    if (!serviceName || serviceName === this.serviceName) {
+      return;
+    }
+
     for (const instance of this.instances.get(serviceName) ?? []) {
       this.ensureDependeeClientForInstance(instance, emit, ctx);
     }
@@ -2895,6 +3032,10 @@ export default class ServiceRegistry {
             continue;
           }
 
+          if (map.serviceName === this.serviceName) {
+            continue;
+          }
+
           if (locallyEmittedSignals.includes(map.signalName)) {
             if (!this.remoteSignals.get(map.serviceName)) {
               this.remoteSignals.set(map.serviceName, new Set());
@@ -2935,6 +3076,13 @@ export default class ServiceRegistry {
       "Handle global intent registration",
       (ctx, emit) => {
         const intentToTaskMaps = this.normalizeIntentMaps(ctx);
+        if (shouldTraceServiceRegistry(this.serviceName)) {
+          console.log("[CADENZA_SERVICE_REGISTRY_TRACE] handle_global_intents", {
+            localServiceName: this.serviceName,
+            intentCount: intentToTaskMaps.length,
+            sample: intentToTaskMaps.slice(0, 5),
+          });
+        }
         const sorted = intentToTaskMaps.sort((a, b) => {
           if (a.deleted && !b.deleted) return -1;
           if (!a.deleted && b.deleted) return 1;
@@ -2945,6 +3093,10 @@ export default class ServiceRegistry {
           try {
             if (map.deleted) {
               this.unregisterRemoteIntentDeputy(map);
+              continue;
+            }
+
+            if (map.serviceName === this.serviceName) {
               continue;
             }
 
@@ -3212,6 +3364,11 @@ export default class ServiceRegistry {
           this.serviceName !== "CadenzaDB" &&
           !this.hasBootstrapFullSyncDeputies()
         ) {
+          if (shouldTraceServiceRegistry(this.serviceName)) {
+            console.log("[CADENZA_SERVICE_REGISTRY_TRACE] full_sync_skipped_missing_bootstrap_deputies", {
+              localServiceName: this.serviceName,
+            });
+          }
           return false;
         }
 
@@ -3234,6 +3391,16 @@ export default class ServiceRegistry {
         const serviceInstances = this.normalizeServiceInstancesFromSync(
           inquiryResult as AnyObject,
         );
+
+        if (shouldTraceServiceRegistry(this.serviceName)) {
+          console.log("[CADENZA_SERVICE_REGISTRY_TRACE] full_sync_result", {
+            localServiceName: this.serviceName,
+            inquiryMeta: inquiryResult.__inquiryMeta,
+            signalToTaskMaps: signalToTaskMaps.length,
+            intentToTaskMaps: intentToTaskMaps.length,
+            serviceInstances: serviceInstances.length,
+          });
+        }
 
         return {
           ...ctx,
@@ -3284,6 +3451,10 @@ export default class ServiceRegistry {
       "Handle Deputy Registration",
       (ctx, emit) => {
         const { serviceName } = ctx;
+
+        if (!serviceName || serviceName === this.serviceName) {
+          return false;
+        }
 
         if (!this.deputies.has(serviceName)) this.deputies.set(serviceName, []);
 
@@ -4172,8 +4343,18 @@ export default class ServiceRegistry {
     Cadenza.createMetaTask(
       "Retry local service instance registration after failed insert",
       (ctx) => {
+        const registrationPayload = resolveServiceInstanceRegistrationPayload(
+          ctx,
+          this.serviceName,
+          this.serviceInstanceId,
+        );
+
+        if (!registrationPayload) {
+          return false;
+        }
+
         const serviceName = String(
-          ctx.__serviceName ?? ctx.data?.service_name ?? this.serviceName ?? "",
+          registrationPayload.service_name ?? this.serviceName ?? "",
         ).trim();
 
         if (!serviceName || serviceName !== this.serviceName) {
@@ -4182,7 +4363,13 @@ export default class ServiceRegistry {
 
         Cadenza.schedule(
           "meta.service_registry.instance_registration_requested",
-          { ...ctx },
+          {
+            ...ctx,
+            data: registrationPayload,
+            __registrationData: registrationPayload,
+            __serviceName: serviceName,
+            __serviceInstanceId: registrationPayload.uuid,
+          },
           5000,
         );
 
@@ -4198,19 +4385,33 @@ export default class ServiceRegistry {
     Cadenza.createMetaTask(
       "Prepare service instance registration",
       (ctx) => {
+        const registrationPayload = resolveServiceInstanceRegistrationPayload(
+          ctx,
+          this.serviceName,
+          this.serviceInstanceId,
+        );
+
         if (
           process.env.CADENZA_INSTANCE_DEBUG === "1" ||
           process.env.CADENZA_INSTANCE_DEBUG === "true"
         ) {
           console.log("[CADENZA_INSTANCE_DEBUG] prepare_service_instance_registration", {
             serviceName:
-              ctx.data?.service_name ?? ctx.__serviceName ?? this.serviceName ?? null,
+              registrationPayload?.service_name ??
+              ctx.data?.service_name ??
+              ctx.__serviceName ??
+              this.serviceName ??
+              null,
             serviceInstanceId:
-              ctx.data?.uuid ?? ctx.__serviceInstanceId ?? this.serviceInstanceId ?? null,
-            hasData: !!ctx.data,
+              registrationPayload?.uuid ??
+              ctx.data?.uuid ??
+              ctx.__serviceInstanceId ??
+              this.serviceInstanceId ??
+              null,
+            hasData: !!registrationPayload,
             dataKeys:
-              ctx.data && typeof ctx.data === "object"
-                ? Object.keys(ctx.data)
+              registrationPayload && typeof registrationPayload === "object"
+                ? Object.keys(registrationPayload)
                 : [],
             transportCount: Array.isArray(ctx.__transportData)
               ? ctx.__transportData.length
@@ -4221,8 +4422,15 @@ export default class ServiceRegistry {
           });
         }
 
+        if (!registrationPayload) {
+          return false;
+        }
+
         const serviceName = String(
-          ctx.data?.service_name ?? ctx.__serviceName ?? this.serviceName ?? "",
+          registrationPayload.service_name ??
+            ctx.__serviceName ??
+            this.serviceName ??
+            "",
         ).trim();
 
         if (
@@ -4237,7 +4445,16 @@ export default class ServiceRegistry {
           return false;
         }
 
-        return ctx;
+        return {
+          ...ctx,
+          data: registrationPayload,
+          __registrationData: {
+            ...(ctx.__registrationData ?? {}),
+            ...registrationPayload,
+          },
+          __serviceName: serviceName,
+          __serviceInstanceId: registrationPayload.uuid,
+        };
       },
       "Waits for the exact local CadenzaDB service instance insert task during self-bootstrap.",
     )

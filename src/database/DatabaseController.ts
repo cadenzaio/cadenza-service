@@ -98,6 +98,11 @@ const AUTHORITY_SYNC_DEBUG_ROUTINE_NAMES = new Set<string>(["Sync services"]);
 const INTENT_MAP_DEBUG_ENABLED =
   process.env.CADENZA_INTENT_MAP_DEBUG === "1" ||
   process.env.CADENZA_INTENT_MAP_DEBUG === "true";
+const POSTGRES_SETUP_DEBUG_ENABLED =
+  process.env.CADENZA_POSTGRES_SETUP_DEBUG === "1" ||
+  process.env.CADENZA_POSTGRES_SETUP_DEBUG === "true";
+const GENERATED_POSTGRES_WRITE_TASK_CONCURRENCY = 200;
+const GENERATED_POSTGRES_WRITE_TASK_TIMEOUT_MS = 120_000;
 
 function logAuthoritySyncDebug(
   event: string,
@@ -176,6 +181,17 @@ function logIntentMapSetupDebug(
   }
 
   console.log("[CADENZA_INTENT_MAP_DEBUG]", event, payload);
+}
+
+function logPostgresSetupDebug(
+  event: string,
+  payload: Record<string, unknown>,
+): void {
+  if (!POSTGRES_SETUP_DEBUG_ENABLED) {
+    return;
+  }
+
+  console.log("[CADENZA_POSTGRES_SETUP_DEBUG]", event, payload);
 }
 
 function buildAuthoritySyncDebugSummary(
@@ -515,7 +531,89 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-function isTransientDatabaseError(error: unknown): boolean {
+const EXECUTION_OBSERVABILITY_RETRYABLE_FOREIGN_KEYS = new Set<string>([
+  "routine_execution_execution_trace_id_fkey",
+  "routine_execution_previous_routine_execution_fkey",
+  "task_execution_routine_execution_id_fkey",
+  "task_execution_execution_trace_id_fkey",
+  "task_execution_signal_emission_id_fkey",
+  "task_execution_inquiry_id_fkey",
+  "task_execution_map_task_execution_id_fkey",
+  "task_execution_map_previous_task_execution_id_fkey",
+  "signal_emission_execution_trace_id_fkey",
+  "signal_emission_routine_execution_id_fkey",
+  "signal_emission_task_execution_id_fkey",
+  "inquiry_execution_trace_id_fkey",
+  "inquiry_routine_execution_id_fkey",
+  "inquiry_task_execution_id_fkey",
+]);
+
+function resolveOperationTableName(operationLabel?: string): string | null {
+  if (!operationLabel) {
+    return null;
+  }
+
+  const match = /^insert\s+([a-z0-9_]+)$/i.exec(operationLabel.trim());
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+function isRetryableExecutionObservabilityForeignKeyError(
+  error: unknown,
+  operationLabel?: string,
+): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const dbError = error as {
+    code?: string;
+    message?: string;
+    constraint?: string;
+    table?: string;
+  };
+  if (String(dbError.code ?? "") !== "23503") {
+    return false;
+  }
+
+  const constraint = String(dbError.constraint ?? "").toLowerCase();
+  if (
+    constraint &&
+    EXECUTION_OBSERVABILITY_RETRYABLE_FOREIGN_KEYS.has(constraint)
+  ) {
+    return true;
+  }
+
+  const table =
+    String(dbError.table ?? "").toLowerCase() ||
+    resolveOperationTableName(operationLabel) ||
+    "";
+  if (
+    ![
+      "routine_execution",
+      "task_execution",
+      "task_execution_map",
+      "signal_emission",
+      "inquiry",
+    ].includes(table)
+  ) {
+    return false;
+  }
+
+  const message = String(dbError.message ?? "").toLowerCase();
+  return (
+    message.includes("foreign key constraint") &&
+    (message.includes("execution_trace") ||
+      message.includes("routine_execution") ||
+      message.includes("task_execution") ||
+      message.includes("signal_emission") ||
+      message.includes("inquiry"))
+  );
+}
+
+export function isTransientDatabaseError(
+  error: unknown,
+  operationLabel?: string,
+): boolean {
   if (!error || typeof error !== "object") {
     return false;
   }
@@ -528,11 +626,15 @@ function isTransientDatabaseError(error: unknown): boolean {
   }
 
   const message = String(dbError.message ?? "").toLowerCase();
-  return (
+  if (
     message.includes("timeout") ||
     message.includes("terminating connection") ||
     message.includes("connection reset")
-  );
+  ) {
+    return true;
+  }
+
+  return isRetryableExecutionObservabilityForeignKeyError(error, operationLabel);
 }
 
 function isSqlIdentifier(value: string): boolean {
@@ -573,6 +675,55 @@ function resolveDataRows(data: unknown): Record<string, any>[] {
   }
 
   return [ensurePlainObject(data, "data")];
+}
+
+const DB_OPERATION_CONTEXT_KEYS = [
+  "data",
+  "batch",
+  "transaction",
+  "onConflict",
+  "filter",
+  "fields",
+  "joins",
+  "sort",
+  "limit",
+  "offset",
+  "queryMode",
+  "aggregates",
+  "groupBy",
+] as const;
+
+export function mergeTriggerQueryData(
+  context: AnyObject,
+  triggerQueryData: DbOperationPayload,
+): DbOperationPayload {
+  const existingQueryData =
+    typeof context.queryData === "object" && context.queryData
+      ? ({ ...(context.queryData as AnyObject) } as DbOperationPayload)
+      : ({} as DbOperationPayload);
+
+  for (const key of DB_OPERATION_CONTEXT_KEYS) {
+    if (
+      !Object.prototype.hasOwnProperty.call(existingQueryData, key) &&
+      context[key] !== undefined
+    ) {
+      (existingQueryData as AnyObject)[key] = context[key];
+    }
+  }
+
+  return {
+    ...existingQueryData,
+    ...triggerQueryData,
+  };
+}
+
+export function resolveOperationPayload(context: AnyObject): DbOperationPayload {
+  const queryData =
+    typeof context.queryData === "object" && context.queryData
+      ? (context.queryData as DbOperationPayload)
+      : ({} as DbOperationPayload);
+
+  return mergeTriggerQueryData(context, queryData);
 }
 
 function buildAddConstraintIfMissingStatement(
@@ -766,10 +917,20 @@ export default class DatabaseController {
 
     const runtimeState = registration.actor.getRuntimeState(registration.actorKey);
     if (runtimeState?.ready) {
+      logPostgresSetupDebug("setup_already_ready", {
+        actorName: registration.actorName,
+        databaseName: registration.databaseName,
+      });
       this.emitSetupDone(registration, payload);
       return registration;
     }
 
+    logPostgresSetupDebug("emit_setup_requested", {
+      actorName: registration.actorName,
+      databaseName: registration.databaseName,
+      ownerServiceName: registration.ownerServiceName,
+      payloadKeys: Object.keys(payload),
+    });
     Cadenza.emit(registration.setupSignal, payload);
     return registration;
   }
@@ -837,6 +998,11 @@ export default class DatabaseController {
       `Setup ${registration.actorName}`,
       registration.actor.task(
         async ({ input, state, runtimeState, setState, setRuntimeState, emit }) => {
+          logPostgresSetupDebug("setup_task_started", {
+            actorName: registration.actorName,
+            databaseName: registration.databaseName,
+            inputKeys: Object.keys(input ?? {}),
+          });
           const requestedDatabaseName = String(
             input.options?.databaseName ?? input.databaseName ?? registration.databaseName,
           );
@@ -859,6 +1025,10 @@ export default class DatabaseController {
 
           try {
             await this.createDatabaseIfMissing(requestedDatabaseName);
+            logPostgresSetupDebug("database_ready", {
+              actorName: registration.actorName,
+              databaseName: requestedDatabaseName,
+            });
 
             const pool = this.createTargetPool(
               requestedDatabaseName,
@@ -866,6 +1036,10 @@ export default class DatabaseController {
             );
 
             await this.checkPoolHealth(pool, state.safetyPolicy);
+            logPostgresSetupDebug("pool_healthy", {
+              actorName: registration.actorName,
+              databaseName: requestedDatabaseName,
+            });
 
             this.validateSchema({
               schema: registration.schema,
@@ -923,6 +1097,10 @@ export default class DatabaseController {
             this.emitSetupDone(registration, {
               ...input,
             });
+            logPostgresSetupDebug("setup_task_completed", {
+              actorName: registration.actorName,
+              databaseName: requestedDatabaseName,
+            });
 
             return {
               ...input,
@@ -933,6 +1111,11 @@ export default class DatabaseController {
             };
           } catch (error) {
             const message = errorMessage(error);
+            logPostgresSetupDebug("setup_task_failed", {
+              actorName: registration.actorName,
+              databaseName: requestedDatabaseName,
+              error: message,
+            });
             setRuntimeState({
               pool: null,
               ready: false,
@@ -1090,7 +1273,7 @@ export default class DatabaseController {
         return await work();
       } catch (error) {
         lastError = error;
-        const transient = isTransientDatabaseError(error);
+        const transient = isTransientDatabaseError(error, operationLabel);
         if (!transient || attempt >= attempts) {
           break;
         }
@@ -1955,7 +2138,7 @@ export default class DatabaseController {
       input: insertSchema,
     });
 
-    Cadenza.createThrottledTask(
+    Cadenza.createTask(
       `UPSERT ${tableName}`,
       registration.actor.task(
         async ({ input }) => {
@@ -1981,12 +2164,11 @@ export default class DatabaseController {
         },
         { mode: "write" },
       ),
-      (context?: AnyObject) =>
-        context?.__metadata?.__executionTraceId ??
-        context?.__executionTraceId ??
-        "default",
       `Macro upsert task for ${tableName}`,
       {
+        concurrency: GENERATED_POSTGRES_WRITE_TASK_CONCURRENCY,
+        timeout: GENERATED_POSTGRES_WRITE_TASK_TIMEOUT_MS,
+        getTagCallback: () => `upsert:${registration.actorToken}:${tableName}`,
         isMeta: registration.options.isMeta,
         isSubMeta: registration.options.isMeta,
         validateInputContext: shouldValidateGeneratedDbTaskInput(registration),
@@ -2047,19 +2229,16 @@ export default class DatabaseController {
             }
 
             if (trigger.queryData) {
-              context.queryData = {
-                ...(context.queryData ?? {}),
-                ...trigger.queryData,
-              };
+              context.queryData = mergeTriggerQueryData(
+                context,
+                trigger.queryData,
+              );
               payloadModifiedByTriggers = true;
             }
           }
         }
 
-        const operationPayload =
-          typeof context.queryData === "object" && context.queryData
-            ? (context.queryData as DbOperationPayload)
-            : (context as DbOperationPayload);
+        const operationPayload = resolveOperationPayload(context);
         const shouldDebugAuthoritySync = shouldDebugAuthoritySyncPayload(
           tableName,
           operationPayload,
@@ -2170,20 +2349,37 @@ export default class DatabaseController {
       { mode: op === "query" ? "read" : "write" },
     );
 
-    const task = Cadenza.createThrottledTask(
-      taskName,
-      databaseTaskFunction,
-      (context?: AnyObject) =>
-        context?.__metadata?.__executionTraceId ??
-        context?.__executionTraceId ??
-        "default",
-      `Auto-generated ${op} task for ${tableName} (PostgresActor)`,
-      {
-        isMeta: registration.options.isMeta,
-        isSubMeta: registration.options.isMeta,
-        validateInputContext: shouldValidateGeneratedDbTaskInput(registration),
-        inputSchema: schema,
-      },
+    const taskOptions = {
+      isMeta: registration.options.isMeta,
+      isSubMeta: registration.options.isMeta,
+      validateInputContext: shouldValidateGeneratedDbTaskInput(registration),
+      inputSchema: schema,
+    };
+
+    const task = (
+      op === "insert"
+        ? Cadenza.createTask(
+            taskName,
+            databaseTaskFunction,
+            `Auto-generated ${op} task for ${tableName} (PostgresActor)`,
+            {
+              ...taskOptions,
+              concurrency: GENERATED_POSTGRES_WRITE_TASK_CONCURRENCY,
+              timeout: GENERATED_POSTGRES_WRITE_TASK_TIMEOUT_MS,
+              getTagCallback: () =>
+                `insert:${registration.actorToken}:${tableName}`,
+            },
+          )
+        : Cadenza.createThrottledTask(
+            taskName,
+            databaseTaskFunction,
+            (context?: AnyObject) =>
+              context?.__metadata?.__executionTraceId ??
+              context?.__executionTraceId ??
+              "default",
+            `Auto-generated ${op} task for ${tableName} (PostgresActor)`,
+            taskOptions,
+          )
     )
       .doOn(
         ...(table.customSignals?.triggers?.[op]?.map((signal: any) =>

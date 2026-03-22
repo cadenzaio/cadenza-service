@@ -7,6 +7,7 @@ import type {
   ThrottleTagGetter,
 } from "@cadenza.io/core";
 import Cadenza from "../../Cadenza";
+import { hoistDelegationMetadataFields } from "../../utils/delegation";
 
 /**
  * Represents a task that delegates execution of a routine to a remote system or service.
@@ -200,7 +201,7 @@ export default class DeputyTask extends Task {
     const ctx = context.getContext();
     const metadata = context.getMetadata();
 
-    const deputyContext = {
+    const deputyContext = hoistDelegationMetadataFields({
       __timeout: this.timeout,
       __localTaskName: this.name,
       __localTaskVersion: this.version,
@@ -220,7 +221,7 @@ export default class DeputyTask extends Task {
         __deputyTaskName: this.name,
       },
       ...ctx,
-    };
+    });
 
     return this.taskFunction(deputyContext, emit, inquire, progressCallback);
   }

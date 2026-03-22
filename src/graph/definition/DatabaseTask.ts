@@ -8,6 +8,7 @@ import type {
 } from "@cadenza.io/core";
 import { DbOperationPayload } from "../../types/queryData";
 import Cadenza from "../../Cadenza";
+import { hoistDelegationMetadataFields } from "../../utils/delegation";
 
 /**
  * Represents a specialized task for delegating database operations. Extends `DeputyTask`.
@@ -124,7 +125,7 @@ export default class DatabaseTask extends DeputyTask {
       ...dynamicQueryData,
     };
 
-    const deputyContext = {
+    const deputyContext = hoistDelegationMetadataFields({
       ...ctx,
       __localTaskName: this.name,
       __localTaskVersion: this.version,
@@ -152,7 +153,7 @@ export default class DatabaseTask extends DeputyTask {
       filter: nextQueryData.filter ?? ctx.filter,
       fields: nextQueryData.fields ?? ctx.fields,
       queryData: nextQueryData,
-    };
+    });
 
     return this.taskFunction(deputyContext, emit, inquire, progressCallback);
   }

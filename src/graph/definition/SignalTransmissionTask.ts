@@ -7,6 +7,7 @@ import type {
 } from "@cadenza.io/core";
 import { v4 as uuid } from "uuid";
 import Cadenza from "../../Cadenza";
+import { hoistDelegationMetadataFields } from "../../utils/delegation";
 
 /**
  * Represents a task responsible for transmitting signals to a remote service
@@ -124,7 +125,7 @@ export default class SignalTransmissionTask extends Task {
     const ctx = context.getContext();
     const metadata = context.getMetadata();
 
-    const deputyContext = {
+    const deputyContext = hoistDelegationMetadataFields({
       __localTaskName: this.name,
       __localServiceName: Cadenza.serviceRegistry.serviceName,
       __serviceName: this.serviceName,
@@ -138,7 +139,7 @@ export default class SignalTransmissionTask extends Task {
       __signalName: this.signalName,
       __signalEmissionId: metadata.__signalEmission?.uuid,
       ...ctx,
-    };
+    });
 
     return this.taskFunction(deputyContext, emit, inquire, progressCallback);
   }

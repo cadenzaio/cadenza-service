@@ -5,7 +5,6 @@ import {
 } from "@cadenza.io/core";
 import ServiceRegistry from "../../registry/ServiceRegistry";
 import { decomposeSignalName, formatTimestamp } from "../../utils/tools";
-import { DeputyTask } from "../../index";
 import { isMetaIntentName } from "../../utils/inquiry";
 
 type ActorTaskRuntimeMetadata = {
@@ -145,7 +144,7 @@ function buildIntentRegistryData(intent: any): Record<string, unknown> | null {
       intent?.output && typeof intent.output === "object"
         ? intent.output
         : { type: "object" },
-    isMeta: isMetaIntentName(name),
+    is_meta: isMetaIntentName(name),
   };
 }
 
@@ -543,6 +542,30 @@ const EARLY_SYNC_TICK_DELAYS_MS = [
   BOOTSTRAP_SYNC_STALE_CYCLE_MS * 3 + 3000,
 ] as const;
 
+function shouldTraceSyncPhase(serviceName: string | undefined): boolean {
+  const configured = process.env.CADENZA_SYNC_PHASE_TRACE_SERVICE;
+  if (!configured || !serviceName) {
+    return false;
+  }
+
+  return configured === serviceName;
+}
+
+function canonicalizeSignalName(signalName: string | undefined): string {
+  if (typeof signalName !== "string") {
+    return "";
+  }
+
+  return signalName.split(":")[0]?.trim() ?? "";
+}
+
+function isBootstrapLocalOnlySignal(signalName: string): boolean {
+  return (
+    signalName === "meta.service_registry.insert_execution_requested" ||
+    signalName.startsWith("meta.sync_controller.")
+  );
+}
+
 function getRegistrableTasks(): Task[] {
   return Array.from(Cadenza.registry.tasks.values()).filter(
     (task) => task.register && !task.isHidden && !task.isDeputy,
@@ -551,10 +574,6 @@ function getRegistrableTasks(): Task[] {
 
 function getRegistrableRoutines() {
   return Array.from(Cadenza.registry.routines.values());
-}
-
-function isAuthoritySyncSignal(signalName: string): boolean {
-  return decomposeSignalName(signalName).isGlobal;
 }
 
 function getRegistrableSignalObservers(): Array<{
@@ -567,12 +586,44 @@ function getRegistrableSignalObservers(): Array<{
     return [];
   }
 
-  return Array.from(signalObservers.entries())
-    .filter(([signalName]) => isAuthoritySyncSignal(signalName))
-    .map(([signalName, observer]) => ({
+  const canonicalObservers = new Map<
+    string,
+    {
+      signalName: string;
+      registered?: boolean;
+    }
+  >();
+
+  for (const [rawSignalName, observer] of signalObservers.entries()) {
+    const signalName = canonicalizeSignalName(rawSignalName);
+    if (!signalName || isBootstrapLocalOnlySignal(signalName)) {
+      continue;
+    }
+
+    const existing = canonicalObservers.get(signalName);
+    canonicalObservers.set(signalName, {
       signalName,
-      ...observer,
-    }));
+      registered:
+        existing?.registered === true || (observer as any)?.registered === true,
+    });
+  }
+
+  return Array.from(canonicalObservers.values());
+}
+
+function isLocallyHandledIntentName(intentName: string): boolean {
+  const observer = Cadenza.inquiryBroker.inquiryObservers.get(intentName);
+  if (!observer) {
+    return false;
+  }
+
+  for (const task of observer.tasks) {
+    if (task.register && !task.isHidden && !task.isDeputy) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function getRegistrableIntentNames(): string[] {
@@ -582,7 +633,19 @@ function getRegistrableIntentNames(): string[] {
       (intentDefinition): intentDefinition is Record<string, unknown> =>
         intentDefinition !== null,
     )
+    .filter((intentDefinition) =>
+      isLocallyHandledIntentName(String(intentDefinition.name)),
+    )
     .map((intentDefinition) => String(intentDefinition.name));
+}
+
+function isRegistrableLocalIntentDefinition(intent: any): boolean {
+  const intentData = buildIntentRegistryData(intent);
+  if (!intentData) {
+    return false;
+  }
+
+  return isLocallyHandledIntentName(String(intentData.name));
 }
 
 function buildActorRegistrationKey(
@@ -778,6 +841,13 @@ export default class GraphSyncController {
         typeof ctx.__serviceName === "string"
           ? ctx.__serviceName
           : resolveSyncServiceName();
+      if (shouldTraceSyncPhase(serviceName)) {
+        console.log("[CADENZA_SYNC_PHASE_TRACE] finalize_tasks", {
+          serviceName,
+          pendingCount: pendingTasks.length,
+          sample: pendingTasks.slice(0, 5).map((task) => task.name),
+        });
+      }
       if (pendingTasks.length > 0) {
         this.tasksSynced = false;
         return false;
@@ -802,6 +872,13 @@ export default class GraphSyncController {
         typeof ctx.__serviceName === "string"
           ? ctx.__serviceName
           : resolveSyncServiceName();
+      if (shouldTraceSyncPhase(serviceName)) {
+        console.log("[CADENZA_SYNC_PHASE_TRACE] finalize_routines", {
+          serviceName,
+          pendingCount: pendingRoutines.length,
+          sample: pendingRoutines.slice(0, 5).map((routine) => routine.name),
+        });
+      }
       if (pendingRoutines.length > 0) {
         this.routinesSynced = false;
         return false;
@@ -826,6 +903,13 @@ export default class GraphSyncController {
         typeof ctx.__serviceName === "string"
           ? ctx.__serviceName
           : resolveSyncServiceName();
+      if (shouldTraceSyncPhase(serviceName)) {
+        console.log("[CADENZA_SYNC_PHASE_TRACE] finalize_signals", {
+          serviceName,
+          pendingCount: pendingSignals.length,
+          sample: pendingSignals.slice(0, 5).map((observer) => observer.signalName),
+        });
+      }
       if (pendingSignals.length > 0) {
         this.signalsSynced = false;
         return false;
@@ -850,6 +934,13 @@ export default class GraphSyncController {
         typeof ctx.__serviceName === "string"
           ? ctx.__serviceName
           : resolveSyncServiceName();
+      if (shouldTraceSyncPhase(serviceName)) {
+        console.log("[CADENZA_SYNC_PHASE_TRACE] finalize_intents", {
+          serviceName,
+          pendingCount: pendingIntentNames.length,
+          sample: pendingIntentNames.slice(0, 5),
+        });
+      }
       if (pendingIntentNames.length > 0) {
         this.intentsSynced = false;
         return false;
@@ -877,6 +968,14 @@ export default class GraphSyncController {
         .map((actor) => buildActorRegistrationKey(actor, syncServiceName))
         .filter((registrationKey): registrationKey is string => Boolean(registrationKey))
         .filter((registrationKey) => !this.registeredActors.has(registrationKey));
+
+      if (shouldTraceSyncPhase(syncServiceName)) {
+        console.log("[CADENZA_SYNC_PHASE_TRACE] finalize_actors", {
+          serviceName: syncServiceName,
+          pendingCount: pendingActorKeys.length,
+          sample: pendingActorKeys.slice(0, 5),
+        });
+      }
 
       if (pendingActorKeys.length > 0) {
         this.actorsSynced = false;
@@ -962,8 +1061,8 @@ export default class GraphSyncController {
               name: routine.name,
               version: routine.version,
               description: routine.description,
-              serviceName,
-              isMeta: routine.isMeta,
+              service_name: serviceName,
+              is_meta: routine.isMeta,
             },
             __routineName: routine.name,
           };
@@ -1035,11 +1134,11 @@ export default class GraphSyncController {
               yield {
                 __syncing: ctx.__syncing,
                 data: {
-                  taskName: nextTask.name,
-                  taskVersion: nextTask.version,
-                  routineName: routine.name,
-                  routineVersion: routine.version,
-                  serviceName,
+                  task_name: nextTask.name,
+                  task_version: nextTask.version,
+                  routine_name: routine.name,
+                  routine_version: routine.version,
+                  service_name: serviceName,
                 },
                 __routineName: routine.name,
                 __taskName: nextTask.name,
@@ -1102,15 +1201,29 @@ export default class GraphSyncController {
         const { signals } = ctx;
         if (!signals) return;
 
+        const seenSignals = new Set<string>();
         const filteredSignals = signals
-          .filter((signal: { signal: string; data: any }) => {
-            if (signal.data.registered) {
+          .map((signal: { signal: string; data: any }) => ({
+            signalName: canonicalizeSignalName(signal.signal),
+            data: signal.data,
+          }))
+          .filter((signal: { signalName: string; data: any }) => {
+            if (
+              !signal.signalName ||
+              signal.data?.registered ||
+              isBootstrapLocalOnlySignal(signal.signalName)
+            ) {
               return false;
             }
 
-            return isAuthoritySyncSignal(signal.signal);
+            if (seenSignals.has(signal.signalName)) {
+              return false;
+            }
+
+            seenSignals.add(signal.signalName);
+            return true;
           })
-          .map((signal: { signal: string; data: any }) => signal.signal);
+          .map((signal: { signalName: string }) => signal.signalName);
 
         for (const signal of filteredSignals) {
           const { isMeta, isGlobal, domain, action } =
@@ -1121,10 +1234,10 @@ export default class GraphSyncController {
             __syncing: ctx.__syncing,
             data: {
               name: signal,
-              isGlobal,
+              is_global: isGlobal,
               domain,
               action,
-              isMeta,
+              is_meta: isMeta,
             },
             __signal: signal,
           };
@@ -1171,6 +1284,7 @@ export default class GraphSyncController {
         const observer = signalObservers?.get(signalName);
         if (observer) {
           observer.registered = true;
+          observer.registrationRequested = false;
         }
 
         emit(
@@ -1216,25 +1330,25 @@ export default class GraphSyncController {
               name: task.name,
               version: task.version,
               description: task.description,
-              functionString: __functionString,
-              tagIdGetter: __getTagCallback,
-              layerIndex: task.layerIndex,
+              function_string: __functionString,
+              tag_id_getter: __getTagCallback,
+              layer_index: task.layerIndex,
               concurrency: task.concurrency,
               timeout: task.timeout,
-              isUnique: task.isUnique,
-              isSignal: task.isSignal,
-              isThrottled: task.isThrottled,
-              isDebounce: task.isDebounce,
-              isEphemeral: task.isEphemeral,
-              isMeta: task.isMeta,
-              isSubMeta: task.isSubMeta,
-              isHidden: task.isHidden,
-              validateInputContext: task.validateInputContext,
-              validateOutputContext: task.validateOutputContext,
-              retryCount: task.retryCount,
-              retryDelay: task.retryDelay,
-              retryDelayMax: task.retryDelayMax,
-              retryDelayFactor: task.retryDelayFactor,
+              is_unique: task.isUnique,
+              is_signal: task.isSignal,
+              is_throttled: task.isThrottled,
+              is_debounce: task.isDebounce,
+              is_ephemeral: task.isEphemeral,
+              is_meta: task.isMeta,
+              is_sub_meta: task.isSubMeta,
+              is_hidden: task.isHidden,
+              validate_input_context: task.validateInputContext,
+              validate_output_context: task.validateOutputContext,
+              retry_count: task.retryCount,
+              retry_delay: task.retryDelay,
+              retry_delay_max: task.retryDelayMax,
+              retry_delay_factor: task.retryDelayFactor,
               service_name: serviceName,
               signals: {
                 emits: Array.from(task.emitsSignals),
@@ -1283,6 +1397,7 @@ export default class GraphSyncController {
         }
 
         task.registered = true;
+        (task as any).registrationRequested = false;
         emit(
           "meta.sync_controller.task_registered",
           buildMinimalSyncSignalContext(ctx, {
@@ -1495,11 +1610,11 @@ export default class GraphSyncController {
           yield {
             __syncing: ctx.__syncing,
             data: {
-              signalName: _signal,
-              isGlobal,
-              taskName: task.name,
-              taskVersion: task.version,
-              serviceName,
+              signal_name: _signal,
+              is_global: isGlobal,
+              task_name: task.name,
+              task_version: task.version,
+              service_name: serviceName,
             },
             __taskName: task.name,
             __signal: signal,
@@ -1545,6 +1660,10 @@ export default class GraphSyncController {
           : Array.from(Cadenza.inquiryBroker.intents.values());
 
         for (const intent of intents) {
+          if (!isRegistrableLocalIntentDefinition(intent)) {
+            continue;
+          }
+
           const intentData = buildIntentRegistryData(intent);
           if (!intentData) {
             continue;
@@ -1662,19 +1781,19 @@ export default class GraphSyncController {
           yield {
             __syncing: ctx.__syncing,
             data: {
-              intentName: intent,
-              taskName: task.name,
-              taskVersion: task.version,
-              serviceName,
+              intent_name: intent,
+              task_name: task.name,
+              task_version: task.version,
+              service_name: serviceName,
             },
             __taskName: task.name,
             __intent: intent,
             __intentDefinition: intentDefinition,
             __intentMapData: {
-              intentName: intent,
-              taskName: task.name,
-              taskVersion: task.version,
-              serviceName,
+              intent_name: intent,
+              task_name: task.name,
+              task_version: task.version,
+              service_name: serviceName,
             },
           };
           emittedCount += 1;
@@ -1714,7 +1833,9 @@ export default class GraphSyncController {
         Cadenza.debounce("meta.sync_controller.synced_resource", {
           delayMs: 3000,
         });
-        if (task.hidden || !task.register || task.isDeputy) return;
+        if (task.hidden || !task.register || task.isDeputy || !task.registered) {
+          return;
+        }
 
         const predecessorServiceName = resolveSyncServiceName(task);
         if (!predecessorServiceName) {
@@ -1737,12 +1858,12 @@ export default class GraphSyncController {
 
           yield {
             data: {
-              taskName: t.name,
-              taskVersion: t.version,
-              predecessorTaskName: task.name,
-              predecessorTaskVersion: task.version,
-              serviceName,
-              predecessorServiceName,
+              task_name: t.name,
+              task_version: t.version,
+              predecessor_task_name: task.name,
+              predecessor_task_version: task.version,
+              service_name: serviceName,
+              predecessor_service_name: predecessorServiceName,
             },
             __taskName: task.name,
             __nextTaskName: t.name,
@@ -1792,85 +1913,8 @@ export default class GraphSyncController {
       recordTaskMapRegistrationTask,
     );
 
-    this.registerDeputyRelationshipTask = Cadenza.createMetaTask(
-      "Register deputy relationship",
-      (ctx) => {
-        const task = ctx.task;
-        if (task.hidden || !task.register) return;
-
-        if (task.isDeputy && !task.signalName) {
-          if (task.registeredDeputyMap) return;
-
-          const serviceName = resolveSyncServiceName(task);
-          const predecessorServiceName = resolveSyncServiceName();
-          if (!serviceName || !predecessorServiceName) {
-            return;
-          }
-
-          return {
-            data: {
-              task_name: task.remoteRoutineName,
-              task_version: 1,
-              service_name: serviceName,
-              predecessor_task_name: task.name,
-              predecessor_task_version: task.version,
-              predecessor_service_name: predecessorServiceName,
-            },
-            __taskName: task.name,
-          };
-        }
-      },
-    );
-    const deputyRelationshipRegistrationGraph = resolveSyncInsertTask(
-      this.isCadenzaDBReady,
-      "directional_task_graph_map",
-      {
-        onConflict: {
-          target: [
-            "task_name",
-            "predecessor_task_name",
-            "task_version",
-            "predecessor_task_version",
-            "service_name",
-            "predecessor_service_name",
-          ],
-          action: {
-            do: "nothing",
-          },
-        },
-      },
-      { concurrency: 30 },
-    );
-    const recordDeputyRelationshipRegistrationTask = Cadenza.createMetaTask(
-      "Record deputy relationship registration",
-      (ctx) => {
-        if (!didSyncInsertSucceed(ctx)) {
-          return;
-        }
-
-        Cadenza.debounce("meta.sync_controller.synced_resource", {
-          delayMs: 3000,
-        });
-
-        const task = resolveLocalTaskFromSyncContext(ctx) as DeputyTask | undefined;
-        if (!task) {
-          return true;
-        }
-        task.registeredDeputyMap = true;
-      },
-    );
-    wireSyncTaskGraph(
-      this.registerDeputyRelationshipTask,
-      deputyRelationshipRegistrationGraph,
-      recordDeputyRelationshipRegistrationTask,
-    );
-
     const hasPendingDirectionalTaskMaps = () =>
       getRegistrableTasks().some((task) => {
-        const taskWithDeputyState = task as Task & {
-          signalName?: string;
-          registeredDeputyMap?: boolean;
-        };
         if (task.isHidden || !task.register || !task.registered) {
           return false;
         }
@@ -1893,14 +1937,6 @@ export default class GraphSyncController {
           if (resolveSyncServiceName(nextTask)) {
             return true;
           }
-        }
-
-        if (
-          task.isDeputy &&
-          !taskWithDeputyState.signalName &&
-          !taskWithDeputyState.registeredDeputyMap
-        ) {
-          return Boolean(resolveSyncServiceName(task) && resolveSyncServiceName());
         }
 
         return false;
@@ -2148,6 +2184,22 @@ export default class GraphSyncController {
           return false;
         }
 
+        const serviceName =
+          typeof ctx.__serviceName === "string"
+            ? ctx.__serviceName
+            : resolveSyncServiceName();
+        if (shouldTraceSyncPhase(serviceName)) {
+          console.log("[CADENZA_SYNC_PHASE_TRACE] map_barrier_check", {
+            serviceName,
+            syncCycleId,
+            directionalTaskMapsSynced: this.directionalTaskMapsSynced,
+            signalTaskMapsSynced: this.signalTaskMapsSynced,
+            intentTaskMapsSynced: this.intentTaskMapsSynced,
+            actorTaskMapsSynced: this.actorTaskMapsSynced,
+            routineTaskMapsSynced: this.routineTaskMapsSynced,
+          });
+        }
+
         if (
           !this.directionalTaskMapsSynced ||
           !this.signalTaskMapsSynced ||
@@ -2230,6 +2282,17 @@ export default class GraphSyncController {
           typeof ctx.__serviceName === "string"
             ? ctx.__serviceName
             : resolveSyncServiceName();
+        if (shouldTraceSyncPhase(serviceName)) {
+          console.log("[CADENZA_SYNC_PHASE_TRACE] primitive_barrier_check", {
+            serviceName,
+            syncCycleId,
+            tasksSynced: this.tasksSynced,
+            signalsSynced: this.signalsSynced,
+            intentsSynced: this.intentsSynced,
+            actorsSynced: this.actorsSynced,
+            routinesSynced: this.routinesSynced,
+          });
+        }
         if (
           !this.tasksSynced ||
           !this.signalsSynced ||
@@ -2457,7 +2520,9 @@ export default class GraphSyncController {
       "Get all intents for sync",
       (ctx) => ({
         ...ctx,
-        intents: Array.from(Cadenza.inquiryBroker.intents.values()),
+        intents: Array.from(Cadenza.inquiryBroker.intents.values()).filter(
+          (intent) => isRegistrableLocalIntentDefinition(intent),
+        ),
       }),
       "Collects local intents for the primitive sync phase.",
       {
@@ -2502,14 +2567,8 @@ export default class GraphSyncController {
       iterateTasksForDirectionalTaskMapSyncTask,
       gatherDirectionalTaskMapRegistrationTask,
     );
-    iterateTasksForDirectionalTaskMapSyncTask.then(
-      this.registerTaskMapTask,
-      this.registerDeputyRelationshipTask,
-    );
+    iterateTasksForDirectionalTaskMapSyncTask.then(this.registerTaskMapTask);
     recordTaskMapRegistrationTask.then(gatherDirectionalTaskMapRegistrationTask);
-    recordDeputyRelationshipRegistrationTask.then(
-      gatherDirectionalTaskMapRegistrationTask,
-    );
     gatherDirectionalTaskMapRegistrationTask.then(mapPhaseBarrierTask);
 
     const iterateTasksForSignalTaskMapSyncTask =

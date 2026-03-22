@@ -553,8 +553,14 @@ export default class RestController {
 
                 app.post("/handshake", (req: any, res: any) => {
                   try {
-                    Cadenza.log("New fetch connection.", req.body);
-                    Cadenza.emit("meta.rest.handshake", req.body);
+                    const handshakePayload =
+                      req.body && typeof req.body === "object" ? req.body : {};
+
+                    if (Object.keys(handshakePayload).length > 0) {
+                      Cadenza.log("New fetch connection.", handshakePayload);
+                    }
+
+                    Cadenza.emit("meta.rest.handshake", handshakePayload);
                     res.send({
                       __status: "success",
                       __serviceInstanceId:
@@ -1092,7 +1098,13 @@ export default class RestController {
             return ctx;
           },
           "Sends handshake request",
-          { retryCount: 5, retryDelay: 1000, retryDelayFactor: 1.5 },
+          {
+            retryCount: 5,
+            retryDelay: 1000,
+            retryDelayFactor: 1.5,
+            register: false,
+            isHidden: true,
+          },
         )
           .doOn(`meta.fetch.handshake_requested:${fetchId}`)
           .emits("meta.fetch.handshake_complete")
@@ -1156,6 +1168,10 @@ export default class RestController {
             return resultContext;
           },
           "Sends delegation request",
+          {
+            register: false,
+            isHidden: true,
+          },
         )
           .doOn(
             `meta.service_registry.selected_instance_for_fetch:${fetchId}`,
@@ -1219,6 +1235,10 @@ export default class RestController {
             return response;
           },
           "Sends signal request",
+          {
+            register: false,
+            isHidden: true,
+          },
         )
           .doOn(
             `meta.service_registry.selected_instance_for_fetch:${fetchId}`,
@@ -1269,21 +1289,33 @@ export default class RestController {
             return status;
           },
           "Requests status",
+          {
+            register: false,
+            isHidden: true,
+          },
         )
           .doOn("meta.fetch.status_check_requested")
           .emits("meta.fetch.status_checked")
           .emitsOnFail("meta.fetch.status_check_failed");
 
-        Cadenza.createEphemeralMetaTask(`Destroy fetch client ${fetchId}`, () => {
-          fetchDiagnostics.connected = false;
-          fetchDiagnostics.destroyed = true;
-          fetchDiagnostics.updatedAt = Date.now();
-          Cadenza.log("Destroying fetch client", { URL, serviceName });
-          handshakeTask.destroy();
-          delegateTask.destroy();
-          transmitTask.destroy();
-          statusTask.destroy();
-        })
+        Cadenza.createEphemeralMetaTask(
+          `Destroy fetch client ${fetchId}`,
+          () => {
+            fetchDiagnostics.connected = false;
+            fetchDiagnostics.destroyed = true;
+            fetchDiagnostics.updatedAt = Date.now();
+            Cadenza.log("Destroying fetch client", { URL, serviceName });
+            handshakeTask.destroy();
+            delegateTask.destroy();
+            transmitTask.destroy();
+            statusTask.destroy();
+          },
+          "",
+          {
+            register: false,
+            isHidden: true,
+          },
+        )
           .doOn(
             `meta.fetch.destroy_requested:${fetchId}`,
             `meta.socket_client.disconnected:${fetchId}`,

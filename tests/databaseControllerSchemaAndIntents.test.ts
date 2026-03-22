@@ -4,6 +4,9 @@ import {
   serializeFieldDefaultForSql,
   getInsertDataSchemaFromTable,
   getQueryFilterSchemaFromTable,
+  isTransientDatabaseError,
+  mergeTriggerQueryData,
+  resolveOperationPayload,
   resolveTableOperationIntents,
   resolveTableQueryIntents,
   serializeInitialDataValueForSql,
@@ -263,6 +266,108 @@ describe("DatabaseController schema and intent helpers", () => {
         type: "jsonb",
       }),
     ).toBe('"plain-text"');
+  });
+
+  it("treats execution observability FK races as transient", () => {
+    expect(
+      isTransientDatabaseError(
+        {
+          code: "23503",
+          constraint: "task_execution_map_task_execution_id_fkey",
+          message:
+            'insert or update on table "task_execution_map" violates foreign key constraint "task_execution_map_task_execution_id_fkey"',
+        },
+        "Insert task_execution_map",
+      ),
+    ).toBe(true);
+
+    expect(
+      isTransientDatabaseError(
+        {
+          code: "23503",
+          table: "routine_execution",
+          message:
+            'insert or update on table "routine_execution" violates foreign key constraint "routine_execution_execution_trace_id_fkey"',
+        },
+        "Insert routine_execution",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat unrelated FK violations as transient", () => {
+    expect(
+      isTransientDatabaseError(
+        {
+          code: "23503",
+          constraint: "service_instance_transport_service_instance_id_fkey",
+          message:
+            'insert or update on table "service_instance_transport" violates foreign key constraint "service_instance_transport_service_instance_id_fkey"',
+        },
+        "Insert service_instance_transport",
+      ),
+    ).toBe(false);
+  });
+
+  it("merges trigger queryData without dropping the existing operation payload", () => {
+    expect(
+      mergeTriggerQueryData(
+        {
+          data: {
+            name: "OrdersService",
+          },
+        } as AnyObject,
+        {
+          onConflict: {
+            target: ["name"],
+            action: {
+              do: "nothing",
+            },
+          },
+        } as AnyObject,
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        data: {
+          name: "OrdersService",
+        },
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "nothing",
+          },
+        },
+      }),
+    );
+  });
+
+  it("resolves operation payloads by backfilling root fields into partial queryData", () => {
+    expect(
+      resolveOperationPayload({
+        data: {
+          name: "CadenzaDB",
+        },
+        queryData: {
+          onConflict: {
+            target: ["name"],
+            action: {
+              do: "nothing",
+            },
+          },
+        },
+      } as AnyObject),
+    ).toEqual(
+      expect.objectContaining({
+        data: {
+          name: "CadenzaDB",
+        },
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "nothing",
+          },
+        },
+      }),
+    );
   });
 
   it("uses the default serializer when generating column DDL", () => {

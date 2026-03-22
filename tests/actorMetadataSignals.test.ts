@@ -180,6 +180,9 @@ describe("Actor metadata signal contracts", () => {
   it("emits relationship execution metadata with database-ready queryData", async () => {
     let payload: AnyObject | undefined;
 
+    Cadenza.createTask("Relationship predecessor", () => true);
+    Cadenza.createTask("Relationship successor", () => true);
+
     Cadenza.createMetaTask("Capture relationship execution signal", (ctx) => {
       payload = ctx;
       return true;
@@ -211,13 +214,80 @@ describe("Actor metadata signal contracts", () => {
     );
   });
 
+  it("emits task-created metadata with idempotent insert semantics", async () => {
+    let payload: AnyObject | undefined;
+
+    Cadenza.createMetaTask("Capture task created signal", (ctx) => {
+      payload = ctx;
+      return true;
+    }).doOn("global.meta.graph_metadata.task_created");
+
+    const task = Cadenza.createTask("Dynamic metadata task", () => true);
+    payload = undefined;
+
+    Cadenza.emit("meta.task.created", {
+      data: {
+        name: task.name,
+        version: task.version,
+        description: task.description,
+      },
+    });
+
+    await waitForCondition(() => Boolean(payload?.queryData));
+
+    expect(readField(payload?.data as AnyObject, "name")).toBe(
+      "Dynamic metadata task",
+    );
+    expect((payload?.queryData as AnyObject)?.onConflict).toMatchObject({
+      target: ["name", "service_name", "version"],
+      action: {
+        do: "nothing",
+      },
+    });
+    expect((task as AnyObject).registrationRequested).toBe(true);
+  });
+
+  it("does not re-emit task-created metadata after the task is already registered locally", async () => {
+    const payloads: AnyObject[] = [];
+
+    Cadenza.createMetaTask("Capture deduped task created signal", (ctx) => {
+      payloads.push(ctx);
+      return true;
+    }).doOn("global.meta.graph_metadata.task_created");
+
+    const task = Cadenza.createTask("Registered metadata task", () => true);
+    payloads.length = 0;
+    task.registered = true;
+
+    Cadenza.emit("meta.task.created", {
+      data: {
+        name: task.name,
+        version: task.version,
+        description: task.description,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(
+      payloads.filter(
+        (payload) =>
+          readField(payload.data as AnyObject, "name") === "Registered metadata task",
+      ),
+    ).toEqual([]);
+  });
+
   it("emits task-intent association metadata with intent_to_task_map field contract", async () => {
     let payload: AnyObject | undefined;
 
     Cadenza.createMetaTask("Capture task intent association signal", (ctx) => {
-      payload = ctx;
+      if ((ctx.data as AnyObject | undefined)?.intentName === "orders-contract-sync") {
+        payload = ctx;
+      }
       return true;
     }).doOn("global.meta.graph_metadata.task_intent_associated");
+
+    Cadenza.createTask("Task intent association contract", () => true);
 
     Cadenza.emit("meta.task.intent_associated", {
       data: {

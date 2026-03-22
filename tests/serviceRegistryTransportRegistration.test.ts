@@ -156,6 +156,148 @@ describe("service registry transport registration", () => {
     ]);
   });
 
+  it("does not create global signal transmitters for self-service maps", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    const createSignalTransmissionTaskSpy = vi.spyOn(
+      Cadenza,
+      "createSignalTransmissionTask",
+    );
+
+    Cadenza.createMetaTask("Emit global orders signal", () => true).emits(
+      "global.orders.updated",
+    );
+
+    const handleGlobalSignalRegistrationTask = Cadenza.get(
+      "Handle global Signal Registration",
+    );
+    expect(handleGlobalSignalRegistrationTask).toBeDefined();
+
+    Cadenza.run(handleGlobalSignalRegistrationTask!, {
+      data: {
+        signal_name: "global.orders.updated",
+        service_name: "OrdersService",
+        is_global: true,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(createSignalTransmissionTaskSpy).not.toHaveBeenCalledWith(
+      "global.orders.updated",
+      "OrdersService",
+    );
+  });
+
+  it("keeps fetch-client helper tasks internal-only", () => {
+    RestController.instance;
+
+    const setupFetchClientTask = Cadenza.get("Setup fetch client");
+    expect(setupFetchClientTask).toBeDefined();
+
+    Cadenza.run(setupFetchClientTask!, {
+      serviceName: "OrdersService",
+      serviceOrigin: "http://orders.example:7000",
+      serviceTransportId: "orders-public-1",
+      communicationTypes: ["rest"],
+      handshakeData: {},
+    });
+
+    const handshakeTask = Cadenza.get(
+      "Send Handshake to http://orders.example:7000 (orders-public-1)",
+    );
+    const statusTask = Cadenza.get(
+      "Request status from http://orders.example:7000 (orders-public-1)",
+    );
+    const destroyTask = Cadenza.get("Destroy fetch client orders-public-1");
+
+    expect(handshakeTask).toMatchObject({
+      register: false,
+      isHidden: true,
+    });
+    expect(statusTask).toMatchObject({
+      register: false,
+      isHidden: true,
+    });
+    expect(destroyTask).toMatchObject({
+      register: false,
+      isHidden: true,
+    });
+  });
+
+  it("does not bootstrap dependee clients for self-service intent maps", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    const ensureDependeeClientsSpy = vi.spyOn(
+      registry,
+      "ensureDependeeClientsForService",
+    );
+
+    const handleGlobalIntentRegistrationTask = Cadenza.get(
+      "Handle global intent registration",
+    );
+    expect(handleGlobalIntentRegistrationTask).toBeDefined();
+
+    Cadenza.run(handleGlobalIntentRegistrationTask!, {
+      data: {
+        intent_name: "orders.sync",
+        service_name: "OrdersService",
+        task_name: "Handle order sync",
+        task_version: 1,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(ensureDependeeClientsSpy).not.toHaveBeenCalledWith(
+      "OrdersService",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("does not create dependee clients for duplicate self-service instances", () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.serviceInstanceId = "orders-self-1";
+    registry.remoteSignals.set("OrdersService", new Set(["global.orders.updated"]));
+
+    const emit = vi.fn();
+    const connected = registry.ensureDependeeClientForInstance(
+      {
+        uuid: "orders-self-2",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-self-transport",
+            serviceInstanceId: "orders-self-2",
+            role: "internal",
+            origin: "http://orders.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+      emit,
+      {},
+    );
+
+    expect(connected).toBe(false);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
   it("persists each yielded transport registration without collapsing them into one resolver execution", async () => {
     const insertedTransportRows: Array<Record<string, unknown>> = [];
 
@@ -411,6 +553,103 @@ describe("service registry transport registration", () => {
     expect(result).toMatchObject({
       uuid: "orders-3",
     });
+  });
+
+  it("reconstructs service_instance registration payloads before insert resolution", () => {
+    const prepareTask = Cadenza.get("Prepare service instance registration") as any;
+
+    expect(prepareTask).toBeDefined();
+
+    const result = prepareTask.taskFunction({
+      __serviceName: "OrdersService",
+      queryData: {
+        data: {
+          uuid: "orders-4",
+          process_pid: 42,
+          service_name: "OrdersService",
+          is_active: true,
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      data: {
+        uuid: "orders-4",
+        process_pid: 42,
+        service_name: "OrdersService",
+        is_active: true,
+      },
+      __registrationData: {
+        uuid: "orders-4",
+        process_pid: 42,
+        service_name: "OrdersService",
+        is_active: true,
+      },
+      __serviceName: "OrdersService",
+      __serviceInstanceId: "orders-4",
+    });
+  });
+
+  it("does not reschedule empty service_instance failure payloads", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+
+    const scheduleSpy = vi
+      .spyOn(Cadenza, "schedule")
+      .mockImplementation(() => undefined as any);
+
+    Cadenza.emit("meta.service_registry.instance_insertion_failed", {
+      __serviceName: "OrdersService",
+      __error: "No data provided for insert",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(scheduleSpy).not.toHaveBeenCalled();
+  });
+
+  it("reschedules service_instance failures with reconstructed registration payloads", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+
+    const scheduleSpy = vi
+      .spyOn(Cadenza, "schedule")
+      .mockImplementation(() => undefined as any);
+
+    Cadenza.emit("meta.service_registry.instance_insertion_failed", {
+      __serviceName: "OrdersService",
+      queryData: {
+        data: {
+          uuid: "orders-5",
+          process_pid: 99,
+          service_name: "OrdersService",
+          is_active: true,
+        },
+      },
+    });
+
+    await waitForCondition(() => scheduleSpy.mock.calls.length === 1, 1_000);
+
+    expect(scheduleSpy).toHaveBeenCalledWith(
+      "meta.service_registry.instance_registration_requested",
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "orders-5",
+          process_pid: 99,
+          service_name: "OrdersService",
+          is_active: true,
+        }),
+        __registrationData: expect.objectContaining({
+          uuid: "orders-5",
+          process_pid: 99,
+          service_name: "OrdersService",
+          is_active: true,
+        }),
+        __serviceName: "OrdersService",
+        __serviceInstanceId: "orders-5",
+      }),
+      5000,
+    );
   });
 
   it("routes remote service inserts through signal-driven runner flow", async () => {

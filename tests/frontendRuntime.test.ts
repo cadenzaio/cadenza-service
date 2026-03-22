@@ -482,6 +482,11 @@ describe("frontend runtime mode", () => {
         Cadenza.inquiryBroker.inquiryObservers.get("orders-lookup");
       return Boolean(observer && observer.tasks.size === 1);
     });
+    await waitForCondition(() =>
+      Boolean(
+        (ServiceRegistry.instance as any).instances.get("OrdersService")?.[0],
+      ),
+    );
 
     const ordersInstance = (ServiceRegistry.instance as any).instances.get(
       "OrdersService",
@@ -499,6 +504,7 @@ describe("frontend runtime mode", () => {
         role: "public",
       }),
     ]);
+    Cadenza.createSignalTransmissionTask("global.orders.updated", "OrdersService");
 
     Cadenza.emit("browser.orders.updated", {});
 
