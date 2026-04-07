@@ -1,3 +1,15 @@
+# [2.19.0](https://github.com/cadenzaio/cadenza-service/compare/v2.18.3...v2.19.0) (2026-04-07)
+
+
+### Bug Fixes
+
+* **deps:** bump [@cadenza](https://github.com/cadenza).io/core to 3.26.0 ([c200f38](https://github.com/cadenzaio/cadenza-service/commit/c200f3858d51040442d2ef074f6d74dcc59957e3))
+
+
+### Features
+
+* stabilize distributed runtime and load balancing ([99e11eb](https://github.com/cadenzaio/cadenza-service/commit/99e11ebd14e26282396d180dec634a42f705a62c))
+
 ## [2.18.3](https://github.com/cadenzaio/cadenza-service/compare/v2.18.2...v2.18.3) (2026-03-22)
 
 
