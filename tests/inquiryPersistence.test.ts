@@ -9,6 +9,7 @@ import RestController from "../src/network/RestController";
 import ServiceRegistry from "../src/registry/ServiceRegistry";
 import SignalController from "../src/signals/SignalController";
 import SocketController from "../src/network/SocketController";
+import { EXECUTION_PERSISTENCE_BUNDLE_SIGNAL } from "../src/execution/ExecutionPersistenceCoordinator";
 
 function resetRuntimeState() {
   try {
@@ -59,7 +60,7 @@ describe("inquiry persistence", () => {
   beforeEach(() => {
     resetRuntimeState();
     Cadenza.createCadenzaService("InquiryService", "Inquiry test service", {
-      port: 3211,
+      port: 0,
       useSocket: false,
       cadenzaDB: {
         connect: false,
@@ -73,37 +74,48 @@ describe("inquiry persistence", () => {
     resetRuntimeState();
   });
 
-  it("emits business inquiry lifecycle metadata", async () => {
+  it("ensures inquiry persistence before completion updates", async () => {
     const inquiryCreatedPayloads: AnyObject[] = [];
-    const inquiryUpdatedPayloads: AnyObject[] = [];
+    const inquiryCompletedPayloads: AnyObject[] = [];
+
     Cadenza.createMetaTask("Capture inquiry created metadata", (ctx) => {
       inquiryCreatedPayloads.push(ctx);
       return true;
     }).doOn("global.meta.graph_metadata.inquiry_created");
 
-    Cadenza.createMetaTask("Capture inquiry updated metadata", (ctx) => {
-      inquiryUpdatedPayloads.push(ctx);
+    Cadenza.createMetaTask("Capture inquiry completed payload", (ctx) => {
+      inquiryCompletedPayloads.push(ctx);
       return true;
-    }).doOn("global.meta.graph_metadata.inquiry_updated");
+    }).doOn("meta.inquiry_broker.inquiry_completed");
 
     Cadenza.createTask("Lookup orders", () => ({
       orders: [{ id: "order-1" }],
     })).respondsTo("orders-lookup");
 
+    Cadenza.emit("meta.service_registry.registered_global_signals", {
+      serviceName: "InquiryService",
+    });
+    Cadenza.emit("meta.service_registry.registered_global_intents", {
+      serviceName: "InquiryService",
+    });
+    await waitForCondition(() => Cadenza.hasCompletedBootstrapSync());
+
     const result = await Cadenza.inquire(
       "orders-lookup",
-      { temperature: 72 },
+      { temperature: 72, __inquirySourceRoutineExecutionId: "routine-source-1" },
       { timeout: 100 },
     );
 
     expect(result.orders).toEqual([{ id: "order-1" }]);
     await waitForCondition(
-      () => inquiryCreatedPayloads.length > 0 && inquiryUpdatedPayloads.length > 0,
+      () => inquiryCreatedPayloads.length > 0 && inquiryCompletedPayloads.length > 0,
     );
 
     const createdData = inquiryCreatedPayloads[0].data as AnyObject;
-    const updatedData = inquiryUpdatedPayloads[0].data as AnyObject;
-    const updatedFilter = inquiryUpdatedPayloads[0].filter as AnyObject;
+    const completedPayload = inquiryCompletedPayloads[0];
+    const insertData = completedPayload.insertData as AnyObject;
+    const updatedData = completedPayload.data as AnyObject;
+    const updatedFilter = completedPayload.filter as AnyObject;
     const inquiryUuid = String(readField(createdData, "uuid"));
 
     expect(readField(createdData, "name")).toBe("orders-lookup");
@@ -112,10 +124,13 @@ describe("inquiry persistence", () => {
       "inquiry-service-1",
     );
     expect(readField(createdData, "is_meta")).toBe(false);
+    expect(readField(createdData, "routine_execution_id")).toBeNull();
     expect((readField(createdData, "context") as AnyObject)?.temperature).toBe(72);
+    expect(readField(insertData, "uuid")).toBe(inquiryUuid);
     expect(readField(updatedFilter, "uuid")).toBe(inquiryUuid);
     expect(typeof readField(updatedData, "fulfilled_at")).toBe("string");
     expect(typeof readField(updatedData, "duration")).toBe("number");
+    expect(readField(updatedData, "routine_execution_id")).toBe("routine-source-1");
   });
 
   it("preserves inquiry ids in task execution creation metadata", async () => {
@@ -125,10 +140,25 @@ describe("inquiry persistence", () => {
       orders: [{ id: "order-1" }],
     }));
 
-    Cadenza.createMetaTask("Capture task execution inquiry metadata", (ctx) => {
-      payload = ctx;
+    Cadenza.createMetaTask("Capture task execution bundle", (ctx) => {
+      const ensures = Array.isArray(ctx?.ensures) ? (ctx.ensures as AnyObject[]) : [];
+      const taskExecutionEvent = ensures.find(
+        (event) => event?.entityType === "task_execution",
+      );
+
+      if (taskExecutionEvent) {
+        payload = taskExecutionEvent;
+      }
       return true;
-    }).doOn("global.meta.graph_metadata.task_execution_created");
+    }).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    Cadenza.emit("meta.service_registry.registered_global_signals", {
+      serviceName: "InquiryService",
+    });
+    Cadenza.emit("meta.service_registry.registered_global_intents", {
+      serviceName: "InquiryService",
+    });
+    await waitForCondition(() => Cadenza.hasCompletedBootstrapSync());
 
     Cadenza.emit("meta.node.scheduled", {
       data: {
@@ -160,23 +190,67 @@ describe("inquiry persistence", () => {
     expect(readField(data, "service_instance_id")).toBe("inquiry-service-1");
   });
 
+  it("omits local service_instance_id from inquiry execution rows before bootstrap sync completes", async () => {
+    const bundles: AnyObject[] = [];
+
+    Cadenza.createMetaTask("Capture pre-bootstrap inquiry bundle", (ctx) => {
+      bundles.push(ctx);
+      return true;
+    }).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    Cadenza.emit("meta.inquiry_broker.inquiry_started", {
+      data: {
+        uuid: "inquiry-pre-bootstrap-1",
+        name: "orders-lookup",
+        executionTraceId: "trace-pre-bootstrap-1",
+        sentAt: "2026-03-27T00:00:00.000Z",
+        created: "2026-03-27T00:00:00.000Z",
+        context: { orderId: "order-1" },
+        isMeta: false,
+      },
+    });
+
+    await waitForCondition(() => bundles.length === 1);
+
+    const ensures = Array.isArray(bundles[0]?.ensures)
+      ? (bundles[0].ensures as AnyObject[])
+      : [];
+    const executionTraceEvent = ensures.find(
+      (event) => event?.entityType === "execution_trace",
+    );
+
+    expect(executionTraceEvent?.data?.service_instance_id).toBeUndefined();
+  });
+
   it("preserves outer inquiry ids in delegated inquiry requests", async () => {
     let delegatedContext: AnyObject | undefined;
 
     Cadenza.createMetaTask("Capture delegated inquiry metadata", (ctx) => {
+      if (
+        ctx.__serviceName !== "RemoteOrdersService" &&
+        ctx.serviceName !== "RemoteOrdersService"
+      ) {
+        return true;
+      }
+
       delegatedContext = ctx;
-      queueMicrotask(() => {
-        Cadenza.emit(
-          `meta.service_registry.load_balance_failed:${ctx.__metadata.__deputyExecId}`,
-          {
-            ...ctx,
-            errored: true,
-            __error: "Synthetic load-balance failure",
-          },
-        );
-      });
+      if (ctx.__metadata?.__deputyExecId) {
+        queueMicrotask(() => {
+          Cadenza.emit(
+            `meta.service_registry.load_balance_failed:${ctx.__metadata.__deputyExecId}`,
+            {
+              ...ctx,
+              errored: true,
+              __error: "Synthetic load-balance failure",
+            },
+          );
+        });
+      }
       return true;
-    }).doOn("meta.deputy.delegation_requested");
+    }).doOn(
+      "meta.service_registry.load_balance_requested",
+      "meta.deputy.delegation_requested",
+    );
 
     Cadenza.createDeputyTask(
       "Lookup remote orders",
@@ -189,7 +263,7 @@ describe("inquiry persistence", () => {
       { timeout: 100 },
     );
 
-    await waitForCondition(() => Boolean(delegatedContext?.__inquiryId));
+    await waitForCondition(() => Boolean(delegatedContext?.__inquiryId), 2_000);
 
     expect(result.__inquiryMeta?.failed).toBe(1);
     expect(delegatedContext?.__inquiryId).toEqual(expect.any(String));
@@ -209,9 +283,14 @@ describe("inquiry persistence", () => {
     const mapPayloads: AnyObject[] = [];
 
     Cadenza.createMetaTask("Capture deputy execution metadata", (ctx) => {
-      executionPayloads.push(ctx);
+      if (
+        ctx.__remoteRoutineName === "Insert task_execution" &&
+        ctx.data?.uuid === "task-exec-proxy"
+      ) {
+        executionPayloads.push(ctx);
+      }
       return true;
-    }).doOn("global.meta.graph_metadata.task_execution_created");
+    }).doOn("meta.deputy.delegation_requested");
 
     Cadenza.createMetaTask("Capture deputy execution map metadata", (ctx) => {
       mapPayloads.push(ctx);
@@ -258,17 +337,61 @@ describe("inquiry persistence", () => {
     expect(mapPayloads).toEqual([]);
   });
 
-  it("clears previous routine linkage for inquiry-driven routines", async () => {
+  it("does not emit legacy task execution map bundles", async () => {
+    let emittedLegacyMapBundle = false;
+
+    Cadenza.createTask("Lookup orders", () => true);
+    Cadenza.createTask("Persist local orders", () => true);
+
+    Cadenza.createMetaTask("Capture task execution map bundle", (ctx) => {
+      const ensures = Array.isArray(ctx?.ensures) ? (ctx.ensures as AnyObject[]) : [];
+      const taskExecutionMapEvent = ensures.find(
+        (event) => event?.entityType === "task_execution_map",
+      );
+
+      if (taskExecutionMapEvent) {
+        emittedLegacyMapBundle = true;
+      }
+      return true;
+    }).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    Cadenza.emit("meta.node.mapped", {
+      data: {
+        taskExecutionId: "task-exec-2",
+        previousTaskExecutionId: "task-exec-1",
+        executionTraceId: "trace-map-1",
+      },
+      filter: {
+        taskName: "Persist local orders",
+        taskVersion: 1,
+        predecessorTaskName: "Lookup orders",
+        predecessorTaskVersion: 1,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(emittedLegacyMapBundle).toBe(false);
+  });
+
+  it("does not emit removed routine-parent linkage for inquiry-driven routines", async () => {
     let payload: AnyObject | undefined;
 
     Cadenza.createTask("Lookup orders", () => ({
       orders: [{ id: "order-1" }],
     }));
 
-    Cadenza.createMetaTask("Capture routine execution creation metadata", (ctx) => {
-      payload = ctx;
+    Cadenza.createMetaTask("Capture routine execution bundle", (ctx) => {
+      const ensures = Array.isArray(ctx?.ensures) ? (ctx.ensures as AnyObject[]) : [];
+      const routineEvent = ensures.find(
+        (event) => event?.entityType === "routine_execution",
+      );
+
+      if (routineEvent) {
+        payload = routineEvent;
+      }
       return true;
-    }).doOn("global.meta.graph_metadata.routine_execution_created");
+    }).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
 
     Cadenza.emit("meta.runner.added_tasks", {
       data: {
@@ -281,16 +404,21 @@ describe("inquiry persistence", () => {
         metaContext: {
           __inquiryId: "inquiry-1",
         },
-        previousRoutineExecution: "previous-routine-1",
         created: "2026-03-21T00:00:00.000Z",
       },
     });
 
     await waitForCondition(() => Boolean(payload?.data));
 
-    expect(readField(payload?.data as AnyObject, "previous_routine_execution")).toBe(
-      null,
-    );
+    expect(
+      Object.prototype.hasOwnProperty.call(payload?.data ?? {}, "previous_routine_execution"),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(payload?.data ?? {}, "routine_version"),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(payload?.data ?? {}, "routineVersion"),
+    ).toBe(false);
   });
 
   it("does not persist meta inquiries", async () => {

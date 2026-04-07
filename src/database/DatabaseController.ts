@@ -1,4 +1,8 @@
 import {
+  DatabaseMigrationConstraintDefinition,
+  DatabaseMigrationDefinition,
+  DatabaseMigrationPolicy,
+  DatabaseMigrationStep,
   DbOperationType,
   FieldDefinition,
   SCHEMA_TYPES,
@@ -43,6 +47,14 @@ interface PostgresActorDurableState {
   databaseName: string;
   status: "idle" | "initializing" | "ready" | "error";
   schemaVersion: number;
+  schemaVersionTarget: number;
+  schemaVersionApplied: number;
+  migrationStatus: "idle" | "applying" | "ready" | "error";
+  lastMigrationVersion: number | null;
+  lastMigrationName: string | null;
+  lastMigrationChecksum: string | null;
+  lastMigrationAppliedAt: string | null;
+  lastMigrationError: string | null;
   setupStartedAt: string | null;
   setupCompletedAt: string | null;
   lastHealthCheckAt: string | null;
@@ -76,6 +88,15 @@ interface PostgresActorRegistration {
   intentNames: Set<string>;
 }
 
+interface AppliedMigrationRecord {
+  version: number;
+  name: string;
+  checksum: string;
+  status: string;
+  appliedAt: string | null;
+  errorMessage: string | null;
+}
+
 type QueryMacroOperation = "count" | "exists" | "one" | "aggregate";
 const AUTHORITY_SYNC_DEBUG_PREFIX = "[CADENZA_DB_TASK_DEBUG]";
 const AUTHORITY_SYNC_DEBUG_ENABLED =
@@ -101,8 +122,32 @@ const INTENT_MAP_DEBUG_ENABLED =
 const POSTGRES_SETUP_DEBUG_ENABLED =
   process.env.CADENZA_POSTGRES_SETUP_DEBUG === "1" ||
   process.env.CADENZA_POSTGRES_SETUP_DEBUG === "true";
+const ACTOR_SESSION_TRACE_ENABLED =
+  process.env.CADENZA_ACTOR_SESSION_TRACE === "1" ||
+  process.env.CADENZA_ACTOR_SESSION_TRACE === "true";
+const ACTOR_SESSION_TRACE_LIMIT = 20;
+let actorSessionTraceCount = 0;
 const GENERATED_POSTGRES_WRITE_TASK_CONCURRENCY = 200;
 const GENERATED_POSTGRES_WRITE_TASK_TIMEOUT_MS = 120_000;
+const EXECUTION_OBSERVABILITY_TABLES = new Set<string>([
+  "execution_trace",
+  "routine_execution",
+  "task_execution",
+  "signal_emission",
+  "inquiry",
+]);
+const EXECUTION_OBSERVABILITY_RETRY_COUNT = 8;
+const EXECUTION_OBSERVABILITY_RETRY_DELAY_MS = 250;
+const EXECUTION_OBSERVABILITY_RETRY_DELAY_MAX_MS = 5_000;
+const EXECUTION_OBSERVABILITY_RETRY_DELAY_FACTOR = 2;
+const EXECUTION_OBSERVABILITY_INSERT_TASK_CONCURRENCY = 1;
+const SCHEMA_MIGRATION_LEDGER_TABLE = "cadenza_schema_migration";
+const DEFAULT_MIGRATION_POLICY: Required<DatabaseMigrationPolicy> = {
+  baselineOnEmpty: true,
+  adoptExistingVersion: null,
+  allowDestructive: false,
+  transactionalMode: "per_migration",
+};
 
 function logAuthoritySyncDebug(
   event: string,
@@ -192,6 +237,22 @@ function logPostgresSetupDebug(
   }
 
   console.log("[CADENZA_POSTGRES_SETUP_DEBUG]", event, payload);
+}
+
+function logActorSessionTrace(
+  event: string,
+  payload: Record<string, unknown>,
+): void {
+  if (!ACTOR_SESSION_TRACE_ENABLED) {
+    return;
+  }
+
+  actorSessionTraceCount += 1;
+  if (actorSessionTraceCount > ACTOR_SESSION_TRACE_LIMIT) {
+    return;
+  }
+
+  console.log("[CADENZA_ACTOR_SESSION_TRACE]", event, payload);
 }
 
 function buildAuthoritySyncDebugSummary(
@@ -531,21 +592,75 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+export function computeDatabaseMigrationChecksum(
+  migration: DatabaseMigrationDefinition,
+): string {
+  return stableStringify({
+    version: migration.version,
+    name: migration.name,
+    description: migration.description ?? "",
+    transaction: migration.transaction ?? "inherit",
+    steps: migration.steps,
+  });
+}
+
+function resolveDatabaseMigrationPolicy(
+  schema: DatabaseSchemaDefinition,
+): Required<DatabaseMigrationPolicy> {
+  return {
+    baselineOnEmpty:
+      schema.migrationPolicy?.baselineOnEmpty ??
+      DEFAULT_MIGRATION_POLICY.baselineOnEmpty,
+    adoptExistingVersion:
+      schema.migrationPolicy?.adoptExistingVersion ??
+      DEFAULT_MIGRATION_POLICY.adoptExistingVersion,
+    allowDestructive:
+      schema.migrationPolicy?.allowDestructive ??
+      DEFAULT_MIGRATION_POLICY.allowDestructive,
+    transactionalMode:
+      schema.migrationPolicy?.transactionalMode ??
+      DEFAULT_MIGRATION_POLICY.transactionalMode,
+  };
+}
+
 const EXECUTION_OBSERVABILITY_RETRYABLE_FOREIGN_KEYS = new Set<string>([
   "routine_execution_execution_trace_id_fkey",
-  "routine_execution_previous_routine_execution_fkey",
   "task_execution_routine_execution_id_fkey",
   "task_execution_execution_trace_id_fkey",
   "task_execution_signal_emission_id_fkey",
   "task_execution_inquiry_id_fkey",
-  "task_execution_map_task_execution_id_fkey",
-  "task_execution_map_previous_task_execution_id_fkey",
   "signal_emission_execution_trace_id_fkey",
   "signal_emission_routine_execution_id_fkey",
   "signal_emission_task_execution_id_fkey",
   "inquiry_execution_trace_id_fkey",
   "inquiry_routine_execution_id_fkey",
   "inquiry_task_execution_id_fkey",
+]);
+
+const EXECUTION_OBSERVABILITY_ZERO_ROW_RETRYABLE_TABLES = new Set<string>([
+  "routine_execution",
+  "task_execution",
+  "signal_emission",
+  "inquiry",
 ]);
 
 function resolveOperationTableName(operationLabel?: string): string | null {
@@ -588,13 +703,9 @@ function isRetryableExecutionObservabilityForeignKeyError(
     resolveOperationTableName(operationLabel) ||
     "";
   if (
-    ![
-      "routine_execution",
-      "task_execution",
-      "task_execution_map",
-      "signal_emission",
-      "inquiry",
-    ].includes(table)
+    !["routine_execution", "task_execution", "signal_emission", "inquiry"].includes(
+      table,
+    )
   ) {
     return false;
   }
@@ -625,6 +736,10 @@ export function isTransientDatabaseError(
     return true;
   }
 
+  if (code === "EXEC_OBSERVABILITY_UPDATE_MISSING_ROW") {
+    return true;
+  }
+
   const message = String(dbError.message ?? "").toLowerCase();
   if (
     message.includes("timeout") ||
@@ -635,6 +750,122 @@ export function isTransientDatabaseError(
   }
 
   return isRetryableExecutionObservabilityForeignKeyError(error, operationLabel);
+}
+
+export function shouldRetryExecutionObservabilityMissingUpdate(
+  tableName: string,
+  filter: Record<string, unknown>,
+): boolean {
+  if (!EXECUTION_OBSERVABILITY_ZERO_ROW_RETRYABLE_TABLES.has(tableName)) {
+    return false;
+  }
+
+  if (!filter || typeof filter !== "object" || Object.keys(filter).length === 0) {
+    return false;
+  }
+
+  return true;
+}
+
+export function resolveGeneratedInsertTaskConcurrency(tableName: string): number {
+  if (EXECUTION_OBSERVABILITY_TABLES.has(tableName)) {
+    return EXECUTION_OBSERVABILITY_INSERT_TASK_CONCURRENCY;
+  }
+
+  return GENERATED_POSTGRES_WRITE_TASK_CONCURRENCY;
+}
+
+function resolveExecutionObservabilityThrottleKey(
+  tableName: string,
+  context?: AnyObject,
+): string {
+  const queryData =
+    context?.queryData && typeof context.queryData === "object"
+      ? (context.queryData as Record<string, unknown>)
+      : undefined;
+  const data =
+    queryData?.data && typeof queryData.data === "object"
+      ? (queryData.data as Record<string, unknown>)
+      : context?.data && typeof context.data === "object"
+        ? (context.data as Record<string, unknown>)
+        : undefined;
+  const metadata =
+    context?.__metadata && typeof context.__metadata === "object"
+      ? (context.__metadata as Record<string, unknown>)
+      : undefined;
+
+  const traceId =
+    context?.__executionTraceId ??
+    metadata?.__executionTraceId ??
+    data?.executionTraceId ??
+    data?.execution_trace_id ??
+    (tableName === "execution_trace" ? data?.uuid : undefined) ??
+    data?.routineExecutionId ??
+    data?.routine_execution_id ??
+    data?.inquiryId ??
+    data?.inquiry_id ??
+    data?.taskExecutionId ??
+    data?.task_execution_id ??
+    data?.previousTaskExecutionId ??
+    data?.previous_task_execution_id ??
+    "global";
+
+  return `execution-observability:${String(traceId)}`;
+}
+
+export function resolveGeneratedInsertTaskTag(
+  tableName: string,
+  actorToken: string,
+  context?: AnyObject,
+): string {
+  return resolveGeneratedTaskTag(tableName, actorToken, context, "insert");
+}
+
+export function resolveGeneratedTaskTag(
+  tableName: string,
+  actorToken: string,
+  context: AnyObject | undefined,
+  operation: DbOperationType,
+): string {
+  if (EXECUTION_OBSERVABILITY_TABLES.has(tableName)) {
+    return resolveExecutionObservabilityThrottleKey(tableName, context);
+  }
+
+  if (operation === "insert") {
+    return `insert:${actorToken}:${tableName}`;
+  }
+
+  return (
+    context?.__metadata?.__executionTraceId ??
+    context?.__executionTraceId ??
+    "default"
+  );
+}
+
+export function resolveExecutionObservabilitySafetyPolicyForTable(
+  basePolicy: PostgresActorSafetyPolicy,
+  tableName: string,
+): PostgresActorSafetyPolicy {
+  if (!EXECUTION_OBSERVABILITY_TABLES.has(tableName)) {
+    return basePolicy;
+  }
+
+  return {
+    ...basePolicy,
+    retryCount: Math.max(basePolicy.retryCount, EXECUTION_OBSERVABILITY_RETRY_COUNT),
+    retryDelayMs: Math.max(
+      basePolicy.retryDelayMs,
+      EXECUTION_OBSERVABILITY_RETRY_DELAY_MS,
+    ),
+    retryDelayMaxMs: Math.max(
+      basePolicy.retryDelayMaxMs,
+      EXECUTION_OBSERVABILITY_RETRY_DELAY_MAX_MS,
+    ),
+    retryDelayFactor: Math.max(
+      basePolicy.retryDelayFactor,
+      EXECUTION_OBSERVABILITY_RETRY_DELAY_FACTOR,
+    ),
+  };
 }
 
 function isSqlIdentifier(value: string): boolean {
@@ -793,6 +1024,81 @@ export default class DatabaseController {
     this.adminDbClient.end().catch(() => undefined);
   }
 
+  private resolveExecutionObservabilityRegistration():
+    | PostgresActorRegistration
+    | undefined {
+    const localServiceName = Cadenza.serviceRegistry?.serviceName ?? null;
+
+    for (const registration of this.registrationsByActorName.values()) {
+      if (
+        registration.ownerServiceName !== localServiceName ||
+        !registration.schema?.tables?.execution_trace ||
+        !registration.schema?.tables?.routine_execution ||
+        !registration.schema?.tables?.task_execution
+      ) {
+        continue;
+      }
+
+      return registration;
+    }
+
+    return undefined;
+  }
+
+  private buildExecutionObservabilityOnConflict(
+    tableName: string,
+  ): { target: string[]; action: OnConflictAction } | undefined {
+    return {
+      target: ["uuid"],
+      action: {
+        do: "nothing",
+      },
+    };
+  }
+
+  public async persistExecutionObservabilityInsert(
+    tableName: string,
+    data: Record<string, any>,
+  ): Promise<any> {
+    const registration = this.resolveExecutionObservabilityRegistration();
+    if (!registration) {
+      return {
+        rowCount: 0,
+        errored: true,
+        __error:
+          "Execution observability registration is unavailable on this service.",
+        __success: false,
+      };
+    }
+
+    return this.insertFunction(registration, tableName, {
+      data,
+      onConflict: this.buildExecutionObservabilityOnConflict(tableName),
+    });
+  }
+
+  public async persistExecutionObservabilityUpdate(
+    tableName: string,
+    data: Record<string, any>,
+    filter: Record<string, any>,
+  ): Promise<any> {
+    const registration = this.resolveExecutionObservabilityRegistration();
+    if (!registration) {
+      return {
+        rowCount: 0,
+        errored: true,
+        __error:
+          "Execution observability registration is unavailable on this service.",
+        __success: false,
+      };
+    }
+
+    return this.updateFunction(registration, tableName, {
+      data,
+      filter,
+    });
+  }
+
   createPostgresActor(
     name: string,
     schema: DatabaseSchemaDefinition,
@@ -850,6 +1156,14 @@ export default class DatabaseController {
           databaseName: actorKey,
           status: "idle",
           schemaVersion: Number(schema.version ?? 1),
+          schemaVersionTarget: Number(schema.version ?? 1),
+          schemaVersionApplied: 0,
+          migrationStatus: "idle",
+          lastMigrationVersion: null,
+          lastMigrationName: null,
+          lastMigrationChecksum: null,
+          lastMigrationAppliedAt: null,
+          lastMigrationError: null,
           setupStartedAt: null,
           setupCompletedAt: null,
           lastHealthCheckAt: null,
@@ -975,6 +1289,83 @@ export default class DatabaseController {
     return undefined;
   }
 
+  public async queryAuthorityTableRows(
+    tableName: string,
+    payload: DbOperationPayload = {},
+  ): Promise<Array<Record<string, unknown>>> {
+    const registration = this.resolveRegistration({
+      serviceName: "CadenzaDB",
+    });
+
+    if (!registration) {
+      throw new Error("CadenzaDB PostgresActor registration is not available");
+    }
+
+    if (!registration.schema.tables[tableName]) {
+      throw new Error(
+        `Table '${tableName}' is not registered on the CadenzaDB PostgresActor`,
+      );
+    }
+
+    const result = (await this.queryFunction(
+      registration,
+      tableName,
+      payload,
+    )) as AnyObject;
+
+    if (result?.errored) {
+      throw new Error(
+        typeof result.__error === "string"
+          ? result.__error
+          : `Query failed for table '${tableName}'`,
+      );
+    }
+
+    const pluralKey = `${camelCase(tableName)}s`;
+    const singularKey = camelCase(tableName);
+    const rows =
+      result?.[pluralKey] ??
+      result?.[singularKey] ??
+      result?.rows ??
+      [];
+
+    return Array.isArray(rows)
+      ? rows.filter(
+          (row): row is Record<string, unknown> =>
+            !!row && typeof row === "object",
+        )
+      : [];
+  }
+
+  public async persistAuthorityInsert(
+    tableName: string,
+    payload: DbOperationPayload,
+  ): Promise<any> {
+    const registration = this.resolveRegistration({
+      serviceName: "CadenzaDB",
+    });
+
+    if (!registration) {
+      return {
+        rowCount: 0,
+        errored: true,
+        __error: "CadenzaDB PostgresActor registration is not available",
+        __success: false,
+      };
+    }
+
+    if (!registration.schema.tables[tableName]) {
+      return {
+        rowCount: 0,
+        errored: true,
+        __error: `Table '${tableName}' is not registered on the CadenzaDB PostgresActor`,
+        __success: false,
+      };
+    }
+
+    return this.insertFunction(registration, tableName, payload);
+  }
+
   private emitSetupDone(
     registration: PostgresActorRegistration,
     payload: AnyObject,
@@ -1014,8 +1405,11 @@ export default class DatabaseController {
           setState({
             ...state,
             status: "initializing",
+            migrationStatus: "applying",
+            schemaVersionTarget: Number(registration.schema.version ?? 1),
             setupStartedAt: new Date().toISOString(),
             lastError: null,
+            lastMigrationError: null,
           });
 
           const priorRuntimePool = runtimeState?.pool ?? null;
@@ -1046,6 +1440,11 @@ export default class DatabaseController {
               options: registration.options,
             });
 
+            const migrationResult = await this.applySchemaMigrations(
+              pool,
+              registration,
+            );
+
             const sortedTables = this.sortTablesByReferences({
               schema: registration.schema,
             }).sortedTables as string[];
@@ -1055,6 +1454,17 @@ export default class DatabaseController {
               sortedTables,
             );
             await this.applyDdlStatements(pool, ddlStatements);
+
+            for (const migration of migrationResult.pendingBaselineMigrations) {
+              await this.recordMigrationStatus(
+                pool,
+                registration,
+                migration,
+                computeDatabaseMigrationChecksum(migration),
+                "baselined",
+                null,
+              );
+            }
 
             if (!registration.tasksGenerated) {
               this.generateDatabaseTasks(registration);
@@ -1088,6 +1498,14 @@ export default class DatabaseController {
             setState({
               ...state,
               status: "ready",
+              migrationStatus: "ready",
+              schemaVersionTarget: Number(registration.schema.version ?? 1),
+              schemaVersionApplied: migrationResult.schemaVersionApplied,
+              lastMigrationVersion: migrationResult.lastMigrationVersion,
+              lastMigrationName: migrationResult.lastMigrationName,
+              lastMigrationChecksum: migrationResult.lastMigrationChecksum,
+              lastMigrationAppliedAt: migrationResult.lastMigrationAppliedAt,
+              lastMigrationError: null,
               setupCompletedAt: nowIso,
               lastHealthCheckAt: nowIso,
               lastError: null,
@@ -1126,8 +1544,10 @@ export default class DatabaseController {
             setState({
               ...state,
               status: "error",
+              migrationStatus: "error",
               setupCompletedAt: new Date().toISOString(),
               lastError: message,
+              lastMigrationError: message,
             });
             throw error;
           }
@@ -1500,7 +1920,10 @@ export default class DatabaseController {
     }
 
     const pool = this.getPoolOrThrow(registration);
-    const safetyPolicy = this.resolveSafetyPolicy(registration);
+    const safetyPolicy = resolveExecutionObservabilitySafetyPolicyForTable(
+      this.resolveSafetyPolicy(registration),
+      tableName,
+    );
 
     try {
       const resultContext = await this.runWithRetries(
@@ -1579,6 +2002,9 @@ export default class DatabaseController {
         errored: true,
         __error: `Insert failed: ${errorMessage(error)}`,
         __success: false,
+        __transientDatabaseError: isTransientDatabaseError(error, `Insert ${tableName}`),
+        __retryableExecutionObservabilityForeignKeyError:
+          isRetryableExecutionObservabilityForeignKeyError(error, `Insert ${tableName}`),
       };
     }
   }
@@ -1600,7 +2026,10 @@ export default class DatabaseController {
     }
 
     const pool = this.getPoolOrThrow(registration);
-    const safetyPolicy = this.resolveSafetyPolicy(registration);
+    const safetyPolicy = resolveExecutionObservabilitySafetyPolicyForTable(
+      this.resolveSafetyPolicy(registration),
+      tableName,
+    );
 
     try {
       return await this.runWithRetries(
@@ -1647,6 +2076,18 @@ export default class DatabaseController {
 
             const rows = this.toCamelCase(result.rows);
             const rowCount = Number(result.rowCount ?? 0);
+            if (
+              rowCount === 0 &&
+              shouldRetryExecutionObservabilityMissingUpdate(tableName, filter)
+            ) {
+              const retryError = new Error(
+                `Execution observability update matched no rows for ${tableName}`,
+              ) as Error & { code?: string; table?: string };
+              retryError.code = "EXEC_OBSERVABILITY_UPDATE_MISSING_ROW";
+              retryError.table = tableName;
+              throw retryError;
+            }
+
             return {
               [`${camelCase(tableName)}`]: rows[0] ?? null,
               rowCount,
@@ -1796,6 +2237,8 @@ export default class DatabaseController {
       throw new Error("Invalid schema: missing or invalid tables");
     }
 
+    const schemaVersion = normalizePositiveInteger(schema.version, 1, 1);
+
     for (const [tableName, table] of Object.entries(schema.tables)) {
       if (!isSqlIdentifier(tableName)) {
         throw new Error(
@@ -1844,7 +2287,183 @@ export default class DatabaseController {
       }
     }
 
+    if (schema.migrations !== undefined && !Array.isArray(schema.migrations)) {
+      throw new Error("Invalid schema: migrations must be an array when provided");
+    }
+
+    const seenMigrationVersions = new Set<number>();
+    let previousVersion = 0;
+    for (const migration of schema.migrations ?? []) {
+      const version = normalizePositiveInteger(migration.version, 0, 1);
+      if (version === 0) {
+        throw new Error("Migration versions must be positive integers");
+      }
+      if (version > schemaVersion) {
+        throw new Error(
+          `Migration version ${version} exceeds schema version ${schemaVersion}`,
+        );
+      }
+      if (seenMigrationVersions.has(version)) {
+        throw new Error(`Duplicate migration version ${version}`);
+      }
+      if (version <= previousVersion) {
+        throw new Error("Migrations must be ordered by strictly increasing version");
+      }
+      if (typeof migration.name !== "string" || migration.name.trim().length === 0) {
+        throw new Error(`Migration ${version} must have a non-empty name`);
+      }
+      if (!Array.isArray(migration.steps) || migration.steps.length === 0) {
+        throw new Error(`Migration ${version} must define at least one step`);
+      }
+
+      for (const step of migration.steps) {
+        this.validateMigrationStep(step);
+      }
+
+      seenMigrationVersions.add(version);
+      previousVersion = version;
+    }
+
     return true;
+  }
+
+  private validateMigrationStep(step: DatabaseMigrationStep): void {
+    switch (step.kind) {
+      case "createTable":
+        if (!isSqlIdentifier(step.table)) {
+          throw new Error(`Invalid migration table name ${step.table}`);
+        }
+        if (!step.definition || typeof step.definition !== "object") {
+          throw new Error(`Migration createTable for ${step.table} is missing definition`);
+        }
+        return;
+      case "dropTable":
+        if (!isSqlIdentifier(step.table)) {
+          throw new Error(`Invalid migration table name ${step.table}`);
+        }
+        return;
+      case "addColumn":
+      case "dropColumn":
+        if (!isSqlIdentifier(step.table) || !isSqlIdentifier(step.column)) {
+          throw new Error(`Invalid migration column reference ${step.table}.${step.column}`);
+        }
+        return;
+      case "alterColumn":
+        if (!isSqlIdentifier(step.table) || !isSqlIdentifier(step.column)) {
+          throw new Error(`Invalid migration column reference ${step.table}.${step.column}`);
+        }
+        if (
+          step.setType === undefined &&
+          step.setDefault === undefined &&
+          step.dropDefault !== true &&
+          step.setNotNull !== true &&
+          step.dropNotNull !== true
+        ) {
+          throw new Error(
+            `Migration alterColumn for ${step.table}.${step.column} must change at least one property`,
+          );
+        }
+        return;
+      case "renameColumn":
+        if (
+          !isSqlIdentifier(step.table) ||
+          !isSqlIdentifier(step.from) ||
+          !isSqlIdentifier(step.to)
+        ) {
+          throw new Error(`Invalid renameColumn step for ${step.table}`);
+        }
+        return;
+      case "renameTable":
+        if (!isSqlIdentifier(step.from) || !isSqlIdentifier(step.to)) {
+          throw new Error(`Invalid renameTable step from ${step.from} to ${step.to}`);
+        }
+        return;
+      case "addIndex":
+        if (!isSqlIdentifier(step.table)) {
+          throw new Error(`Invalid addIndex table name ${step.table}`);
+        }
+        if (!Array.isArray(step.fields) || step.fields.length === 0) {
+          throw new Error(`Migration addIndex for ${step.table} must define fields`);
+        }
+        if (step.name && !isSqlIdentifier(step.name)) {
+          throw new Error(`Invalid migration index name ${step.name}`);
+        }
+        return;
+      case "dropIndex":
+        if (step.table && !isSqlIdentifier(step.table)) {
+          throw new Error(`Invalid dropIndex table name ${step.table}`);
+        }
+        if (step.name && !isSqlIdentifier(step.name)) {
+          throw new Error(`Invalid migration index name ${step.name}`);
+        }
+        if (!step.name && (!Array.isArray(step.fields) || step.fields.length === 0)) {
+          throw new Error("dropIndex requires either a name or table fields");
+        }
+        return;
+      case "addConstraint":
+        if (!isSqlIdentifier(step.table) || !isSqlIdentifier(step.name)) {
+          throw new Error(`Invalid addConstraint target ${step.table}.${step.name}`);
+        }
+        this.validateMigrationConstraint(step.definition);
+        return;
+      case "dropConstraint":
+        if (!isSqlIdentifier(step.table) || !isSqlIdentifier(step.name)) {
+          throw new Error(`Invalid dropConstraint target ${step.table}.${step.name}`);
+        }
+        return;
+      case "sql":
+        if (
+          !(
+            typeof step.sql === "string" ||
+            (Array.isArray(step.sql) && step.sql.every((statement) => typeof statement === "string"))
+          )
+        ) {
+          throw new Error("Migration sql step must contain a string or string[]");
+        }
+        return;
+      default: {
+        const exhaustive: never = step;
+        throw new Error(`Unsupported migration step ${(exhaustive as any).kind}`);
+      }
+    }
+  }
+
+  private validateMigrationConstraint(
+    definition: DatabaseMigrationConstraintDefinition,
+  ): void {
+    switch (definition.kind) {
+      case "primaryKey":
+      case "unique":
+        if (!Array.isArray(definition.fields) || definition.fields.length === 0) {
+          throw new Error(`Migration constraint ${definition.kind} requires fields`);
+        }
+        return;
+      case "foreignKey":
+        if (
+          !Array.isArray(definition.fields) ||
+          definition.fields.length === 0 ||
+          !isSqlIdentifier(definition.referenceTable) ||
+          !Array.isArray(definition.referenceFields) ||
+          definition.referenceFields.length === 0
+        ) {
+          throw new Error("Migration foreignKey constraint is invalid");
+        }
+        return;
+      case "check":
+        if (typeof definition.expression !== "string" || definition.expression.trim().length === 0) {
+          throw new Error("Migration check constraint requires an expression");
+        }
+        return;
+      case "sql":
+        if (typeof definition.sql !== "string" || definition.sql.trim().length === 0) {
+          throw new Error("Migration sql constraint requires SQL");
+        }
+        return;
+      default: {
+        const exhaustive: never = definition;
+        throw new Error(`Unsupported constraint kind ${(exhaustive as any).kind}`);
+      }
+    }
   }
 
   sortTablesByReferences(ctx: AnyObject): AnyObject {
@@ -1918,86 +2537,512 @@ export default class DatabaseController {
     const ddl: string[] = [];
 
     for (const tableName of sortedTables) {
-      const table = schema.tables[tableName];
-      const fieldDefs = Object.entries(table.fields)
-        .map(([fieldName, field]) => this.fieldDefinitionToSql(fieldName, field))
-        .join(", ");
+      ddl.push(...this.buildTableDdlStatements(tableName, schema.tables[tableName]));
+    }
 
-      ddl.push(`CREATE TABLE IF NOT EXISTS ${tableName} (${fieldDefs});`);
+    return ddl;
+  }
 
-      for (const indexFields of table.indexes ?? []) {
-        ddl.push(
-          `CREATE INDEX IF NOT EXISTS idx_${tableName}_${indexFields.join("_")} ON ${tableName} (${indexFields
+  private buildTableDdlStatements(
+    tableName: string,
+    table: TableDefinition,
+  ): string[] {
+    const ddl: string[] = [];
+    const fieldDefs = Object.entries(table.fields)
+      .map(([fieldName, field]) => this.fieldDefinitionToSql(fieldName, field))
+      .join(", ");
+
+    ddl.push(`CREATE TABLE IF NOT EXISTS ${tableName} (${fieldDefs});`);
+
+    for (const indexFields of table.indexes ?? []) {
+      ddl.push(
+        `CREATE INDEX IF NOT EXISTS idx_${tableName}_${indexFields.join("_")} ON ${tableName} (${indexFields
+          .map(snakeCase)
+          .join(", ")});`,
+      );
+    }
+
+    if (table.primaryKey) {
+      const primaryKeyName = `pk_${tableName}_${table.primaryKey.join("_")}`;
+      ddl.push(
+        buildAddConstraintIfMissingStatement(
+          tableName,
+          primaryKeyName,
+          `PRIMARY KEY (${table.primaryKey.map(snakeCase).join(", ")})`,
+        ),
+      );
+    }
+
+    for (const uniqueFields of table.uniqueConstraints ?? []) {
+      const uniqueConstraintName = `uq_${tableName}_${uniqueFields.join("_")}`;
+      ddl.push(
+        buildAddConstraintIfMissingStatement(
+          tableName,
+          uniqueConstraintName,
+          `UNIQUE (${uniqueFields.map(snakeCase).join(", ")})`,
+        ),
+      );
+    }
+
+    for (const foreignKey of table.foreignKeys ?? []) {
+      const fkName = `fk_${tableName}_${foreignKey.fields.join("_")}`;
+      ddl.push(
+        buildAddConstraintIfMissingStatement(
+          tableName,
+          fkName,
+          `FOREIGN KEY (${foreignKey.fields
+            .map(snakeCase)
+            .join(", ")}) REFERENCES ${foreignKey.tableName} (${foreignKey.referenceFields
+            .map(snakeCase)
+            .join(", ")})`,
+        ),
+      );
+    }
+
+    for (const [triggerName, trigger] of Object.entries(table.triggers ?? {})) {
+      ddl.push(
+        `CREATE OR REPLACE TRIGGER ${triggerName} ${trigger.when} ${trigger.event} ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION ${trigger.function};`,
+      );
+    }
+
+    if (table.initialData) {
+      ddl.push(
+        `INSERT INTO ${tableName} (${table.initialData.fields
+          .map(snakeCase)
+          .join(", ")}) VALUES ${table.initialData.data
+          .map(
+            (row) =>
+              `(${row
+                .map((value, index) =>
+                  serializeInitialDataValueForSql(
+                    value,
+                    table.fields[table.initialData!.fields[index]],
+                  ),
+                )
+                .join(", ")})`,
+          )
+          .join(", ")} ON CONFLICT DO NOTHING;`,
+      );
+    }
+
+    return ddl;
+  }
+
+  private buildMigrationLedgerDdlStatements(): string[] {
+    return [
+      `CREATE TABLE IF NOT EXISTS ${SCHEMA_MIGRATION_LEDGER_TABLE} (schema_name VARCHAR(255) NOT NULL, actor_name VARCHAR(255) NOT NULL, version INT NOT NULL, name VARCHAR(255) NOT NULL, checksum TEXT NOT NULL, applied_at TIMESTAMP DEFAULT now(), status VARCHAR(32) NOT NULL DEFAULT 'applied', error_message TEXT DEFAULT NULL, PRIMARY KEY (schema_name, actor_name, version));`,
+      `CREATE INDEX IF NOT EXISTS idx_${SCHEMA_MIGRATION_LEDGER_TABLE}_actor_name ON ${SCHEMA_MIGRATION_LEDGER_TABLE} (actor_name);`,
+    ];
+  }
+
+  private async ensureMigrationLedger(pool: Pool): Promise<void> {
+    await this.applyDdlStatements(pool, this.buildMigrationLedgerDdlStatements());
+  }
+
+  private async listUserTables(pool: Pool): Promise<string[]> {
+    const result = await pool.query<{
+      table_name: string;
+    }>(
+      `SELECT tablename AS table_name FROM pg_tables WHERE schemaname = 'public';`,
+    );
+
+    return result.rows
+      .map((row) => String(row.table_name ?? "").trim())
+      .filter(Boolean);
+  }
+
+  private async listAppliedMigrations(
+    pool: Pool,
+    registration: PostgresActorRegistration,
+  ): Promise<AppliedMigrationRecord[]> {
+    const result = await pool.query<{
+      version: number;
+      name: string;
+      checksum: string;
+      status: string;
+      applied_at: Date | string | null;
+      error_message: string | null;
+    }>(
+      `SELECT version, name, checksum, status, applied_at, error_message
+       FROM ${SCHEMA_MIGRATION_LEDGER_TABLE}
+       WHERE schema_name = $1 AND actor_name = $2
+       ORDER BY version ASC;`,
+      [registration.databaseName, registration.actorName],
+    );
+
+    return result.rows.map((row) => ({
+      version: Number(row.version),
+      name: String(row.name ?? ""),
+      checksum: String(row.checksum ?? ""),
+      status: String(row.status ?? ""),
+      appliedAt: row.applied_at ? new Date(row.applied_at).toISOString() : null,
+      errorMessage:
+        typeof row.error_message === "string" ? row.error_message : null,
+    }));
+  }
+
+  private async recordMigrationStatus(
+    pool: Pool,
+    registration: PostgresActorRegistration,
+    migration: DatabaseMigrationDefinition,
+    checksum: string,
+    status: "applied" | "baselined" | "failed",
+    error: string | null = null,
+  ): Promise<void> {
+    await pool.query(
+      `INSERT INTO ${SCHEMA_MIGRATION_LEDGER_TABLE}
+        (schema_name, actor_name, version, name, checksum, applied_at, status, error_message)
+       VALUES ($1, $2, $3, $4, $5, now(), $6, $7)
+       ON CONFLICT (schema_name, actor_name, version)
+       DO UPDATE SET
+         name = EXCLUDED.name,
+         checksum = EXCLUDED.checksum,
+         applied_at = EXCLUDED.applied_at,
+         status = EXCLUDED.status,
+         error_message = EXCLUDED.error_message;`,
+      [
+        registration.databaseName,
+        registration.actorName,
+        migration.version,
+        migration.name,
+        checksum,
+        status,
+        error,
+      ],
+    );
+  }
+
+  private buildMigrationConstraintSql(
+    definition: DatabaseMigrationConstraintDefinition,
+  ): string {
+    switch (definition.kind) {
+      case "primaryKey":
+        return `PRIMARY KEY (${definition.fields.map(snakeCase).join(", ")})`;
+      case "unique":
+        return `UNIQUE (${definition.fields.map(snakeCase).join(", ")})`;
+      case "foreignKey":
+        return `FOREIGN KEY (${definition.fields
+          .map(snakeCase)
+          .join(", ")}) REFERENCES ${definition.referenceTable} (${definition.referenceFields
+          .map(snakeCase)
+          .join(", ")})${definition.onDelete ? ` ON DELETE ${definition.onDelete.toUpperCase()}` : ""}`;
+      case "check":
+        return `CHECK (${definition.expression})`;
+      case "sql":
+        return definition.sql;
+    }
+  }
+
+  private buildMigrationStepStatements(
+    step: DatabaseMigrationStep,
+  ): string[] {
+    switch (step.kind) {
+      case "createTable":
+        return this.buildTableDdlStatements(step.table, step.definition);
+      case "dropTable":
+        return [
+          `DROP TABLE ${step.ifExists === false ? "" : "IF EXISTS "}${step.table}${step.cascade ? " CASCADE" : ""};`,
+        ];
+      case "addColumn":
+        return [
+          `ALTER TABLE ${step.table} ADD COLUMN ${step.ifNotExists === false ? "" : "IF NOT EXISTS "}${this.fieldDefinitionToSql(step.column, step.definition)};`,
+        ];
+      case "dropColumn":
+        return [
+          `ALTER TABLE ${step.table} DROP COLUMN ${step.ifExists === false ? "" : "IF EXISTS "}${snakeCase(step.column)}${step.cascade ? " CASCADE" : ""};`,
+        ];
+      case "alterColumn": {
+        const statements: string[] = [];
+        if (step.setType) {
+          statements.push(
+            `ALTER TABLE ${step.table} ALTER COLUMN ${snakeCase(step.column)} TYPE ${step.setType.toUpperCase()}${step.using ? ` USING ${step.using}` : ""};`,
+          );
+        }
+        if (step.dropDefault) {
+          statements.push(
+            `ALTER TABLE ${step.table} ALTER COLUMN ${snakeCase(step.column)} DROP DEFAULT;`,
+          );
+        } else if (step.setDefault !== undefined) {
+          statements.push(
+            `ALTER TABLE ${step.table} ALTER COLUMN ${snakeCase(step.column)} SET DEFAULT ${serializeFieldDefaultForSql(step.setDefault, { type: step.setType ?? "text" } as FieldDefinition)};`,
+          );
+        }
+        if (step.setNotNull) {
+          statements.push(
+            `ALTER TABLE ${step.table} ALTER COLUMN ${snakeCase(step.column)} SET NOT NULL;`,
+          );
+        }
+        if (step.dropNotNull) {
+          statements.push(
+            `ALTER TABLE ${step.table} ALTER COLUMN ${snakeCase(step.column)} DROP NOT NULL;`,
+          );
+        }
+        return statements;
+      }
+      case "renameColumn":
+        return [
+          `ALTER TABLE ${step.table} RENAME COLUMN ${snakeCase(step.from)} TO ${snakeCase(step.to)};`,
+        ];
+      case "renameTable":
+        return [`ALTER TABLE ${step.from} RENAME TO ${step.to};`];
+      case "addIndex": {
+        const indexName =
+          step.name ?? `idx_${step.table}_${step.fields.map(snakeCase).join("_")}`;
+        return [
+          `CREATE ${step.unique ? "UNIQUE " : ""}INDEX IF NOT EXISTS ${indexName} ON ${step.table} (${step.fields
             .map(snakeCase)
             .join(", ")});`,
-        );
+        ];
       }
-
-      if (table.primaryKey) {
-        const primaryKeyName = `pk_${tableName}_${table.primaryKey.join("_")}`;
-        ddl.push(
+      case "dropIndex": {
+        const indexName =
+          step.name ??
+          (step.table && step.fields
+            ? `idx_${step.table}_${step.fields.map(snakeCase).join("_")}`
+            : null);
+        if (!indexName) {
+          throw new Error("dropIndex requires either a name or table+fields");
+        }
+        return [`DROP INDEX ${step.ifExists === false ? "" : "IF EXISTS "}${indexName};`];
+      }
+      case "addConstraint":
+        return [
           buildAddConstraintIfMissingStatement(
-            tableName,
-            primaryKeyName,
-            `PRIMARY KEY (${table.primaryKey.map(snakeCase).join(", ")})`,
+            step.table,
+            step.name,
+            this.buildMigrationConstraintSql(step.definition),
           ),
-        );
-      }
+        ];
+      case "dropConstraint":
+        return [
+          `ALTER TABLE ${step.table} DROP CONSTRAINT ${step.ifExists === false ? "" : "IF EXISTS "}${step.name};`,
+        ];
+      case "sql":
+        return Array.isArray(step.sql) ? step.sql : [step.sql];
+    }
+  }
 
-      for (const uniqueFields of table.uniqueConstraints ?? []) {
-        const uniqueConstraintName = `uq_${tableName}_${uniqueFields.join("_")}`;
-        ddl.push(
-          buildAddConstraintIfMissingStatement(
-            tableName,
-            uniqueConstraintName,
-            `UNIQUE (${uniqueFields.map(snakeCase).join(", ")})`,
-          ),
-        );
-      }
+  private async executeSqlStatements(
+    client: Pool | PoolClient,
+    statements: string[],
+  ): Promise<void> {
+    for (const sql of statements) {
+      await client.query(sql);
+    }
+  }
 
-      for (const foreignKey of table.foreignKeys ?? []) {
-        const fkName = `fk_${tableName}_${foreignKey.fields.join("_")}`;
-        ddl.push(
-          buildAddConstraintIfMissingStatement(
-            tableName,
-            fkName,
-            `FOREIGN KEY (${foreignKey.fields
-              .map(snakeCase)
-              .join(", ")}) REFERENCES ${foreignKey.tableName} (${foreignKey.referenceFields
-              .map(snakeCase)
-              .join(", ")})`,
-          ),
-        );
-      }
+  private async applySchemaMigrations(
+    pool: Pool,
+    registration: PostgresActorRegistration,
+  ): Promise<{
+    schemaVersionApplied: number;
+    lastMigrationVersion: number | null;
+    lastMigrationName: string | null;
+    lastMigrationChecksum: string | null;
+    lastMigrationAppliedAt: string | null;
+    pendingBaselineMigrations: DatabaseMigrationDefinition[];
+  }> {
+    const migrations = registration.schema.migrations ?? [];
+    const schemaVersionTarget = normalizePositiveInteger(
+      registration.schema.version,
+      1,
+      1,
+    );
+    await this.ensureMigrationLedger(pool);
+    if (migrations.length === 0) {
+      return {
+        schemaVersionApplied: schemaVersionTarget,
+        lastMigrationVersion: null,
+        lastMigrationName: null,
+        lastMigrationChecksum: null,
+        lastMigrationAppliedAt: null,
+        pendingBaselineMigrations: [],
+      };
+    }
 
-      for (const [triggerName, trigger] of Object.entries(table.triggers ?? {})) {
-        ddl.push(
-          `CREATE OR REPLACE TRIGGER ${triggerName} ${trigger.when} ${trigger.event} ON ${tableName} FOR EACH STATEMENT EXECUTE FUNCTION ${trigger.function};`,
-        );
-      }
+    const migrationPolicy = resolveDatabaseMigrationPolicy(registration.schema);
+    const existingTables = await this.listUserTables(pool);
+    const hasUserTables = existingTables.some(
+      (tableName) => tableName !== SCHEMA_MIGRATION_LEDGER_TABLE,
+    );
+    const appliedRows = await this.listAppliedMigrations(pool, registration);
+    const appliedByVersion = new Map<number, AppliedMigrationRecord>();
+    for (const row of appliedRows) {
+      appliedByVersion.set(row.version, row);
+    }
 
-      if (table.initialData) {
-        ddl.push(
-          `INSERT INTO ${tableName} (${table.initialData.fields
-            .map(snakeCase)
-            .join(", ")}) VALUES ${table.initialData.data
-            .map(
-              (row) =>
-                `(${row
-                  .map((value, index) =>
-                    serializeInitialDataValueForSql(
-                      value,
-                      table.fields[table.initialData!.fields[index]],
-                    ),
-                  )
-                  .join(", ")})`,
-            )
-            .join(", ")} ON CONFLICT DO NOTHING;`,
+    for (const migration of migrations) {
+      const checksum = computeDatabaseMigrationChecksum(migration);
+      const existing = appliedByVersion.get(migration.version);
+      if (!existing) {
+        continue;
+      }
+      if (existing.name !== migration.name || existing.checksum !== checksum) {
+        throw new Error(
+          `Migration drift detected for ${registration.actorName} version ${migration.version}`,
         );
       }
     }
 
-    return ddl;
+    if (hasUserTables && appliedRows.length === 0) {
+      const adoptExistingVersion = migrationPolicy.adoptExistingVersion;
+
+      if (adoptExistingVersion !== null) {
+        const adoptTarget = normalizePositiveInteger(
+          adoptExistingVersion,
+          schemaVersionTarget,
+          1,
+        );
+        const adoptedMigrations = migrations.filter(
+          (migration) => migration.version <= adoptTarget,
+        );
+
+        if (
+          adoptedMigrations.length === 0 ||
+          !adoptedMigrations.some(
+            (migration) => migration.version === adoptTarget,
+          )
+        ) {
+          throw new Error(
+            `Migration adoption version ${adoptTarget} is not defined for ${registration.actorName}`,
+          );
+        }
+
+        for (const migration of adoptedMigrations) {
+          const checksum = computeDatabaseMigrationChecksum(migration);
+          await this.recordMigrationStatus(
+            pool,
+            registration,
+            migration,
+            checksum,
+            "baselined",
+            null,
+          );
+          appliedByVersion.set(migration.version, {
+            version: migration.version,
+            name: migration.name,
+            checksum,
+            status: "baselined",
+            appliedAt: new Date().toISOString(),
+            errorMessage: null,
+          });
+        }
+      } else {
+        throw new Error(
+          `Database ${registration.databaseName} already has tables but no migration ledger entries for ${registration.actorName}`,
+        );
+      }
+    }
+
+    if (!hasUserTables && migrationPolicy.baselineOnEmpty) {
+      const lastMigration = migrations[migrations.length - 1] ?? null;
+      const appliedAt = new Date().toISOString();
+      for (const migration of migrations) {
+        await this.recordMigrationStatus(
+          pool,
+          registration,
+          migration,
+          computeDatabaseMigrationChecksum(migration),
+          "baselined",
+          null,
+        );
+      }
+      return {
+        schemaVersionApplied: schemaVersionTarget,
+        lastMigrationVersion: lastMigration?.version ?? null,
+        lastMigrationName: lastMigration?.name ?? null,
+        lastMigrationChecksum: lastMigration
+          ? computeDatabaseMigrationChecksum(lastMigration)
+          : null,
+        lastMigrationAppliedAt: appliedAt,
+        pendingBaselineMigrations: migrations,
+      };
+    }
+
+    let lastMigrationVersion: number | null = null;
+    let lastMigrationName: string | null = null;
+    let lastMigrationChecksum: string | null = null;
+    let lastMigrationAppliedAt: string | null = null;
+
+    for (const migration of migrations) {
+      if (appliedByVersion.has(migration.version)) {
+        const existing = appliedByVersion.get(migration.version)!;
+        lastMigrationVersion = existing.version;
+        lastMigrationName = existing.name;
+        lastMigrationChecksum = existing.checksum;
+        lastMigrationAppliedAt = existing.appliedAt;
+        continue;
+      }
+
+      const checksum = computeDatabaseMigrationChecksum(migration);
+      const destructive = migration.steps.some((step) =>
+        ["dropTable", "dropColumn", "dropConstraint"].includes(step.kind),
+      );
+      if (destructive && !migrationPolicy.allowDestructive) {
+        throw new Error(
+          `Migration ${migration.version} (${migration.name}) contains destructive steps but allowDestructive is false`,
+        );
+      }
+
+      const transactionalMode =
+        migration.transaction === "required"
+          ? "per_migration"
+          : migration.transaction === "none"
+            ? "none"
+            : migrationPolicy.transactionalMode;
+
+      const client =
+        transactionalMode === "per_migration" ? await pool.connect() : null;
+
+      try {
+        if (client) {
+          await client.query("BEGIN");
+        }
+        for (const step of migration.steps) {
+          const statements = this.buildMigrationStepStatements(step);
+          await this.executeSqlStatements(client ?? pool, statements);
+        }
+        if (client) {
+          await client.query("COMMIT");
+        }
+        await this.recordMigrationStatus(
+          pool,
+          registration,
+          migration,
+          checksum,
+          "applied",
+          null,
+        );
+        lastMigrationVersion = migration.version;
+        lastMigrationName = migration.name;
+        lastMigrationChecksum = checksum;
+        lastMigrationAppliedAt = new Date().toISOString();
+      } catch (error) {
+        if (client) {
+          await client.query("ROLLBACK").catch(() => undefined);
+        }
+        await this.recordMigrationStatus(
+          pool,
+          registration,
+          migration,
+          checksum,
+          "failed",
+          errorMessage(error),
+        );
+        throw error;
+      } finally {
+        client?.release();
+      }
+    }
+
+    return {
+      schemaVersionApplied: schemaVersionTarget,
+      lastMigrationVersion,
+      lastMigrationName,
+      lastMigrationChecksum,
+      lastMigrationAppliedAt,
+      pendingBaselineMigrations: [],
+    };
   }
 
   private fieldDefinitionToSql(fieldName: string, field: FieldDefinition): string {
@@ -2239,6 +3284,79 @@ export default class DatabaseController {
         }
 
         const operationPayload = resolveOperationPayload(context);
+        const actorSessionInsertData = operationPayload.data;
+        const actorSessionInsertMissingData =
+          !actorSessionInsertData ||
+          (Array.isArray(actorSessionInsertData) &&
+            actorSessionInsertData.length === 0) ||
+          (typeof actorSessionInsertData === "object" &&
+            !Array.isArray(actorSessionInsertData) &&
+            Object.keys(actorSessionInsertData as Record<string, unknown>).length ===
+              0);
+
+        if (
+          tableName === "actor_session_state" &&
+          op === "insert" &&
+          actorSessionInsertMissingData
+        ) {
+          logActorSessionTrace("empty_insert_payload", {
+            taskName,
+            localTaskName: context.__localTaskName ?? null,
+            deputyExecId:
+              context.__deputyExecId ??
+              context.__metadata?.__deputyExecId ??
+              null,
+            inquirySourceTaskExecutionId:
+              context.__inquirySourceTaskExecutionId ??
+              context.__metadata?.__inquirySourceTaskExecutionId ??
+              null,
+            inquirySourceRoutineExecutionId:
+              context.__inquirySourceRoutineExecutionId ??
+              context.__metadata?.__inquirySourceRoutineExecutionId ??
+              null,
+            signalName:
+              context.__signalName ??
+              context.__metadata?.__signalName ??
+              null,
+            inquiryName:
+              context.__inquiryName ??
+              context.__metadata?.__inquiryName ??
+              null,
+            serviceName:
+              context.__serviceName ??
+              context.__metadata?.__serviceName ??
+              null,
+            localServiceName:
+              context.__localServiceName ??
+              context.__metadata?.__localServiceName ??
+              null,
+            dataKeys:
+              context.data &&
+              typeof context.data === "object" &&
+              !Array.isArray(context.data)
+                ? Object.keys(context.data as Record<string, unknown>)
+                : [],
+            payloadDataType:
+              actorSessionInsertData === null
+                ? "null"
+                : Array.isArray(actorSessionInsertData)
+                  ? "array"
+                  : typeof actorSessionInsertData,
+            payloadDataKeys:
+              actorSessionInsertData &&
+              typeof actorSessionInsertData === "object" &&
+              !Array.isArray(actorSessionInsertData)
+                ? Object.keys(actorSessionInsertData as Record<string, unknown>)
+                : [],
+            queryDataKeys:
+              context.queryData &&
+              typeof context.queryData === "object" &&
+              !Array.isArray(context.queryData)
+                ? Object.keys(context.queryData as Record<string, unknown>)
+                : [],
+            rootKeys: Object.keys(context ?? {}).slice(0, 24),
+          });
+        }
         const shouldDebugAuthoritySync = shouldDebugAuthoritySyncPayload(
           tableName,
           operationPayload,
@@ -2318,21 +3436,47 @@ export default class DatabaseController {
         }
 
         if (tableName !== "system_log" && context.errored) {
-          Cadenza.log(
-            `ERROR in ${taskName}`,
-            JSON.stringify({
-              data: context.data,
-              queryData: context.queryData,
-              filter: context.filter,
-              fields: context.fields,
-              joins: context.joins,
-              sort: context.sort,
-              limit: context.limit,
-              offset: context.offset,
-              error: context.__error,
-            }),
-            "error",
-          );
+          const isRetryableExecutionObservabilityFailure =
+            context.__retryableExecutionObservabilityForeignKeyError === true;
+
+          if (isRetryableExecutionObservabilityFailure) {
+            Cadenza.log(
+              `Retryable execution observability insert still failed after retries in ${taskName}`,
+              {
+                tableName,
+                error: context.__error,
+                taskName: context.data?.taskName ?? context.filter?.taskName ?? null,
+                inquiryName: context.data?.name ?? null,
+                executionTraceId:
+                  context.data?.executionTraceId ??
+                  context.data?.execution_trace_id ??
+                  null,
+                routineExecutionId:
+                  context.data?.routineExecutionId ??
+                  context.data?.routine_execution_id ??
+                  null,
+                taskExecutionId:
+                  context.data?.uuid ?? context.data?.taskExecutionId ?? null,
+              },
+              "warning",
+            );
+          } else {
+            Cadenza.log(
+              `ERROR in ${taskName}`,
+              JSON.stringify({
+                data: context.data,
+                queryData: context.queryData,
+                filter: context.filter,
+                fields: context.fields,
+                joins: context.joins,
+                sort: context.sort,
+                limit: context.limit,
+                offset: context.offset,
+                error: context.__error,
+              }),
+              "error",
+            );
+          }
         }
 
         delete context.queryData;
@@ -2343,6 +3487,8 @@ export default class DatabaseController {
         delete context.sort;
         delete context.limit;
         delete context.offset;
+        delete context.__transientDatabaseError;
+        delete context.__retryableExecutionObservabilityForeignKeyError;
 
         return context;
       },
@@ -2364,19 +3510,27 @@ export default class DatabaseController {
             `Auto-generated ${op} task for ${tableName} (PostgresActor)`,
             {
               ...taskOptions,
-              concurrency: GENERATED_POSTGRES_WRITE_TASK_CONCURRENCY,
+              concurrency: resolveGeneratedInsertTaskConcurrency(tableName),
               timeout: GENERATED_POSTGRES_WRITE_TASK_TIMEOUT_MS,
-              getTagCallback: () =>
-                `insert:${registration.actorToken}:${tableName}`,
+              getTagCallback: (context?: AnyObject) =>
+                resolveGeneratedTaskTag(
+                  tableName,
+                  registration.actorToken,
+                  context,
+                  op,
+                ),
             },
           )
         : Cadenza.createThrottledTask(
             taskName,
             databaseTaskFunction,
             (context?: AnyObject) =>
-              context?.__metadata?.__executionTraceId ??
-              context?.__executionTraceId ??
-              "default",
+              resolveGeneratedTaskTag(
+                tableName,
+                registration.actorToken,
+                context,
+                op,
+              ),
             `Auto-generated ${op} task for ${tableName} (PostgresActor)`,
             taskOptions,
           )

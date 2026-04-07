@@ -297,12 +297,18 @@ export function createSSRInquiryBridge(
           const status = statuses[index];
           const startedAtForResponder = Date.now();
           const selectedInstance = serviceInstances.find(
-            (instance) => instance.serviceName === map.serviceName,
+            (instance) =>
+              instance.serviceName === map.serviceName &&
+              !!selectTransportForRole(
+                instance.transports,
+                "internal",
+                "rest",
+              ),
           );
 
           if (!selectedInstance) {
             status.status = "failed";
-            status.error = `No active instances for ${map.serviceName}`;
+            status.error = `No routeable internal instances for ${map.serviceName}`;
             status.durationMs = Date.now() - startedAtForResponder;
             return null;
           }

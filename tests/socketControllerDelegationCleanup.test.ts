@@ -202,6 +202,81 @@ describe("SocketController delegation cleanup", () => {
     expect(finalState.errorHistory.length).toBeGreaterThan(0);
   });
 
+  it("strips transport selection routing context before delegating over sockets", async () => {
+    SocketController.instance;
+
+    const fetchId = "socket-routing-strip-1";
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceInstanceId: "remote-cadenza-db",
+      communicationTypes: ["socket"],
+      serviceName: "CadenzaDB",
+      serviceTransportId: fetchId,
+      serviceOrigin: "http://cadenza-db.localhost",
+      transportProtocols: ["socket"],
+    });
+
+    await waitForCondition(() => Boolean(__getLastSocket()?.connected), 1_000);
+
+    let capturedPayload: any = null;
+    __getLastSocket()!.ackHandlers.delegation = (data, callback) => {
+      capturedPayload = data;
+      callback?.(null, { __status: "success" });
+    };
+
+    Cadenza.emit(`meta.service_registry.selected_instance_for_socket:${fetchId}`, {
+      __remoteRoutineName: "Insert execution_trace",
+      __signalEmission: {
+        fullSignalName:
+          "meta.service_registry.selected_instance_for_socket:socket-routing-strip-1",
+        taskName: "Get balanced instance",
+        taskExecutionId: "transport-task-exec-1",
+      },
+      __signalEmissionId: "transport-signal-emission-1",
+      __routineExecId: "transport-routine-exec-1",
+      __localRoutineExecId: "original-routine-exec-1",
+      __traceCreatedByRunner: true,
+      __routineCreatedByRunner: true,
+      __routineName: "Transport insert routine",
+      __routineVersion: 1,
+      __routineCreatedAt: "2026-03-24T00:00:00.000Z",
+      __routineIsMeta: true,
+      __metadata: {
+        __deputyExecId: "socket-routing-strip-deputy-1",
+        __routineExecId: "original-routine-exec-1",
+        __executionTraceId: "trace-1",
+        __traceCreatedByRunner: true,
+        __routineCreatedByRunner: true,
+        __routineName: "Transport insert routine",
+      },
+      data: {
+        uuid: "trace-1",
+      },
+      queryData: {
+        data: {
+          uuid: "trace-1",
+        },
+      },
+    });
+
+    await waitForCondition(() => capturedPayload !== null, 1_000);
+
+    expect(capturedPayload.__signalEmission).toBeUndefined();
+    expect(capturedPayload.__signalEmissionId).toBeUndefined();
+    expect(capturedPayload.__routineExecId).toBeUndefined();
+    expect(capturedPayload.__traceCreatedByRunner).toBeUndefined();
+    expect(capturedPayload.__routineCreatedByRunner).toBeUndefined();
+    expect(capturedPayload.__routineName).toBeUndefined();
+    expect(capturedPayload.__localRoutineExecId).toBe("original-routine-exec-1");
+    expect(capturedPayload.__metadata).toMatchObject({
+      __deputyExecId: "socket-routing-strip-deputy-1",
+      __routineExecId: "original-routine-exec-1",
+      __executionTraceId: "trace-1",
+    });
+    expect(capturedPayload.__metadata.__traceCreatedByRunner).toBeUndefined();
+    expect(capturedPayload.__metadata.__routineCreatedByRunner).toBeUndefined();
+    expect(capturedPayload.__metadata.__routineName).toBeUndefined();
+  });
+
   it("returns delegation lookup failures through the frontend socket client receiver", async () => {
     SocketController.instance;
     Cadenza.serviceRegistry.serviceName = "DemoFrontend";
@@ -243,6 +318,58 @@ describe("SocketController delegation cleanup", () => {
       errored: true,
       __error:
         "No task or routine registered for delegation target Missing frontend delegation target.",
+    });
+  }, 10_000);
+
+  it("resolves direct task delegations through the frontend socket client receiver", async () => {
+    SocketController.instance;
+    Cadenza.serviceRegistry.serviceName = "DemoFrontend";
+    Cadenza.serviceRegistry.serviceInstanceId = "frontend-1";
+    Cadenza.serviceRegistry.isFrontend = true;
+
+    Cadenza.createMetaTask(
+      "Resolve socket delegation test task",
+      (ctx: any) => ({
+        ok: true,
+        echoed: ctx.payload ?? null,
+      }),
+      "Resolves a direct socket delegation task during tests.",
+    );
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceInstanceId: "remote-cadenza-db",
+      communicationTypes: ["socket"],
+      serviceName: "CadenzaDB",
+      serviceTransportId: "cadenza-db-public-1",
+      serviceOrigin: "http://cadenza-db.localhost",
+      transportProtocols: ["socket"],
+    });
+
+    await waitForCondition(() => Boolean(__getLastSocket()?.connected), 1_000);
+    await waitForCondition(
+      () => (__getLastSocket() as any)?.listenerCount?.("delegation") > 0,
+      1_000,
+    );
+
+    const response = await new Promise<any>((resolve) => {
+      __getLastSocket()?.emit(
+        "delegation",
+        {
+          __remoteRoutineName: "Resolve socket delegation test task",
+          payload: {
+            deviceId: "device-9",
+          },
+          __metadata: {
+            __deputyExecId: "frontend-direct-task-delegation",
+          },
+        },
+        resolve,
+      );
+    });
+
+    expect(response).toMatchObject({
+      ok: true,
+      echoed: { deviceId: "device-9" },
     });
   }, 10_000);
 

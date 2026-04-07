@@ -7,7 +7,15 @@ import type {
   ThrottleTagGetter,
 } from "@cadenza.io/core";
 import Cadenza from "../../Cadenza";
-import { hoistDelegationMetadataFields } from "../../utils/delegation";
+import {
+  attachDelegationRequestSnapshot,
+  hoistDelegationMetadataFields,
+  restoreDelegationRequestSnapshot,
+  stripDelegationRequestSnapshot,
+} from "../../utils/delegation";
+const SERVICE_REGISTRY_TRACE_SERVICE = (
+  process.env.CADENZA_SERVICE_REGISTRY_TRACE_SERVICE ?? ""
+).trim();
 
 /**
  * Represents a task that delegates execution of a routine to a remote system or service.
@@ -95,6 +103,34 @@ export default class DeputyTask extends Task {
         const processId = uuid();
 
         context.__metadata.__deputyExecId = processId;
+
+        if (
+          (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+            process.env.CADENZA_INSTANCE_DEBUG === "true") &&
+          context.__remoteRoutineName === "Insert service_instance"
+        ) {
+          console.log("[CADENZA_INSTANCE_DEBUG] deputy_delegation_requested", {
+            localServiceName: Cadenza.serviceRegistry.serviceName,
+            localTaskName: context.__localTaskName ?? null,
+            remoteRoutineName: context.__remoteRoutineName ?? null,
+            targetServiceName: context.__serviceName ?? null,
+            deputyExecId: processId,
+            dataKeys:
+              context.data && typeof context.data === "object"
+                ? Object.keys(context.data)
+                : [],
+            queryDataKeys:
+              context.queryData && typeof context.queryData === "object"
+                ? Object.keys(context.queryData)
+                : [],
+            queryDataDataKeys:
+              context.queryData?.data &&
+              typeof context.queryData.data === "object"
+                ? Object.keys(context.queryData.data as AnyObject)
+                : [],
+          });
+        }
+
         emit("meta.deputy.delegation_requested", {
           ...context,
         });
@@ -123,12 +159,45 @@ export default class DeputyTask extends Task {
         Cadenza.createEphemeralMetaTask(
           `Resolve deputy ${this.remoteRoutineName}`,
           (responseCtx) => {
+            const mergedResponseCtx =
+              responseCtx && typeof responseCtx === "object"
+                ? ({
+                    ...context,
+                    ...responseCtx,
+                  } as AnyObject)
+                : responseCtx;
             if (responseCtx?.errored) {
               reject(new Error(responseCtx.__error));
             } else {
+              if (
+                SERVICE_REGISTRY_TRACE_SERVICE.length > 0 &&
+                Cadenza.serviceRegistry.serviceName ===
+                  SERVICE_REGISTRY_TRACE_SERVICE &&
+                context.__remoteRoutineName === "Insert service_instance"
+              ) {
+                console.log("[CADENZA_SERVICE_REGISTRY_TRACE] deputy_insert_service_instance_resolved", {
+                  localServiceName: Cadenza.serviceRegistry.serviceName,
+                  targetServiceName: context.__serviceName ?? null,
+                  resolverRequestId: context.__resolverRequestId ?? null,
+                  serviceInstanceId:
+                    mergedResponseCtx && typeof mergedResponseCtx === "object"
+                      ? (mergedResponseCtx as AnyObject).__serviceInstanceId ??
+                        (mergedResponseCtx as AnyObject).uuid ??
+                        (mergedResponseCtx as AnyObject).data?.uuid ??
+                        null
+                      : null,
+                  hasResolverQueryData:
+                    mergedResponseCtx &&
+                    typeof mergedResponseCtx === "object" &&
+                    (mergedResponseCtx as AnyObject).__resolverQueryData !==
+                      undefined,
+                });
+              }
               // TODO clean up metadata
-              delete responseCtx.__isDeputy;
-              resolve(responseCtx);
+              if (mergedResponseCtx && typeof mergedResponseCtx === "object") {
+                delete mergedResponseCtx.__isDeputy;
+              }
+              resolve(mergedResponseCtx);
             }
           },
           `Ephemeral resolver for deputy process ${processId}`,
@@ -198,30 +267,45 @@ export default class DeputyTask extends Task {
     progressCallback: (progress: number) => void,
     nodeData: { nodeId: string; routineExecId: string },
   ): TaskResult {
-    const ctx = context.getContext();
-    const metadata = context.getMetadata();
+    const rawContext = restoreDelegationRequestSnapshot(
+      attachDelegationRequestSnapshot({
+        ...context.getFullContext(),
+      }),
+    );
+    const metadata =
+      rawContext.__metadata && typeof rawContext.__metadata === "object"
+        ? rawContext.__metadata
+        : context.getMetadata();
+    const ctx = {
+      ...rawContext,
+    };
+    delete ctx.__metadata;
 
-    const deputyContext = hoistDelegationMetadataFields({
-      __timeout: this.timeout,
-      __localTaskName: this.name,
-      __localTaskVersion: this.version,
-      __localServiceName: Cadenza.serviceRegistry.serviceName,
-      __previousTaskExecutionId: nodeData.nodeId,
-      __remoteRoutineName: this.remoteRoutineName,
-      __serviceName: this.serviceName,
-      __localRoutineExecId:
-        metadata.__routineExecId ?? metadata.__metadata?.__routineExecId,
-      __executionTraceId: metadata.__executionTraceId ?? null,
-      __metadata: {
-        ...metadata,
-        __skipRemoteExecution:
-          metadata.__skipRemoteExecution ?? ctx.__skipRemoteExecution ?? false,
-        __blockRemoteExecution:
-          metadata.__blockRemoteExecution ?? ctx.__blockRemoteExecution ?? false,
-        __deputyTaskName: this.name,
-      },
-      ...ctx,
-    });
+    const deputyContext = attachDelegationRequestSnapshot(
+      stripDelegationRequestSnapshot(
+        hoistDelegationMetadataFields({
+          ...ctx,
+          __timeout: this.timeout,
+          __localTaskName: this.name,
+          __localTaskVersion: this.version,
+          __localServiceName: Cadenza.serviceRegistry.serviceName,
+          __previousTaskExecutionId: nodeData.nodeId,
+          __remoteRoutineName: this.remoteRoutineName,
+          __serviceName: this.serviceName,
+          __localRoutineExecId:
+            metadata.__routineExecId ?? metadata.__metadata?.__routineExecId,
+          __executionTraceId: metadata.__executionTraceId ?? null,
+          __metadata: {
+            ...metadata,
+            __skipRemoteExecution:
+              metadata.__skipRemoteExecution ?? ctx.__skipRemoteExecution ?? false,
+            __blockRemoteExecution:
+              metadata.__blockRemoteExecution ?? ctx.__blockRemoteExecution ?? false,
+            __deputyTaskName: this.name,
+          },
+        }),
+      ),
+    );
 
     return this.taskFunction(deputyContext, emit, inquire, progressCallback);
   }

@@ -8,7 +8,26 @@ import type {
 } from "@cadenza.io/core";
 import { DbOperationPayload } from "../../types/queryData";
 import Cadenza from "../../Cadenza";
-import { hoistDelegationMetadataFields } from "../../utils/delegation";
+import {
+  attachDelegationRequestSnapshot,
+  hoistDelegationMetadataFields,
+  restoreDelegationRequestSnapshot,
+  stripDelegationRequestSnapshot,
+} from "../../utils/delegation";
+
+const ACTOR_SESSION_TRACE_ENABLED =
+  process.env.CADENZA_ACTOR_SESSION_TRACE === "1" ||
+  process.env.CADENZA_ACTOR_SESSION_TRACE === "true";
+const INSTANCE_TRACE_ENABLED =
+  process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+  process.env.CADENZA_INSTANCE_DEBUG === "true";
+const EXECUTION_OBSERVABILITY_INSERT_ROUTINES = new Set([
+  "Insert execution_trace",
+  "Insert signal_emission",
+  "Insert routine_execution",
+  "Insert task_execution",
+  "Insert inquiry",
+]);
 
 /**
  * Represents a specialized task for delegating database operations. Extends `DeputyTask`.
@@ -113,9 +132,71 @@ export default class DatabaseTask extends DeputyTask {
     progressCallback: (progress: number) => void,
     nodeData: { nodeId: string; routineExecId: string },
   ): TaskResult {
-    const ctx = context.getContext();
-    const metadata = context.getMetadata();
-    const dynamicQueryData = ctx.queryData ?? {};
+    const initialFullContext = {
+      ...context.getFullContext(),
+    };
+    const hasExplicitOperationPayload =
+      initialFullContext.data !== undefined ||
+      initialFullContext.queryData !== undefined ||
+      initialFullContext.batch !== undefined ||
+      initialFullContext.transaction !== undefined ||
+      initialFullContext.onConflict !== undefined ||
+      initialFullContext.filter !== undefined ||
+      initialFullContext.fields !== undefined ||
+      initialFullContext.joins !== undefined ||
+      initialFullContext.sort !== undefined ||
+      initialFullContext.limit !== undefined ||
+      initialFullContext.offset !== undefined;
+    const hasStaleDelegationIdentity =
+      (typeof initialFullContext.__remoteRoutineName === "string" &&
+        initialFullContext.__remoteRoutineName !== this.remoteRoutineName) ||
+      (typeof initialFullContext.__localTaskName === "string" &&
+        initialFullContext.__localTaskName !== this.name);
+    const hasResolverOwnedContext =
+      (typeof initialFullContext.__resolverRequestId === "string" &&
+        initialFullContext.__resolverRequestId.length > 0) ||
+      (initialFullContext.__resolverQueryData !== undefined &&
+        initialFullContext.__resolverQueryData !== null);
+    const shouldPreferCurrentContext =
+      hasResolverOwnedContext ||
+      (hasExplicitOperationPayload && hasStaleDelegationIdentity);
+    const rawContext = shouldPreferCurrentContext
+      ? attachDelegationRequestSnapshot(
+          stripDelegationRequestSnapshot(initialFullContext),
+        )
+      : restoreDelegationRequestSnapshot(
+          attachDelegationRequestSnapshot(initialFullContext),
+        );
+    const metadata =
+      rawContext.__metadata && typeof rawContext.__metadata === "object"
+        ? rawContext.__metadata
+        : context.getMetadata();
+    const ctx = {
+      ...rawContext,
+    };
+
+    if (EXECUTION_OBSERVABILITY_INSERT_ROUTINES.has(this.remoteRoutineName)) {
+      delete ctx.__signalEmission;
+      delete ctx.__routineExecId;
+      delete ctx.__localRoutineExecId;
+      delete ctx.__previousTaskExecutionId;
+      if (ctx.__metadata && typeof ctx.__metadata === "object") {
+        delete (ctx.__metadata as AnyObject).__routineExecId;
+        delete (ctx.__metadata as AnyObject).__localRoutineExecId;
+        delete (ctx.__metadata as AnyObject).__previousTaskExecutionId;
+      }
+    }
+
+    delete ctx.__metadata;
+    const isResolverExecution =
+      typeof ctx.__resolverRequestId === "string" &&
+      ctx.__resolverRequestId.length > 0;
+    const dynamicQueryData =
+      isResolverExecution
+        ? {}
+        : ctx.__resolverQueryData && typeof ctx.__resolverQueryData === "object"
+        ? ctx.__resolverQueryData
+        : ctx.queryData ?? {};
     delete ctx.queryData;
     const nextQueryData: DbOperationPayload = {
       ...this.queryData,
@@ -125,35 +206,96 @@ export default class DatabaseTask extends DeputyTask {
       ...dynamicQueryData,
     };
 
-    const deputyContext = hoistDelegationMetadataFields({
-      ...ctx,
-      __localTaskName: this.name,
-      __localTaskVersion: this.version,
-      __localServiceName: Cadenza.serviceRegistry.serviceName,
-      __previousTaskExecutionId: nodeData.nodeId,
-      __remoteRoutineName: this.remoteRoutineName,
-      __serviceName: this.serviceName,
-      __executionTraceId: metadata.__executionTraceId ?? null,
-      __localRoutineExecId:
-        metadata.__routineExecId ?? metadata.__metadata?.__routineExecId,
-      __metadata: {
-        ...metadata,
-        __skipRemoteExecution:
-          metadata.__skipRemoteExecution ?? ctx.__skipRemoteExecution ?? false,
-        __blockRemoteExecution:
-          metadata.__blockRemoteExecution ?? ctx.__blockRemoteExecution ?? false,
-        __deputyTaskName: this.name,
-      },
-      data: nextQueryData.data ?? ctx.data,
-      batch: nextQueryData.batch ?? ctx.batch,
-      transaction: nextQueryData.transaction ?? ctx.transaction,
-      onConflict: Object.prototype.hasOwnProperty.call(nextQueryData, "onConflict")
-        ? nextQueryData.onConflict
-        : undefined,
-      filter: nextQueryData.filter ?? ctx.filter,
-      fields: nextQueryData.fields ?? ctx.fields,
-      queryData: nextQueryData,
-    });
+    const deputyContext = attachDelegationRequestSnapshot(
+      stripDelegationRequestSnapshot(
+        hoistDelegationMetadataFields({
+          ...ctx,
+          __timeout: this.timeout,
+          __localTaskName: this.name,
+          __localTaskVersion: this.version,
+          __localServiceName: Cadenza.serviceRegistry.serviceName,
+          __previousTaskExecutionId: nodeData.nodeId,
+          __remoteRoutineName: this.remoteRoutineName,
+          __serviceName: this.serviceName,
+          __executionTraceId: metadata.__executionTraceId ?? null,
+          __localRoutineExecId:
+            metadata.__routineExecId ?? metadata.__metadata?.__routineExecId,
+          __metadata: {
+            ...metadata,
+            __skipRemoteExecution:
+              metadata.__skipRemoteExecution ?? ctx.__skipRemoteExecution ?? false,
+            __blockRemoteExecution:
+              metadata.__blockRemoteExecution ?? ctx.__blockRemoteExecution ?? false,
+            __deputyTaskName: this.name,
+          },
+          data: nextQueryData.data ?? ctx.data,
+          batch: nextQueryData.batch ?? ctx.batch,
+          transaction: nextQueryData.transaction ?? ctx.transaction,
+          onConflict: Object.prototype.hasOwnProperty.call(nextQueryData, "onConflict")
+            ? nextQueryData.onConflict
+            : undefined,
+          filter: nextQueryData.filter ?? ctx.filter,
+          fields: nextQueryData.fields ?? ctx.fields,
+          queryData: nextQueryData,
+        }),
+      ),
+    );
+
+    if (
+      INSTANCE_TRACE_ENABLED &&
+      this.remoteRoutineName === "Insert service_instance"
+    ) {
+      console.log("[CADENZA_INSTANCE_DEBUG] database_task_execute", {
+        localServiceName: Cadenza.serviceRegistry.serviceName,
+        localTaskName: this.name,
+        remoteRoutineName: this.remoteRoutineName,
+        hasDelegationSnapshot:
+          (rawContext as AnyObject).__delegationRequestContext !== undefined,
+        dataKeys:
+          ctx.data && typeof ctx.data === "object" && !Array.isArray(ctx.data)
+            ? Object.keys(ctx.data)
+            : [],
+        rootOnConflictTarget: Array.isArray((ctx as AnyObject).onConflict?.target)
+          ? ((ctx as AnyObject).onConflict.target as unknown[])
+          : null,
+        queryOnConflictTarget: Array.isArray(nextQueryData.onConflict?.target)
+          ? (nextQueryData.onConflict.target as unknown[])
+          : null,
+        queryDataKeys: Object.keys(nextQueryData),
+        queryDataDataKeys:
+          nextQueryData.data &&
+          typeof nextQueryData.data === "object" &&
+          !Array.isArray(nextQueryData.data)
+            ? Object.keys(nextQueryData.data as AnyObject)
+            : [],
+        rootKeys: Object.keys(rawContext),
+      });
+    }
+
+    if (
+      ACTOR_SESSION_TRACE_ENABLED &&
+      this.remoteRoutineName === "Insert actor_session_state"
+    ) {
+      console.log("[CADENZA_ACTOR_SESSION_TRACE] database_task_execute", {
+        localServiceName: Cadenza.serviceRegistry.serviceName,
+        localTaskName: this.name,
+        remoteRoutineName: this.remoteRoutineName,
+        hadSnapshotBeforeRestore:
+          initialFullContext.__delegationRequestContext !== undefined,
+        beforeRestoreHasData: initialFullContext.data !== undefined,
+        beforeRestoreHasQueryData: initialFullContext.queryData !== undefined,
+        beforeRestoreLooksLikeResult:
+          initialFullContext.__status !== undefined ||
+          initialFullContext.__success !== undefined ||
+          initialFullContext.rowCount !== undefined ||
+          initialFullContext.__isDeputy === true,
+        afterRestoreHasData: rawContext.data !== undefined,
+        afterRestoreHasQueryData: rawContext.queryData !== undefined,
+        outgoingHasData: deputyContext.data !== undefined,
+        outgoingHasQueryData: deputyContext.queryData !== undefined,
+        rootKeys: Object.keys(rawContext),
+      });
+    }
 
     return this.taskFunction(deputyContext, emit, inquire, progressCallback);
   }

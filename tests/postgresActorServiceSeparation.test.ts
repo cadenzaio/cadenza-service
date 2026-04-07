@@ -375,6 +375,10 @@ describe("PostgresActor and database service separation", () => {
         }
 
         delegatedContexts.push({
+          __serviceName: ctx.__serviceName,
+          __remoteRoutineName: ctx.__remoteRoutineName,
+          __localTaskName: ctx.__localTaskName,
+          __delegationRequestContext: ctx.__delegationRequestContext,
           data: ctx.data,
           onConflict: ctx.onConflict,
           queryData: ctx.queryData,
@@ -422,6 +426,571 @@ describe("PostgresActor and database service separation", () => {
     });
   });
 
+  it("does not strip queryData from reused graph context across delegated insert executions", async () => {
+    const delegatedContexts: Array<Record<string, unknown>> = [];
+
+    const insertTask = Cadenza.createDatabaseInsertTask("telemetry", "MetricsDB", {
+      onConflict: {
+        target: ["uuid"],
+        action: {
+          do: "nothing",
+        },
+      },
+    }) as any;
+
+    const graphContext = new GraphContext({
+      data: {
+        uuid: "telemetry-1",
+      },
+      queryData: {
+        data: {
+          uuid: "telemetry-1",
+        },
+        onConflict: {
+          target: ["uuid"],
+          action: {
+            do: "nothing",
+          },
+        },
+      },
+    });
+
+    const runInsert = async () =>
+      insertTask.execute(
+        graphContext,
+        (signal: string, ctx: Record<string, unknown>) => {
+          if (signal !== "meta.deputy.delegation_requested") {
+            return;
+          }
+
+          delegatedContexts.push({
+            data: ctx.data,
+            onConflict: ctx.onConflict,
+            queryData: ctx.queryData,
+          });
+
+          queueMicrotask(() => {
+            Cadenza.emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+              ...ctx,
+              __success: true,
+            });
+          });
+        },
+        async () => ({}),
+        () => undefined,
+        {
+          nodeId: "node-1",
+          routineExecId: "routine-1",
+        },
+      );
+
+    await runInsert();
+    await runInsert();
+
+    expect(delegatedContexts).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "telemetry-1",
+        }),
+        onConflict: expect.objectContaining({
+          target: ["uuid"],
+        }),
+        queryData: expect.objectContaining({
+          data: expect.objectContaining({
+            uuid: "telemetry-1",
+          }),
+          onConflict: expect.objectContaining({
+            target: ["uuid"],
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "telemetry-1",
+        }),
+        onConflict: expect.objectContaining({
+          target: ["uuid"],
+        }),
+        queryData: expect.objectContaining({
+          data: expect.objectContaining({
+            uuid: "telemetry-1",
+          }),
+          onConflict: expect.objectContaining({
+            target: ["uuid"],
+          }),
+        }),
+      }),
+    ]);
+  });
+
+  it("restores the original delegation payload when a retry context only contains a prior response", async () => {
+    const delegatedContexts: Array<Record<string, unknown>> = [];
+
+    const insertTask = Cadenza.createDatabaseInsertTask("telemetry", "MetricsDB", {
+      onConflict: {
+        target: ["uuid"],
+        action: {
+          do: "nothing",
+        },
+      },
+    }) as any;
+
+    const originalDelegationRequest = {
+      data: {
+        uuid: "telemetry-restore-1",
+      },
+      queryData: {
+        data: {
+          uuid: "telemetry-restore-1",
+        },
+        onConflict: {
+          target: ["uuid"],
+          action: {
+            do: "nothing",
+          },
+        },
+      },
+      onConflict: {
+        target: ["uuid"],
+        action: {
+          do: "nothing",
+        },
+      },
+      __remoteRoutineName: "Insert telemetry",
+      __serviceName: "MetricsDB",
+      __localTaskName: "Insert telemetry in MetricsDB",
+    };
+
+    const retriedGraphContext = new GraphContext({
+      actorSessionState: null,
+      rowCount: 0,
+      __success: true,
+      __status: "success",
+      __isDeputy: true,
+      __retries: 1,
+      __delegationRequestContext: originalDelegationRequest,
+    });
+
+    await insertTask.execute(
+      retriedGraphContext,
+      (signal: string, ctx: Record<string, unknown>) => {
+        if (signal !== "meta.deputy.delegation_requested") {
+          return;
+        }
+
+        delegatedContexts.push({
+          __serviceName: ctx.__serviceName,
+          __remoteRoutineName: ctx.__remoteRoutineName,
+          __localTaskName: ctx.__localTaskName,
+          __delegationRequestContext: ctx.__delegationRequestContext,
+          data: ctx.data,
+          onConflict: ctx.onConflict,
+          queryData: ctx.queryData,
+        });
+
+        queueMicrotask(() => {
+          Cadenza.emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+            ...ctx,
+            __success: true,
+          });
+        });
+      },
+      async () => ({}),
+      () => undefined,
+      {
+        nodeId: "node-restore-1",
+        routineExecId: "routine-restore-1",
+      },
+    );
+
+    expect(delegatedContexts).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "telemetry-restore-1",
+        }),
+        onConflict: expect.objectContaining({
+          target: ["uuid"],
+        }),
+        queryData: expect.objectContaining({
+          data: expect.objectContaining({
+            uuid: "telemetry-restore-1",
+          }),
+          onConflict: expect.objectContaining({
+            target: ["uuid"],
+          }),
+        }),
+      }),
+    ]);
+  });
+
+  it("prefers resolver query data over stale root query data for delegated inserts", async () => {
+    const delegatedContexts: Array<Record<string, unknown>> = [];
+
+    const insertTask = Cadenza.createDatabaseInsertTask("service_instance", "CadenzaDB", {
+      onConflict: {
+        target: ["uuid"],
+        action: {
+          do: "update",
+        },
+      },
+    }) as any;
+
+    const graphContext = new GraphContext({
+      data: {
+        uuid: "service-instance-1",
+        process_pid: 321,
+        service_name: "OrdersService",
+      },
+      onConflict: {
+        target: ["name"],
+        action: {
+          do: "nothing",
+        },
+      },
+      queryData: {
+        data: {
+          name: "OrdersService",
+        },
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "nothing",
+          },
+        },
+      },
+      __resolverQueryData: {
+        data: {
+          uuid: "service-instance-1",
+          process_pid: 321,
+          service_name: "OrdersService",
+        },
+        onConflict: {
+          target: ["uuid"],
+          action: {
+            do: "update",
+          },
+        },
+      },
+      __resolverRequestId: "resolver-service-instance-1",
+      __remoteRoutineName: "Insert service_instance",
+      __serviceName: "CadenzaDB",
+      __localTaskName: "Insert service_instance in CadenzaDB",
+    });
+
+    const result = await insertTask.execute(
+      graphContext,
+      (signal: string, ctx: Record<string, unknown>) => {
+        if (signal !== "meta.deputy.delegation_requested") {
+          return;
+        }
+
+        delegatedContexts.push({
+          __serviceName: ctx.__serviceName,
+          __remoteRoutineName: ctx.__remoteRoutineName,
+          __localTaskName: ctx.__localTaskName,
+          __delegationRequestContext: ctx.__delegationRequestContext,
+          data: ctx.data,
+          onConflict: ctx.onConflict,
+          queryData: ctx.queryData,
+        });
+
+        queueMicrotask(() => {
+          Cadenza.emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+            ...ctx,
+            __success: true,
+          });
+        });
+      },
+      async () => ({}),
+      () => undefined,
+      {
+        nodeId: "node-resolver-priority-1",
+        routineExecId: "routine-resolver-priority-1",
+      },
+    );
+
+    expect(delegatedContexts).toEqual([
+      expect.objectContaining({
+        __serviceName: "CadenzaDB",
+        __remoteRoutineName: "Insert service_instance",
+        __localTaskName: "Insert service_instance in CadenzaDB",
+        __delegationRequestContext: expect.objectContaining({
+          __serviceName: "CadenzaDB",
+          __remoteRoutineName: "Insert service_instance",
+        }),
+        data: expect.objectContaining({
+          uuid: "service-instance-1",
+          process_pid: 321,
+          service_name: "OrdersService",
+        }),
+        onConflict: expect.objectContaining({
+          target: ["uuid"],
+        }),
+        queryData: expect.objectContaining({
+          data: expect.objectContaining({
+            uuid: "service-instance-1",
+            process_pid: 321,
+            service_name: "OrdersService",
+          }),
+          onConflict: expect.objectContaining({
+            target: ["uuid"],
+          }),
+        }),
+      }),
+    ]);
+    expect(result).toMatchObject({
+      __resolverRequestId: "resolver-service-instance-1",
+      __resolverQueryData: expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "service-instance-1",
+          process_pid: 321,
+          service_name: "OrdersService",
+        }),
+      }),
+    });
+  });
+
+  it("preserves resolver-owned insert payloads even when a stale delegation snapshot is present", async () => {
+    const delegatedContexts: Array<Record<string, unknown>> = [];
+
+    const insertTask = Cadenza.createDatabaseInsertTask("service_instance", "CadenzaDB", {
+      onConflict: {
+        target: ["uuid"],
+        action: {
+          do: "update",
+        },
+      },
+    }) as any;
+
+    const graphContext = new GraphContext({
+      __status: "success",
+      __success: true,
+      data: {
+        uuid: "service-instance-2",
+        process_pid: 654,
+        service_name: "OrdersService",
+        is_active: true,
+      },
+      __resolverQueryData: {
+        data: {
+          uuid: "service-instance-2",
+          process_pid: 654,
+          service_name: "OrdersService",
+          is_active: true,
+        },
+        onConflict: {
+          target: ["uuid"],
+          action: {
+            do: "update",
+          },
+        },
+      },
+      __resolverRequestId: "resolver-service-instance-2",
+      __delegationRequestContext: {
+        data: {
+          name: "OrdersService",
+          description: "Orders",
+          display_name: "Orders",
+          is_meta: false,
+        },
+        queryData: {
+          data: {
+            name: "OrdersService",
+            description: "Orders",
+            display_name: "Orders",
+            is_meta: false,
+          },
+          onConflict: {
+            target: ["name"],
+            action: {
+              do: "nothing",
+            },
+          },
+        },
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "nothing",
+          },
+        },
+      },
+      __remoteRoutineName: "Insert service_instance",
+      __serviceName: "CadenzaDB",
+      __localTaskName: "Insert service_instance in CadenzaDB",
+    });
+
+    await insertTask.execute(
+      graphContext,
+      (signal: string, ctx: Record<string, unknown>) => {
+        if (signal !== "meta.deputy.delegation_requested") {
+          return;
+        }
+
+        delegatedContexts.push({
+          __serviceName: ctx.__serviceName,
+          __remoteRoutineName: ctx.__remoteRoutineName,
+          __localTaskName: ctx.__localTaskName,
+          __delegationRequestContext: ctx.__delegationRequestContext,
+          data: ctx.data,
+          onConflict: ctx.onConflict,
+          queryData: ctx.queryData,
+        });
+
+        queueMicrotask(() => {
+          Cadenza.emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+            ...ctx,
+            __success: true,
+          });
+        });
+      },
+      async () => ({}),
+      () => undefined,
+      {
+        nodeId: "node-resolver-snapshot-2",
+        routineExecId: "routine-resolver-snapshot-2",
+      },
+    );
+
+    expect(delegatedContexts).toEqual([
+      expect.objectContaining({
+        __serviceName: "CadenzaDB",
+        __remoteRoutineName: "Insert service_instance",
+        __localTaskName: "Insert service_instance in CadenzaDB",
+        __delegationRequestContext: expect.objectContaining({
+          __serviceName: "CadenzaDB",
+          __remoteRoutineName: "Insert service_instance",
+        }),
+        data: expect.objectContaining({
+          uuid: "service-instance-2",
+          process_pid: 654,
+          service_name: "OrdersService",
+          is_active: true,
+        }),
+        onConflict: expect.objectContaining({
+          target: ["uuid"],
+        }),
+        queryData: expect.objectContaining({
+          data: expect.objectContaining({
+            uuid: "service-instance-2",
+            process_pid: 654,
+            service_name: "OrdersService",
+            is_active: true,
+          }),
+          onConflict: expect.objectContaining({
+            target: ["uuid"],
+          }),
+        }),
+      }),
+    ]);
+    expect(delegatedContexts[0].data).not.toMatchObject({
+      name: "OrdersService",
+      description: "Orders",
+      display_name: "Orders",
+      is_meta: false,
+    });
+  });
+
+  it("preserves child database payloads when a parent delegation snapshot is stale", async () => {
+    const delegatedContexts: Array<Record<string, unknown>> = [];
+
+    const insertTask = Cadenza.createDatabaseInsertTask(
+      "signal_emission",
+      "CadenzaDB",
+    ) as any;
+
+    const graphContext = new GraphContext({
+      __status: "success",
+      __success: true,
+      __remoteRoutineName: "Insert execution_trace",
+      __localTaskName: "Insert execution_trace in CadenzaDB",
+      __serviceName: "CadenzaDB",
+      __delegationRequestContext: {
+        __remoteRoutineName: "Insert execution_trace",
+        __localTaskName: "Insert execution_trace in CadenzaDB",
+        data: {
+          uuid: "trace-1",
+          issuer_type: "service",
+        },
+        queryData: {
+          data: {
+            uuid: "trace-1",
+            issuer_type: "service",
+          },
+        },
+      },
+      data: {
+        uuid: "signal-1",
+        signal_name: "runner.tick",
+        execution_trace_id: "trace-1",
+      },
+      queryData: {
+        data: {
+          uuid: "signal-1",
+          signal_name: "runner.tick",
+          execution_trace_id: "trace-1",
+        },
+      },
+    });
+
+    await insertTask.execute(
+      graphContext,
+      (signal: string, ctx: Record<string, unknown>) => {
+        if (signal !== "meta.deputy.delegation_requested") {
+          return;
+        }
+
+        delegatedContexts.push({
+          __serviceName: ctx.__serviceName,
+          __remoteRoutineName: ctx.__remoteRoutineName,
+          __localTaskName: ctx.__localTaskName,
+          data: ctx.data,
+          queryData: ctx.queryData,
+          __delegationRequestContext: ctx.__delegationRequestContext,
+        });
+
+        queueMicrotask(() => {
+          Cadenza.emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+            ...ctx,
+            __success: true,
+          });
+        });
+      },
+      async () => ({}),
+      () => undefined,
+      {
+        nodeId: "node-stale-parent-snapshot",
+        routineExecId: "routine-stale-parent-snapshot",
+      },
+    );
+
+    expect(delegatedContexts).toEqual([
+      expect.objectContaining({
+        __serviceName: "CadenzaDB",
+        __remoteRoutineName: "Insert signal_emission",
+        __localTaskName: "Insert signal_emission in CadenzaDB",
+        data: expect.objectContaining({
+          uuid: "signal-1",
+          signal_name: "runner.tick",
+          execution_trace_id: "trace-1",
+        }),
+        queryData: expect.objectContaining({
+          data: expect.objectContaining({
+            uuid: "signal-1",
+            signal_name: "runner.tick",
+            execution_trace_id: "trace-1",
+          }),
+        }),
+        __delegationRequestContext: expect.objectContaining({
+          __remoteRoutineName: "Insert signal_emission",
+          __localTaskName: "Insert signal_emission in CadenzaDB",
+        }),
+      }),
+    ]);
+    expect(delegatedContexts[0].data).not.toMatchObject({
+      issuer_type: "service",
+    });
+  });
+
   it("uses hardened deputy and database proxy defaults", () => {
     const deputyTask = Cadenza.createDeputyTask("Query MetricsDB", "MetricsDB");
     const databaseTask = Cadenza.createDatabaseInsertTask("telemetry", "MetricsDB");
@@ -430,6 +999,68 @@ describe("PostgresActor and database service separation", () => {
     expect(deputyTask.timeout).toBe(120_000);
     expect(databaseTask.concurrency).toBe(50);
     expect(databaseTask.timeout).toBe(120_000);
+  });
+
+  it("propagates database deputy timeout overrides into the delegated context", async () => {
+    const delegatedContexts: Array<Record<string, unknown>> = [];
+
+    const insertTask = Cadenza.createCadenzaDBInsertTask(
+      "routine_execution",
+      {},
+      {
+        isSubMeta: true,
+        timeout: 120_000,
+      },
+    ) as any;
+
+    const graphContext = new GraphContext({
+      data: {
+        uuid: "routine-1",
+        name: "Compute traffic tick plan",
+        execution_trace_id: "trace-1",
+      },
+      queryData: {
+        data: {
+          uuid: "routine-1",
+          name: "Compute traffic tick plan",
+          execution_trace_id: "trace-1",
+        },
+      },
+      __metadata: {
+        __executionTraceId: "trace-1",
+      },
+    });
+
+    await insertTask.execute(
+      graphContext,
+      (signal: string, ctx: Record<string, unknown>) => {
+        if (signal !== "meta.deputy.delegation_requested") {
+          return;
+        }
+
+        delegatedContexts.push(ctx);
+
+        queueMicrotask(() => {
+          Cadenza.emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+            ...ctx,
+            __success: true,
+          });
+        });
+      },
+      async () => ({}),
+      () => undefined,
+      {
+        nodeId: "node-timeout-propagation",
+        routineExecId: "routine-timeout-propagation",
+      },
+    );
+
+    expect(delegatedContexts).toHaveLength(1);
+    expect(delegatedContexts[0].__timeout).toBe(120_000);
+    expect(
+      (delegatedContexts[0].__metadata as Record<string, unknown>)
+        ?.__executionTraceId,
+    ).toBe("trace-1");
   });
 
   it("caps generated insert and upsert tasks with shared write-task throttles", () => {

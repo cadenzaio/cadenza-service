@@ -63,6 +63,264 @@ Frontend bootstrap resolution order is:
 
 `CADENZA_DB_ADDRESS` now accepts either a full address with port, or a bare host/address when `CADENZA_DB_PORT` is also set.
 
+### Creating a browser runtime actor
+If you want a reusable browser runtime primitive on top of frontend mode, use `createBrowserRuntimeActor(...)`. This keeps the shared runtime framework agnostic and lets Vue/Nuxt, React, or other frontend adapters subscribe to plain runtime state updates.
+
+```typescript
+import Cadenza from "@cadenza.io/service";
+
+const browserRuntime = Cadenza.createBrowserRuntimeActor({
+  actorName: "BrowserDashboardRuntimeActor",
+  service: {
+    name: "BrowserApp",
+    description: "Frontend app",
+    bootstrap: {
+      url: "https://cadenza-db.example.com:5000",
+    },
+    hydration,
+    useSocket: true,
+  },
+  initialProjectionState: {
+    liveFeed: [],
+  },
+  signalBindings: [
+    {
+      signal: "global.orders.updated",
+      reduce: (current, payload) => ({
+        ...current,
+        liveFeed: [payload, ...current.liveFeed],
+      }),
+    },
+  ],
+});
+
+const unsubscribe = browserRuntime.subscribe((state) => {
+  console.log(state.ready, state.projectionState.liveFeed);
+});
+
+await browserRuntime.waitUntilReady();
+```
+
+Use `createCadenzaService(..., { isFrontend: true })` directly when you only need the lower-level frontend transport/bootstrap behavior. Use `createBrowserRuntimeActor(...)` when the frontend also needs actor-owned readiness and projected browser runtime state.
+
+### Creating a Nuxt runtime wrapper
+If your frontend is Nuxt, use `@cadenza.io/service/nuxt` on top of the shared browser actor. The Nuxt layer keeps the core runtime framework agnostic while hiding `useState`, plugin injection, and subscription wiring.
+
+```typescript
+import Cadenza from "@cadenza.io/service";
+import { defineCadenzaNuxtRuntimePlugin } from "@cadenza.io/service/nuxt";
+
+export default defineCadenzaNuxtRuntimePlugin({
+  cadenza: Cadenza,
+  actorName: "BrowserDashboardRuntimeActor",
+  service: {
+    name: "BrowserApp",
+    description: "Nuxt dashboard runtime",
+    useSocket: true,
+  },
+  bootstrapUrl: (config) => config.public.cadenzaBootstrapUrl,
+  initialProjectionState: {
+    flags: {
+      maintenanceMode: false,
+    },
+    metrics: {
+      alertCount: 0,
+    },
+    liveFeed: [],
+  },
+  signalBindings: [
+    {
+      signal: "global.orders.updated",
+      reduce: (current, payload) => ({
+        ...current,
+        metrics: {
+          ...current.metrics,
+          alertCount: current.metrics.alertCount + 1,
+        },
+        liveFeed: [payload, ...current.liveFeed],
+      }),
+    },
+  ],
+  commands: ({ cadenza, runtime }) => ({
+    refreshDashboard: async () => {
+      await runtime.waitUntilReady();
+      return cadenza.inquire("dashboard-refresh", {});
+    },
+  }),
+});
+```
+
+The Nuxt entrypoint exposes:
+
+- `defineCadenzaNuxtRuntimePlugin(...)`
+- `useCadenzaRuntime()`
+- `useCadenzaProjectionState()`
+- `useCadenzaRuntimeReady()`
+
+The intended model is projection-state-first: signals reduce into structured app state, and components read only the slices they care about.
+
+### Creating a Vue runtime wrapper
+If your frontend is plain Vue 3, use `@cadenza.io/service/vue`. The Vue layer keeps the shared browser actor as the authority and exposes a plugin-installable runtime with provide/inject and Vue-native reactivity.
+
+```typescript
+import { createApp } from "vue";
+import Cadenza from "@cadenza.io/service";
+import {
+  createCadenzaVueRuntime,
+  useCadenzaProjectionSelector,
+  useCadenzaRuntime,
+  useCadenzaRuntimeReady,
+} from "@cadenza.io/service/vue";
+
+const runtime = createCadenzaVueRuntime({
+  cadenza: Cadenza,
+  actorName: "BrowserDashboardRuntimeActor",
+  service: {
+    name: "BrowserApp",
+    description: "Vue dashboard runtime",
+    useSocket: true,
+  },
+  bootstrapUrl: () => window.__CADENZA_BOOTSTRAP_URL__,
+  initialProjectionState: {
+    metrics: {
+      alertCount: 0,
+    },
+    liveFeed: [],
+  },
+  signalBindings: [
+    {
+      signal: "global.orders.updated",
+      reduce: (current, payload) => ({
+        ...current,
+        metrics: {
+          ...current.metrics,
+          alertCount: current.metrics.alertCount + 1,
+        },
+        liveFeed: [payload, ...current.liveFeed],
+      }),
+    },
+  ],
+  commands: ({ cadenza, runtime }) => ({
+    refreshDashboard: async () => {
+      await runtime.waitUntilReady();
+      return cadenza.inquire("dashboard-refresh", {});
+    },
+  }),
+});
+
+function useDashboardRuntime() {
+  const alertCount = useCadenzaProjectionSelector(
+    (state) => state.metrics.alertCount,
+  );
+  const ready = useCadenzaRuntimeReady();
+  const runtime = useCadenzaRuntime();
+
+  return {
+    alertCount,
+    ready,
+    refresh: () => runtime.commands.refreshDashboard(),
+  };
+}
+
+const app = createApp(App);
+app.use(runtime);
+app.mount("#app");
+```
+
+The Vue entrypoint exposes:
+
+- `createCadenzaVueRuntime(...)`
+- `useCadenzaRuntime()`
+- `useCadenzaRuntimeState()`
+- `useCadenzaProjectionState()`
+- `useCadenzaProjectionSelector()`
+- `useCadenzaRuntimeReady()`
+
+Vue is the plain Vue 3 client-app layer. Nuxt remains the Nuxt-specific wrapper, and all wrappers sit on the same browser runtime actor authority.
+
+### Creating a React runtime wrapper
+If your frontend is React, use `@cadenza.io/service/react`. The React layer keeps the runtime object stable in context and lets components subscribe to projection slices with `useSyncExternalStore`.
+
+```typescript
+import { createElement } from "react";
+import Cadenza from "@cadenza.io/service";
+import {
+  CadenzaRuntimeProvider,
+  createCadenzaReactRuntime,
+  useCadenzaProjectionSelector,
+  useCadenzaRuntime,
+} from "@cadenza.io/service/react";
+
+const runtime = createCadenzaReactRuntime({
+  cadenza: Cadenza,
+  actorName: "BrowserDashboardRuntimeActor",
+  service: {
+    name: "BrowserApp",
+    description: "React dashboard runtime",
+    useSocket: true,
+  },
+  bootstrapUrl: () => window.__CADENZA_BOOTSTRAP_URL__,
+  initialProjectionState: {
+    metrics: {
+      alertCount: 0,
+    },
+    liveFeed: [],
+  },
+  signalBindings: [
+    {
+      signal: "global.orders.updated",
+      reduce: (current, payload) => ({
+        ...current,
+        metrics: {
+          ...current.metrics,
+          alertCount: current.metrics.alertCount + 1,
+        },
+        liveFeed: [payload, ...current.liveFeed],
+      }),
+    },
+  ],
+  commands: ({ cadenza, runtime }) => ({
+    refreshDashboard: async () => {
+      await runtime.waitUntilReady();
+      return cadenza.inquire("dashboard-refresh", {});
+    },
+  }),
+});
+
+function AlertCountBadge() {
+  const alertCount = useCadenzaProjectionSelector(
+    (state) => state.metrics.alertCount,
+  );
+  const runtime = useCadenzaRuntime();
+  return createElement(
+    "button",
+    {
+      onClick: () => void runtime.commands.refreshDashboard(),
+    },
+    `Alerts: ${alertCount}`,
+  );
+}
+
+function App() {
+  return createElement(
+    CadenzaRuntimeProvider,
+    { runtime },
+    createElement(AlertCountBadge),
+  );
+}
+```
+
+The React entrypoint exposes:
+
+- `createCadenzaReactRuntime(...)`
+- `CadenzaRuntimeProvider`
+- `useCadenzaRuntime()`
+- `useCadenzaProjectionState()`
+- `useCadenzaProjectionSelector()`
+- `useCadenzaRuntimeReady()`
+
+Prefer `useCadenzaProjectionSelector()` for component-specific slices. Use `useCadenzaProjectionState()` only when a component truly needs the whole `{ ready, projectionState }` snapshot. For SSR-capable React environments such as Next, create the runtime in a client boundary and pass hydration explicitly when needed.
+
 ### SSR inquiries
 For SSR use cases, use the request-scoped bridge for one-off distributed inquiries and pass dehydrated results to the browser runtime.
 

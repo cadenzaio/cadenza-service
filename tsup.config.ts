@@ -1,7 +1,12 @@
 import { defineConfig } from "tsup";
 
 const sharedConfig = {
-  entry: ["src/index.ts"],
+  entry: {
+    index: "src/index.ts",
+    "nuxt/index": "src/nuxt/index.ts",
+    "react/index": "src/react/index.ts",
+    "vue/index": "src/vue/index.ts",
+  },
   format: ["esm", "cjs"] as const,
   sourcemap: true,
   tsconfig: "./tsconfig.json",
@@ -11,7 +16,12 @@ export default defineConfig([
   {
     ...sharedConfig,
     dts: {
-      entry: "src/index.ts",
+      entry: {
+        index: "src/index.ts",
+        "nuxt/index": "src/nuxt/index.ts",
+        "react/index": "src/react/index.ts",
+        "vue/index": "src/vue/index.ts",
+      },
       compilerOptions: {
         module: "NodeNext",
         moduleResolution: "NodeNext",

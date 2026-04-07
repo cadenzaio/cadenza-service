@@ -7,9 +7,21 @@ import type {
 } from "../types/transport";
 
 const DEFAULT_PROTOCOLS: ServiceTransportProtocol[] = ["rest", "socket"];
+const TRANSPORT_HANDLE_ROUTE_KEY_BY_HANDLE = new Map<string, string>();
 
 function normalizeString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(36);
 }
 
 export function normalizeTransportProtocols(
@@ -157,9 +169,73 @@ export function selectTransportForRole(
 }
 
 export function buildTransportClientKey(
-  transport: Pick<ServiceTransportDescriptor, "uuid">,
+  transport: Pick<ServiceTransportDescriptor, "uuid" | "role" | "origin">,
+  serviceName?: string,
 ): string {
+  return buildTransportRouteKey(transport, serviceName);
+}
+
+export function buildTransportRouteKey(
+  transport: Pick<ServiceTransportDescriptor, "uuid" | "role" | "origin">,
+  serviceName?: string,
+): string {
+  const normalizedServiceName =
+    typeof serviceName === "string" ? serviceName.trim() : "";
+  const normalizedOrigin = normalizeTransportOrigin(transport.origin);
+
+  if (normalizedServiceName && transport.role && normalizedOrigin) {
+    return `${normalizedServiceName}|${transport.role}|${normalizedOrigin}`;
+  }
+
   return transport.uuid;
+}
+
+export function buildTransportHandleKey(
+  routeKey: string,
+  protocol: ServiceTransportProtocol,
+): string {
+  const normalizedRouteKey = String(routeKey ?? "").trim();
+  if (!normalizedRouteKey) {
+    return protocol;
+  }
+
+  const servicePrefix =
+    normalizedRouteKey.split("|")[0]?.trim().slice(0, 32) || "route";
+  const handleKey = `${servicePrefix}|${hashString(normalizedRouteKey)}|${protocol}`;
+  TRANSPORT_HANDLE_ROUTE_KEY_BY_HANDLE.set(handleKey, normalizedRouteKey);
+  return handleKey;
+}
+
+export function parseTransportHandleKey(
+  value: unknown,
+): {
+  routeKey: string;
+  protocol: ServiceTransportProtocol | null;
+} | null {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.endsWith("|rest")) {
+    return {
+      routeKey: TRANSPORT_HANDLE_ROUTE_KEY_BY_HANDLE.get(normalized) ?? normalized.slice(0, -5),
+      protocol: "rest",
+    };
+  }
+
+  if (normalized.endsWith("|socket")) {
+    return {
+      routeKey:
+        TRANSPORT_HANDLE_ROUTE_KEY_BY_HANDLE.get(normalized) ?? normalized.slice(0, -7),
+      protocol: "socket",
+    };
+  }
+
+  return {
+    routeKey: normalized,
+    protocol: null,
+  };
 }
 
 export function parseTransportOrigin(

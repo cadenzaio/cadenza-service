@@ -155,9 +155,130 @@ export interface TableDefinition {
   initialData?: { fields: string[]; data: any[][] };
 }
 
+export interface DatabaseMigrationPolicy {
+  baselineOnEmpty?: boolean;
+  adoptExistingVersion?: number | null;
+  allowDestructive?: boolean;
+  transactionalMode?: "per_migration" | "none";
+}
+
+export type DatabaseMigrationConstraintDefinition =
+  | {
+      kind: "primaryKey";
+      fields: string[];
+    }
+  | {
+      kind: "unique";
+      fields: string[];
+    }
+  | {
+      kind: "foreignKey";
+      fields: string[];
+      referenceTable: string;
+      referenceFields: string[];
+      onDelete?: "cascade" | "set null" | "no action";
+    }
+  | {
+      kind: "check";
+      expression: string;
+    }
+  | {
+      kind: "sql";
+      sql: string;
+    };
+
+export type DatabaseMigrationStep =
+  | {
+      kind: "createTable";
+      table: string;
+      definition: TableDefinition;
+    }
+  | {
+      kind: "dropTable";
+      table: string;
+      ifExists?: boolean;
+      cascade?: boolean;
+    }
+  | {
+      kind: "addColumn";
+      table: string;
+      column: string;
+      definition: FieldDefinition;
+      ifNotExists?: boolean;
+    }
+  | {
+      kind: "dropColumn";
+      table: string;
+      column: string;
+      ifExists?: boolean;
+      cascade?: boolean;
+    }
+  | {
+      kind: "alterColumn";
+      table: string;
+      column: string;
+      setType?: SchemaType;
+      using?: string;
+      setDefault?: any;
+      dropDefault?: boolean;
+      setNotNull?: boolean;
+      dropNotNull?: boolean;
+    }
+  | {
+      kind: "renameColumn";
+      table: string;
+      from: string;
+      to: string;
+    }
+  | {
+      kind: "renameTable";
+      from: string;
+      to: string;
+    }
+  | {
+      kind: "addIndex";
+      table: string;
+      fields: string[];
+      name?: string;
+      unique?: boolean;
+    }
+  | {
+      kind: "dropIndex";
+      table?: string;
+      fields?: string[];
+      name?: string;
+      ifExists?: boolean;
+    }
+  | {
+      kind: "addConstraint";
+      table: string;
+      name: string;
+      definition: DatabaseMigrationConstraintDefinition;
+    }
+  | {
+      kind: "dropConstraint";
+      table: string;
+      name: string;
+      ifExists?: boolean;
+    }
+  | {
+      kind: "sql";
+      sql: string | string[];
+    };
+
+export interface DatabaseMigrationDefinition {
+  version: number;
+  name: string;
+  description?: string;
+  steps: DatabaseMigrationStep[];
+  transaction?: "inherit" | "required" | "none";
+}
+
 export interface DatabaseSchemaDefinition {
   version?: number;
   tables: Record<string, TableDefinition>;
+  migrations?: DatabaseMigrationDefinition[];
+  migrationPolicy?: DatabaseMigrationPolicy;
   relations?: Record<
     string,
     {

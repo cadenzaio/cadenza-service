@@ -148,6 +148,8 @@ customSignals: {
 |---|---|---|---|
 | `version` | `number` | no | Schema version metadata |
 | `tables` | `Record<string, TableDefinition>` | yes | Table map |
+| `migrations` | `DatabaseMigrationDefinition[]` | no | Ordered schema upgrades for existing databases |
+| `migrationPolicy` | `DatabaseMigrationPolicy` | no | Baseline and execution behavior |
 | `relations` | relation map | no | Optional relation metadata |
 | `meta.defaultEncoding` | `"utf8" \| "base64"` | no | Metadata only |
 | `meta.autoIndex` | `boolean` | no | Metadata only |
@@ -195,6 +197,56 @@ Supported field `type` values:
 - `varchar`, `text`, `int`, `bigint`, `decimal`, `boolean`
 - `array`, `object`, `jsonb`
 - `uuid`, `timestamp`, `date`, `geo_point`, `bytea`, `any`
+
+## 4.4 Migration contract
+
+### `DatabaseMigrationPolicy`
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `baselineOnEmpty` | `boolean` | no | Fresh empty databases are created from the latest snapshot and migrations are recorded as applied |
+| `allowDestructive` | `boolean` | no | Required for destructive migration steps such as `dropTable` or `dropColumn` |
+| `transactionalMode` | `"per_migration" \| "none"` | no | Whether each migration runs in its own transaction |
+
+### `DatabaseMigrationDefinition`
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `version` | `number` | yes | Must be unique and strictly increasing |
+| `name` | `string` | yes | Stable migration identifier |
+| `description` | `string` | no | Human-readable context |
+| `steps` | `DatabaseMigrationStep[]` | yes | Ordered migration steps |
+| `transaction` | `"inherit" \| "required" \| "none"` | no | Per-migration override of `transactionalMode` |
+
+### Supported `DatabaseMigrationStep.kind`
+
+- `createTable`
+- `dropTable`
+- `addColumn`
+- `dropColumn`
+- `alterColumn`
+- `renameColumn`
+- `renameTable`
+- `addIndex`
+- `dropIndex`
+- `addConstraint`
+- `dropConstraint`
+- `sql`
+
+### Migration runtime behavior
+
+- The actor ensures the internal `cadenza_schema_migration` ledger exists before setup.
+- Fresh empty databases are baselined from `tables` when `baselineOnEmpty !== false`.
+- Existing databases apply pending migrations in ascending `version`.
+- After migration execution, additive snapshot reconciliation still runs from `tables`.
+- Recorded migrations are checksum-validated. Drift fails setup instead of continuing silently.
+
+Use explicit migrations for:
+
+- renames
+- destructive changes
+- backfills
+- constraint changes that should be reviewed and reproducible
 
 ## 5. Payload Contract (`DbOperationPayload`)
 

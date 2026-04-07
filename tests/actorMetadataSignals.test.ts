@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { AnyObject } from "@cadenza.io/core";
 import Cadenza from "../src/Cadenza";
 import GraphMetadataController from "../src/graph/controllers/GraphMetadataController";
+import GraphSyncController from "../src/graph/controllers/GraphSyncController";
 import SocketController from "../src/network/SocketController";
 
 function resetRuntimeState() {
@@ -12,6 +13,7 @@ function resetRuntimeState() {
   }
 
   (GraphMetadataController as any)._instance = undefined;
+  (GraphSyncController as any)._instance = undefined;
   (SocketController as any)._instance = undefined;
 }
 
@@ -127,6 +129,59 @@ describe("Actor metadata signal contracts", () => {
     expect(readField(data, "mode")).toBe("read");
     expect(readField(data, "description")).toBe("Actor task map contract test");
     expect(readField(data, "is_meta")).toBe(false);
+  });
+
+  it("skips direct metadata for bootstrap-local-only actors", async () => {
+    let actorPayload: AnyObject | undefined;
+    let actorTaskPayload: AnyObject | undefined;
+
+    Cadenza.createMetaTask("Capture skipped actor metadata signal", (ctx) => {
+      actorPayload = ctx;
+      return true;
+    }).doOn("global.meta.graph_metadata.actor_created");
+
+    Cadenza.createMetaTask(
+      "Capture skipped actor task association signal",
+      (ctx) => {
+        actorTaskPayload = ctx;
+        return true;
+      },
+    ).doOn("global.meta.graph_metadata.actor_task_associated");
+
+    Cadenza.emit("meta.actor.created", {
+      data: {
+        name: "ServiceLifecycleFlushActor",
+        description: "runtime-only actor",
+        default_key: "service-lifecycle",
+        load_policy: "eager",
+        write_contract: "overwrite",
+        runtime_read_guard: "none",
+        consistency_profile: null,
+        key_definition: null,
+        state_definition: {},
+        retry_policy: {},
+        idempotency_policy: {},
+        session_policy: {},
+        is_meta: true,
+        version: 1,
+      },
+    });
+
+    Cadenza.emit("meta.actor.task_associated", {
+      data: {
+        actor_name: "ServiceLifecycleFlushActor",
+        actor_version: 1,
+        task_name: "Flush local runtime status to authority",
+        task_version: 1,
+        mode: "write",
+        description: "runtime-only association",
+        is_meta: true,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(actorPayload).toBeUndefined();
+    expect(actorTaskPayload).toBeUndefined();
   });
 
   it("waits for both tasks to register before emitting task relationship metadata", async () => {
@@ -273,6 +328,107 @@ describe("Actor metadata signal contracts", () => {
       payloads.filter(
         (payload) =>
           readField(payload.data as AnyObject, "name") === "Registered metadata task",
+      ),
+    ).toEqual([]);
+  });
+
+  it("emits direct intent metadata only for locally handled intents", async () => {
+    const payloads: AnyObject[] = [];
+
+    Cadenza.createMetaTask("Capture direct intent metadata", (ctx) => {
+      payloads.push(ctx);
+      return true;
+    }).doOn("global.meta.graph_metadata.intent_created");
+
+    Cadenza.inquiryBroker.addIntent({
+      name: "remote-report-intent",
+      description: "Remote-only intent",
+      input: { type: "object" },
+      output: { type: "object" },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(
+      payloads.filter(
+        (payload) =>
+          readField(payload.data as AnyObject, "name") === "remote-report-intent",
+      ),
+    ).toEqual([]);
+
+    payloads.length = 0;
+
+    Cadenza.createTask("Local orders report responder", () => true).respondsTo(
+      "orders-report",
+    );
+
+    await waitForCondition(() =>
+      payloads.some(
+        (payload) =>
+          readField(payload.data as AnyObject, "name") === "orders-report",
+      ),
+    );
+
+    const localIntent = Cadenza.inquiryBroker.intents.get(
+      "orders-report",
+    ) as AnyObject | undefined;
+
+    expect(localIntent?.registrationRequested).toBe(true);
+    expect(
+      payloads.some(
+        (payload) =>
+          readField(payload.data as AnyObject, "name") === "orders-report",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not re-emit direct intent metadata after the intent is already registered locally", async () => {
+    const payloads: AnyObject[] = [];
+
+    Cadenza.createMetaTask("Capture deduped intent metadata", (ctx) => {
+      payloads.push(ctx);
+      return true;
+    }).doOn("global.meta.graph_metadata.intent_created");
+
+    Cadenza.createTask("Registered orders responder", () => true).respondsTo(
+      "orders-registered",
+    );
+
+    await waitForCondition(() =>
+      payloads.some(
+        (payload) =>
+          readField(payload.data as AnyObject, "name") === "orders-registered",
+      ),
+    );
+
+    payloads.length = 0;
+
+    GraphSyncController.instance.registeredIntentDefinitions.add(
+      "orders-registered",
+    );
+    const registeredIntent = Cadenza.inquiryBroker.intents.get(
+      "orders-registered",
+    ) as AnyObject | undefined;
+    if (registeredIntent) {
+      registeredIntent.registered = true;
+      registeredIntent.registrationRequested = false;
+    }
+
+    Cadenza.emit("meta.inquiry_broker.added", {
+      data: {
+        name: "orders-registered",
+        description: "",
+        input: { type: "object" },
+        output: { type: "object" },
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(
+      payloads.filter(
+        (payload) =>
+          readField(payload.data as AnyObject, "name") === "orders-registered",
       ),
     ).toEqual([]);
   });

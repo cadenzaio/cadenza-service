@@ -5,8 +5,25 @@ import { io, Socket } from "socket.io-client";
 import { isBrowser } from "../utils/environment";
 import { waitForSocketConnection } from "./socketClientUtils";
 import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
-import { ensureDelegationContextMetadata } from "../utils/delegation";
-import { parseTransportOrigin } from "../utils/transport";
+import {
+  attachDelegationRequestSnapshot,
+  ensureDelegationContextMetadata,
+  stripTransportSelectionRoutingContext,
+  stripDelegationRequestSnapshot,
+} from "../utils/delegation";
+import {
+  buildTransportHandleKey,
+  parseTransportHandleKey,
+  parseTransportOrigin,
+} from "../utils/transport";
+
+const INQUIRY_TRACE_ENABLED =
+  process.env.CADENZA_INQUIRY_TRACE === "1" ||
+  process.env.CADENZA_INQUIRY_TRACE === "true";
+const TRACED_INQUIRY_METADATA_SIGNALS = new Set([
+  "global.meta.graph_metadata.inquiry_created",
+  "global.meta.graph_metadata.inquiry_updated",
+]);
 
 const dynamicImport = new Function(
   "specifier",
@@ -247,10 +264,13 @@ export default class SocketController {
           return false;
         }
 
-        if (context.task || context.routine) {
-          const routine = context.task ?? context.routine;
-          delete context.task;
-          delete context.routine;
+        const remoteRoutineName =
+          context.__remoteRoutineName ?? context.__name ?? "unknown";
+        const routine =
+          Cadenza.get(remoteRoutineName) ??
+          Cadenza.registry.routines.get(remoteRoutineName);
+
+        if (routine) {
           context.__routineExecId = context.__metadata?.__deputyExecId ?? null;
           context.__isDeputy = true;
           Cadenza.runner.run(routine, context);
@@ -259,8 +279,6 @@ export default class SocketController {
 
         const deputyExecId =
           context.__metadata?.__deputyExecId ?? context.__deputyExecId;
-        const remoteRoutineName =
-          context.__remoteRoutineName ?? context.__name ?? "unknown";
         context.errored = true;
         context.__error = `No task or routine registered for delegation target ${remoteRoutineName}.`;
         if (deputyExecId) {
@@ -272,7 +290,7 @@ export default class SocketController {
       "Forwards socket delegated lookups to the local runner in frontend runtimes.",
     )
       .attachSignal("meta.runner.failed")
-      .doAfter(Cadenza.registry.getTaskByName, Cadenza.registry.getRoutineByName);
+      .doOn("meta.socket.delegation_requested");
 
     this.registerDiagnosticsTasks();
     this.registerSocketServerTasks();
@@ -575,10 +593,17 @@ export default class SocketController {
                         return;
                       }
 
-                      const normalizedDelegateCtx =
-                        ensureDelegationContextMetadata(delegateCtx);
+                      const routedDelegateCtx =
+                        stripTransportSelectionRoutingContext(delegateCtx);
+                      const normalizedDelegateCtx = ensureDelegationContextMetadata(
+                        attachDelegationRequestSnapshot(
+                          stripDelegationRequestSnapshot(routedDelegateCtx),
+                        ),
+                      );
                       delete normalizedDelegateCtx.__isSubMeta;
                       delete normalizedDelegateCtx.__broadcast;
+                      const requestPayload =
+                        stripDelegationRequestSnapshot(normalizedDelegateCtx);
 
                       const deputyExecId =
                         normalizedDelegateCtx.__metadata?.__deputyExecId;
@@ -586,7 +611,7 @@ export default class SocketController {
                       const resultContext = await new Promise<AnyObject>((resolve) => {
                         ws.timeout(normalizedDelegateCtx.__timeout ?? 60_000).emit(
                           "delegation",
-                          normalizedDelegateCtx,
+                          requestPayload,
                           (err: AnyObject, response: AnyObject) => {
                             if (err) {
                               resolve({
@@ -597,11 +622,22 @@ export default class SocketController {
                               return;
                             }
 
-                            resolve(
+                            const resolvedResponse =
                               response ?? {
                                 errored: true,
                                 __error: "Frontend delegation returned no response",
-                              },
+                              };
+
+                            resolve(
+                              resolvedResponse?.__delegationRequestContext === undefined &&
+                                normalizedDelegateCtx.__delegationRequestContext !==
+                                  undefined
+                                ? {
+                                    ...resolvedResponse,
+                                    __delegationRequestContext:
+                                      normalizedDelegateCtx.__delegationRequestContext,
+                                  }
+                                : resolvedResponse,
                             );
                           },
                         );
@@ -649,8 +685,39 @@ export default class SocketController {
               });
 
               ws.on("delegation", (ctx: AnyObject, callback: (context: AnyObject) => void) => {
-                const delegationCtx = ensureDelegationContextMetadata(ctx);
+                const delegationCtx = ensureDelegationContextMetadata(
+                  attachDelegationRequestSnapshot(ctx),
+                );
                 const deputyExecId = delegationCtx.__metadata.__deputyExecId;
+
+                if (
+                  (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+                    process.env.CADENZA_INSTANCE_DEBUG === "true") &&
+                  delegationCtx.__remoteRoutineName === "Insert service_instance"
+                ) {
+                  console.log("[CADENZA_INSTANCE_DEBUG] socket_delegation_ingress", {
+                    localServiceName: Cadenza.serviceRegistry.serviceName,
+                    sourceServiceName:
+                      delegationCtx.__localServiceName ??
+                      delegationCtx.__metadata?.__localServiceName ??
+                      null,
+                    deputyExecId,
+                    dataKeys:
+                      delegationCtx.data && typeof delegationCtx.data === "object"
+                        ? Object.keys(delegationCtx.data)
+                        : [],
+                    queryDataKeys:
+                      delegationCtx.queryData &&
+                      typeof delegationCtx.queryData === "object"
+                        ? Object.keys(delegationCtx.queryData)
+                        : [],
+                    queryDataDataKeys:
+                      delegationCtx.queryData?.data &&
+                      typeof delegationCtx.queryData.data === "object"
+                        ? Object.keys(delegationCtx.queryData.data as AnyObject)
+                        : [],
+                  });
+                }
 
                 Cadenza.createEphemeralMetaTask(
                   "Resolve delegation",
@@ -689,10 +756,22 @@ export default class SocketController {
                   ...delegationCtx,
                   __name: delegationCtx.__remoteRoutineName,
                 });
+                Cadenza.emit("meta.service_registry.instance_activity_observed", {
+                  serviceName: Cadenza.serviceRegistry.serviceName,
+                  serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                  activityAt: new Date().toISOString(),
+                  source: "socket-delegation",
+                });
               });
 
               ws.on("signal", (ctx: AnyObject, callback: unknown) => {
                 if (Cadenza.signalBroker.listObservedSignals().includes(ctx.__signalName)) {
+                  Cadenza.emit("meta.service_registry.instance_activity_observed", {
+                    serviceName: Cadenza.serviceRegistry.serviceName,
+                    serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                    activityAt: new Date().toISOString(),
+                    source: "socket-signal",
+                  });
                   if (isSocketAckCallback(callback)) {
                     callback({
                       __status: "success",
@@ -700,7 +779,10 @@ export default class SocketController {
                     });
                   }
 
-                  Cadenza.emit(ctx.__signalName, ctx);
+                  Cadenza.emit(ctx.__signalName, {
+                    ...ctx,
+                    __receivedSignalTransmission: true,
+                  });
                 } else {
                   Cadenza.log(
                     `No such signal ${ctx.__signalName} on ${ctx.__serviceName}`,
@@ -885,6 +967,7 @@ export default class SocketController {
           const serviceName = String(input.serviceName ?? "");
           const serviceTransportId = String(input.serviceTransportId ?? "");
           const serviceOrigin = String(input.serviceOrigin ?? "");
+          const routeGeneration = String(input.routeGeneration ?? "").trim();
           const parsedOrigin = parseTransportOrigin(serviceOrigin);
 
           if (!transportProtocols.includes("socket")) {
@@ -907,7 +990,17 @@ export default class SocketController {
           const socketProtocol =
             parsedOrigin.protocol === "https" ? "wss" : "ws";
           const url = `${socketProtocol}://${parsedOrigin.hostname}:${parsedOrigin.port}`;
-          const fetchId = serviceTransportId;
+          const routeKey = String(
+            input.routeKey ??
+              parseTransportHandleKey(input.fetchId)?.routeKey ??
+              serviceTransportId,
+          ).trim();
+          const fetchId = String(
+            input.socketClientId ??
+              input.fetchId ??
+              (routeKey ? buildTransportHandleKey(routeKey, "socket") : "") ??
+              serviceTransportId,
+          ).trim();
 
           const applySessionOperation = (
             operation: SocketClientSessionOperation,
@@ -1196,8 +1289,9 @@ export default class SocketController {
           });
 
           socket.on("delegation", (delegationCtx, callback) => {
-            const normalizedDelegationCtx =
-              ensureDelegationContextMetadata(delegationCtx);
+            const normalizedDelegationCtx = ensureDelegationContextMetadata(
+              attachDelegationRequestSnapshot(delegationCtx),
+            );
             const deputyExecId = normalizedDelegationCtx.__metadata.__deputyExecId;
             const targetNotFoundSignal =
               `meta.socket.delegation_target_not_found:${deputyExecId}`;
@@ -1229,7 +1323,7 @@ export default class SocketController {
             }
 
             Cadenza.emit("meta.socket.delegation_requested", {
-              ...normalizedDelegationCtx,
+              ...stripDelegationRequestSnapshot(normalizedDelegationCtx),
               __name: normalizedDelegationCtx.__remoteRoutineName,
             });
           });
@@ -1242,7 +1336,10 @@ export default class SocketController {
                   __signalName: signalCtx.__signalName,
                 });
               }
-              Cadenza.emit(signalCtx.__signalName, signalCtx);
+              Cadenza.emit(signalCtx.__signalName, {
+                ...signalCtx,
+                __receivedSignalTransmission: true,
+              });
               return;
             }
 
@@ -1291,7 +1388,16 @@ export default class SocketController {
               },
               "error",
             );
-            Cadenza.emit(`meta.socket_client.connect_error:${fetchId}`, err);
+            Cadenza.emit(`meta.socket_client.connect_error:${fetchId}`, {
+              error: err,
+              serviceName,
+              serviceTransportId,
+              serviceOrigin,
+              fetchId,
+              routeKey,
+              routeGeneration,
+              transportProtocol: "socket",
+            });
           });
 
           socket.on("reconnect_attempt", (attempt) => {
@@ -1381,6 +1487,10 @@ export default class SocketController {
               serviceName,
               serviceTransportId,
               serviceOrigin,
+              fetchId,
+              routeKey,
+              routeGeneration,
+              transportProtocol: "socket",
             });
             runtimeHandle.handshake = false;
           });
@@ -1475,10 +1585,17 @@ export default class SocketController {
                 return;
               }
 
-              const normalizedDelegateCtx =
-                ensureDelegationContextMetadata(delegateCtx);
+              const routedDelegateCtx =
+                stripTransportSelectionRoutingContext(delegateCtx);
+              const normalizedDelegateCtx = ensureDelegationContextMetadata(
+                attachDelegationRequestSnapshot(
+                  stripDelegationRequestSnapshot(routedDelegateCtx),
+                ),
+              );
               delete normalizedDelegateCtx.__isSubMeta;
               delete normalizedDelegateCtx.__broadcast;
+              const requestPayload =
+                stripDelegationRequestSnapshot(normalizedDelegateCtx);
 
               const deputyExecId =
                 normalizedDelegateCtx.__metadata?.__deputyExecId;
@@ -1488,11 +1605,12 @@ export default class SocketController {
                 syncPendingCounts();
               }
 
+              let routeOutcome: "success" | "failure" | "neutral" = "neutral";
               try {
                 const resultContext =
                   ((await runtimeHandle.emitWhenReady?.(
                     "delegation",
-                    normalizedDelegateCtx,
+                    requestPayload,
                     normalizedDelegateCtx.__timeout ?? 60_000,
                   )) as AnyObject | undefined) ??
                   ({
@@ -1501,21 +1619,30 @@ export default class SocketController {
                   } as AnyObject);
 
                 const requestDuration = Date.now() - requestSentAt;
-                const metadata = resultContext.__metadata;
-                delete resultContext.__metadata;
+                const resolvedResultContext =
+                  resultContext?.__delegationRequestContext === undefined &&
+                  normalizedDelegateCtx.__delegationRequestContext !== undefined
+                    ? {
+                        ...resultContext,
+                        __delegationRequestContext:
+                          normalizedDelegateCtx.__delegationRequestContext,
+                      }
+                    : resultContext;
+                const metadata = resolvedResultContext.__metadata;
+                delete resolvedResultContext.__metadata;
 
                 if (deputyExecId) {
                   emitter(`meta.socket_client.delegated:${deputyExecId}`, {
-                    ...resultContext,
+                    ...resolvedResultContext,
                     ...metadata,
                     __requestDuration: requestDuration,
                   });
                 }
 
-                if (resultContext?.errored || resultContext?.failed) {
+                if (resolvedResultContext?.errored || resolvedResultContext?.failed) {
                   const errorMessage =
-                    resultContext?.__error ??
-                    resultContext?.error ??
+                    resolvedResultContext?.__error ??
+                    resolvedResultContext?.error ??
                     "Socket delegation failed";
                   upsertDiagnostics(
                     {
@@ -1526,14 +1653,43 @@ export default class SocketController {
                   applySessionOperation("delegate", {
                     lastHandshakeError: String(errorMessage),
                   });
+                } else {
+                  const serviceInstanceId = String(
+                    normalizedDelegateCtx.__instance ??
+                      normalizedDelegateCtx.targetServiceInstanceId ??
+                      "",
+                  ).trim();
+                  if (serviceName && serviceInstanceId) {
+                    emitter("meta.service_registry.remote_activity_observed", {
+                      serviceName,
+                      serviceInstanceId,
+                      serviceTransportId: String(
+                        normalizedDelegateCtx.__transportId ?? "",
+                      ).trim(),
+                      serviceOrigin: String(
+                        normalizedDelegateCtx.__transportOrigin ?? "",
+                      ).trim(),
+                      transportProtocols: Array.isArray(
+                        normalizedDelegateCtx.__transportProtocols,
+                      )
+                        ? normalizedDelegateCtx.__transportProtocols
+                        : [],
+                      activityAt: new Date().toISOString(),
+                      source: "socket-delegation-success",
+                    });
+                  }
+                  routeOutcome = "success";
                 }
 
-                return resultContext;
+                return resolvedResultContext;
               } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 const failedContext = {
+                  __signalName: "meta.socket_client.delegate_failed",
                   errored: true,
                   __error: message,
+                  ...normalizedDelegateCtx,
+                  ...normalizedDelegateCtx.__metadata,
                 };
 
                 if (deputyExecId) {
@@ -1542,6 +1698,8 @@ export default class SocketController {
                     __requestDuration: Date.now() - requestSentAt,
                   });
                 }
+
+                emitter("meta.socket_client.delegate_failed", failedContext);
 
                 upsertDiagnostics(
                   {
@@ -1552,8 +1710,13 @@ export default class SocketController {
                 applySessionOperation("delegate", {
                   lastHandshakeError: message,
                 });
+                routeOutcome = "failure";
                 return failedContext;
               } finally {
+                Cadenza.serviceRegistry.recordBalancedRouteOutcome(
+                  normalizedDelegateCtx,
+                  routeOutcome,
+                );
                 if (deputyExecId) {
                   runtimeHandle.pendingDelegationIds.delete(deputyExecId);
                   syncPendingCounts();
@@ -1579,8 +1742,27 @@ export default class SocketController {
                 return;
               }
 
+              if (
+                INQUIRY_TRACE_ENABLED &&
+                serviceName === "CadenzaDB" &&
+                TRACED_INQUIRY_METADATA_SIGNALS.has(String(signalCtx.__signalName))
+              ) {
+                console.log("[CADENZA_INQUIRY_TRACE] socket_transmit_start", {
+                  localServiceName: Cadenza.serviceRegistry.serviceName,
+                  targetServiceName: serviceName,
+                  signalName: signalCtx.__signalName,
+                  inquiryName:
+                    signalCtx?.data?.name ??
+                    signalCtx?.data?.metadata?.inquiryMeta?.inquiry ??
+                    null,
+                  inquiryId:
+                    signalCtx?.data?.uuid ?? signalCtx?.filter?.uuid ?? null,
+                });
+              }
+
               delete signalCtx.__broadcast;
 
+              let routeOutcome: "success" | "failure" | "neutral" = "neutral";
               const response =
                 ((await runtimeHandle.emitWhenReady?.("signal", signalCtx, 5_000)) as
                   | AnyObject
@@ -1598,6 +1780,29 @@ export default class SocketController {
                 });
               }
 
+              if (!response?.errored && !response?.failed) {
+                routeOutcome = "success";
+              }
+
+              if (
+                INQUIRY_TRACE_ENABLED &&
+                serviceName === "CadenzaDB" &&
+                TRACED_INQUIRY_METADATA_SIGNALS.has(String(signalCtx.__signalName))
+              ) {
+                console.log("[CADENZA_INQUIRY_TRACE] socket_transmit_result", {
+                  localServiceName: Cadenza.serviceRegistry.serviceName,
+                  targetServiceName: serviceName,
+                  signalName: signalCtx.__signalName,
+                  errored: response?.errored === true,
+                  error: response?.__error ?? response?.error ?? null,
+                });
+              }
+
+              Cadenza.serviceRegistry.recordBalancedRouteOutcome(
+                signalCtx,
+                routeOutcome,
+              );
+
               return response;
             },
             `Transmits signal to service ${serviceName} with address ${url}`,
@@ -1612,6 +1817,18 @@ export default class SocketController {
           Cadenza.createEphemeralMetaTask(
             `Shutdown SocketClient ${url}`,
             (_ctx, emitter) => {
+              if (
+                !Cadenza.serviceRegistry.shouldProcessRemoteRouteEvent({
+                  ..._ctx,
+                  fetchId,
+                  routeKey,
+                  serviceTransportId,
+                  routeGeneration,
+                })
+              ) {
+                return false;
+              }
+
               runtimeHandle.handshake = false;
 
               upsertDiagnostics({
@@ -1631,13 +1848,22 @@ export default class SocketController {
 
               Cadenza.log("Shutting down socket client", { url, serviceName });
 
-              emitter(`meta.fetch.handshake_requested:${fetchId}`, {
+              const restFetchId = routeKey
+                ? buildTransportHandleKey(routeKey, "rest")
+                : fetchId;
+
+              emitter(`meta.fetch.handshake_requested:${restFetchId}`, {
                 serviceInstanceId,
                 serviceName,
                 communicationTypes,
                 serviceTransportId,
                 serviceOrigin,
+                fetchId: restFetchId,
+                routeKey,
+                routeGeneration,
+                socketClientId: fetchId,
                 transportProtocols,
+                transportProtocol: "rest",
                 handshakeData: {
                   instanceId: Cadenza.serviceRegistry.serviceInstanceId,
                   serviceName: Cadenza.serviceRegistry.serviceName,
@@ -1655,6 +1881,7 @@ export default class SocketController {
               emitter("meta.socket_client.runtime_clear_requested", {
                 fetchId,
               });
+              return true;
             },
             "Shuts down the socket client",
             {
@@ -1689,9 +1916,31 @@ export default class SocketController {
   }
 
   private resolveSocketClientFetchId(input: AnyObject): string | undefined {
+    const explicitSocketFetchId = String(
+      input.socketClientId ?? input.socketFetchId ?? "",
+    ).trim();
+    if (explicitSocketFetchId) {
+      return explicitSocketFetchId;
+    }
+
     const explicitFetchId = String(input.fetchId ?? "").trim();
-    if (explicitFetchId) {
+    if (explicitFetchId.startsWith("browser:")) {
       return explicitFetchId;
+    }
+    const parsedExplicitFetchId = parseTransportHandleKey(explicitFetchId);
+    if (parsedExplicitFetchId?.protocol === "socket") {
+      return explicitFetchId;
+    }
+
+    const routeKey = String(
+      input.routeKey ??
+        input.__routeKey ??
+        parsedExplicitFetchId?.routeKey ??
+        parseTransportHandleKey(input.__fetchId)?.routeKey ??
+        "",
+    ).trim();
+    if (routeKey) {
+      return buildTransportHandleKey(routeKey, "socket");
     }
 
     const transportId = String(

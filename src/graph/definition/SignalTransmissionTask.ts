@@ -8,6 +8,7 @@ import type {
 import { v4 as uuid } from "uuid";
 import Cadenza from "../../Cadenza";
 import { hoistDelegationMetadataFields } from "../../utils/delegation";
+import { stripLocalRoutinePersistenceHints } from "../../utils/routinePersistence";
 
 /**
  * Represents a task responsible for transmitting signals to a remote service
@@ -124,22 +125,59 @@ export default class SignalTransmissionTask extends Task {
   ): TaskResult {
     const ctx = context.getContext();
     const metadata = context.getMetadata();
+    const signalMetadata =
+      (Cadenza.signalBroker as any).getSignalMetadata?.(this.signalName) ?? null;
+    const deliveryMode =
+      signalMetadata?.deliveryMode === "broadcast" ? "broadcast" : "single";
+    const broadcastFilter =
+      ctx.__broadcastFilter ??
+      metadata.__broadcastFilter ??
+      signalMetadata?.broadcastFilter ??
+      null;
 
-    const deputyContext = hoistDelegationMetadataFields({
-      __localTaskName: this.name,
-      __localServiceName: Cadenza.serviceRegistry.serviceName,
-      __serviceName: this.serviceName,
-      __executionTraceId: metadata.__executionTraceId ?? null,
-      __localRoutineExecId:
-        metadata.__routineExecId ?? metadata.__metadata?.__routineExecId,
-      __metadata: {
-        ...metadata,
-        __deputyTaskName: this.name,
-      },
-      __signalName: this.signalName,
-      __signalEmissionId: metadata.__signalEmission?.uuid,
-      ...ctx,
-    });
+    const deputyContext = hoistDelegationMetadataFields(
+      stripLocalRoutinePersistenceHints({
+        __localTaskName: this.name,
+        __localServiceName: Cadenza.serviceRegistry.serviceName,
+        __serviceName: this.serviceName,
+        __executionTraceId: metadata.__executionTraceId ?? null,
+        __localRoutineExecId:
+          metadata.__routineExecId ?? metadata.__metadata?.__routineExecId,
+        __metadata: {
+          ...metadata,
+          __deputyTaskName: this.name,
+        },
+        __signalName: this.signalName,
+        ...(deliveryMode === "broadcast" && ctx.__broadcast !== false
+          ? {
+              __broadcast: true,
+            }
+          : {}),
+        ...(broadcastFilter
+          ? {
+              __broadcastFilter: broadcastFilter,
+            }
+          : {}),
+        __signalEmissionId: metadata.__signalEmission?.uuid,
+        ...(metadata.__signalEmission &&
+        typeof metadata.__signalEmission === "object"
+          ? {
+              __signalEmission: {
+                ...(metadata.__signalEmission as AnyObject),
+                serviceName:
+                  (metadata.__signalEmission as AnyObject).serviceName ??
+                  Cadenza.serviceRegistry.serviceName ??
+                  null,
+                serviceInstanceId:
+                  (metadata.__signalEmission as AnyObject).serviceInstanceId ??
+                  Cadenza.serviceRegistry.serviceInstanceId ??
+                  null,
+              },
+            }
+          : {}),
+        ...ctx,
+      }),
+    );
 
     return this.taskFunction(deputyContext, emit, inquire, progressCallback);
   }

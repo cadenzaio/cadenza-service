@@ -19,4 +19,6 @@ export interface ServiceInstanceDescriptor {
   isBootstrapPlaceholder?: boolean;
   transports: ServiceTransportDescriptor[];
   clientCreatedTransportIds?: string[];
+  clientPendingTransportIds?: string[];
+  clientReadyTransportIds?: string[];
 }

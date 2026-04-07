@@ -9,6 +9,29 @@ import RestController from "../src/network/RestController";
 import ServiceRegistry from "../src/registry/ServiceRegistry";
 import SignalController from "../src/signals/SignalController";
 import SocketController from "../src/network/SocketController";
+import { AUTHORITY_RUNTIME_STATUS_REPORT_INTENT } from "../src/registry/runtimeStatusContract";
+import {
+  AUTHORITY_SERVICE_INSTANCE_REGISTER_INTENT,
+  AUTHORITY_SERVICE_INSTANCE_TRANSPORT_REGISTER_INTENT,
+} from "../src/registry/authorityBootstrapControlPlane";
+import { buildTransportHandleKey as buildHandleKey } from "../src/utils/transport";
+import {
+  buildServiceCommunicationEstablishedContext,
+  META_SERVICE_COMMUNICATION_PERSIST_RETRY_SIGNAL,
+} from "../src/utils/serviceCommunication";
+import {
+  AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+  AUTHORITY_SERVICE_MANIFEST_UPDATED_SIGNAL,
+} from "../src/registry/serviceManifestContract";
+import { buildServiceManifestSnapshot } from "../src/registry/serviceManifest";
+
+function buildRouteKey(
+  serviceName: string,
+  role: "internal" | "public",
+  origin: string,
+) {
+  return `${serviceName}|${role}|${origin}`;
+}
 
 async function waitForCondition(
   predicate: () => boolean | Promise<boolean>,
@@ -63,6 +86,7 @@ describe("service registry transport registration", () => {
     consoleLogSpy.mockRestore();
     consoleWarnSpy.mockRestore();
     consoleErrorSpy.mockRestore();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -156,6 +180,178 @@ describe("service registry transport registration", () => {
     ]);
   });
 
+  it("replays declared startup transports through the bootstrap ensure path", async () => {
+    const registrations: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture ensured transport registration request", (ctx) => {
+      registrations.push(ctx.data);
+      return true;
+    }).doOn("meta.service_registry.transport_registration_requested");
+
+    Cadenza.emit("meta.service_registry.transport_registration_ensure_requested", {
+      __serviceName: "PredictorService",
+      __serviceInstanceId: "predictor-b-1",
+      __transportData: [
+        {
+          uuid: "transport-1",
+          role: "internal",
+          origin: "http://predictor-b:3005",
+          protocols: ["rest"],
+        },
+        {
+          uuid: "transport-2",
+          role: "public",
+          origin: "http://predictor-b.localhost",
+          protocols: ["rest", "socket"],
+        },
+      ],
+    });
+
+    await waitForCondition(() => registrations.length === 2, 1_500);
+
+    expect(registrations).toEqual([
+      expect.objectContaining({
+        uuid: "transport-1",
+        role: "internal",
+        service_instance_id: "predictor-b-1",
+      }),
+      expect.objectContaining({
+        uuid: "transport-2",
+        role: "public",
+        service_instance_id: "predictor-b-1",
+      }),
+    ]);
+  });
+
+  it("keeps local transport readiness state when synced instance updates arrive", async () => {
+    const registry = ServiceRegistry.instance as any;
+
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "cadenza-db-1",
+        serviceName: "CadenzaDB",
+        isFrontend: false,
+        isDatabase: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        health: {},
+        transports: [
+          {
+            uuid: "db-transport-1",
+            serviceInstanceId: "cadenza-db-1",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+          },
+        ],
+        clientPendingTransportIds: ["db-transport-1"],
+        clientReadyTransportIds: ["db-transport-1"],
+      },
+    ]);
+
+    Cadenza.emit("global.meta.service_instance.updated", {
+      serviceInstance: {
+        uuid: "cadenza-db-1",
+        service_name: "CadenzaDB",
+        is_active: true,
+        is_non_responsive: false,
+        is_blocked: false,
+        is_database: true,
+        transports: [
+          {
+            uuid: "db-transport-1",
+            service_instance_id: "cadenza-db-1",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+          },
+        ],
+        clientPendingTransportIds: ["remote-pending"],
+        clientReadyTransportIds: ["remote-ready"],
+      },
+    });
+
+    await waitForCondition(
+      () =>
+        registry.instances.get("CadenzaDB")?.[0]?.clientReadyTransportIds?.includes(
+          "db-transport-1",
+        ) === true,
+      1_500,
+    );
+
+    expect(registry.instances.get("CadenzaDB")?.[0]).toMatchObject({
+      clientPendingTransportIds: ["db-transport-1"],
+      clientReadyTransportIds: ["db-transport-1"],
+    });
+  });
+
+  it(
+    "marks local authority transports ready when the authoritative transport row arrives",
+    async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.serviceInstanceId = "cadenza-db-1";
+
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "cadenza-db-1",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "cadenza-db-internal-bootstrap",
+            serviceInstanceId: "cadenza-db-1",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: ["cadenza-db-internal-bootstrap"],
+        clientReadyTransportIds: ["cadenza-db-internal-bootstrap"],
+      },
+    ]);
+
+    const handleTransportUpdateTask = Cadenza.get("Handle Transport Update");
+    expect(handleTransportUpdateTask).toBeDefined();
+
+    Cadenza.run(handleTransportUpdateTask!, {
+      data: {
+        uuid: "11111111-1111-4111-8111-111111111111",
+        service_instance_id: "cadenza-db-1",
+        role: "internal",
+        origin: "http://cadenza-db-service:8080",
+        protocols: ["rest", "socket"],
+      },
+    });
+
+    await waitForCondition(() => {
+      const instance = registry.instances.get("CadenzaDB")?.[0];
+      return Boolean(
+        instance?.clientReadyTransportIds?.includes(
+          buildRouteKey("CadenzaDB", "internal", "http://cadenza-db-service:8080"),
+        ),
+      );
+    }, 3_000);
+    },
+    15_000,
+  );
+
   it("does not create global signal transmitters for self-service maps", async () => {
     const registry = ServiceRegistry.instance as any;
     registry.serviceName = "OrdersService";
@@ -189,8 +385,711 @@ describe("service registry transport registration", () => {
     );
   });
 
+  it("marks observed global signals as registered when authority sync returns remote listeners", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.ensureAuthorityServiceCommunicationPersistenceTask();
+
+    const observer = (Cadenza.signalBroker as any).signalObservers.get(
+      "global.meta.fetch.service_communication_established",
+    );
+    expect(observer).toBeTruthy();
+    observer.registered = false;
+    observer.registrationRequested = true;
+
+    const handleGlobalSignalRegistrationTask = Cadenza.get(
+      "Handle global Signal Registration",
+    );
+    expect(handleGlobalSignalRegistrationTask).toBeDefined();
+
+    Cadenza.run(handleGlobalSignalRegistrationTask!, {
+      data: {
+        signal_name: "global.meta.fetch.service_communication_established",
+        service_name: "TelemetryCollectorService",
+        is_global: true,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(observer.registered).toBe(true);
+    expect(observer.registrationRequested).toBe(false);
+  });
+
+  it(
+    "retries bootstrap full sync one timer at a time until a healthy result arrives",
+    async () => {
+      vi.useFakeTimers();
+
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.connectsToCadenzaDB = true;
+
+    const syncRequestSpy = vi.spyOn(Cadenza, "emit");
+    const inquireSpy = vi
+      .spyOn(Cadenza, "inquire")
+      .mockResolvedValueOnce({
+        serviceInstances: [],
+        intentToTaskMaps: [],
+        signalToTaskMaps: [],
+      } as any)
+      .mockResolvedValue({
+        serviceInstances: [
+          {
+            uuid: "cadenza-db-1",
+            service_name: "CadenzaDB",
+            is_active: true,
+            is_non_responsive: false,
+            is_blocked: false,
+            is_frontend: false,
+            health: {},
+          },
+        ],
+        intentToTaskMaps: [
+          {
+            intent_name: "orders.lookup",
+            service_name: "OrdersService",
+            task_name: "LookupOrders",
+            task_version: 1,
+          },
+        ],
+        signalToTaskMaps: [],
+      } as any);
+
+    registry.bootstrapFullSync(() => {}, {}, "service_setup_completed");
+
+    expect(registry.bootstrapFullSyncRetryTimer).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(inquireSpy).toHaveBeenCalledTimes(1);
+    expect(
+      syncRequestSpy.mock.calls.filter(
+        ([signal]) => signal === "meta.sync_requested",
+      ),
+    ).toHaveLength(1);
+    expect(registry.bootstrapFullSyncRetryTimer).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(inquireSpy).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(inquireSpy).toHaveBeenCalledTimes(2);
+    expect(
+      syncRequestSpy.mock.calls.filter(
+        ([signal]) => signal === "meta.sync_requested",
+      ),
+    ).toHaveLength(2);
+    expect(registry.bootstrapFullSyncSatisfied).toBe(false);
+    expect(registry.bootstrapFullSyncRetryTimer).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(inquireSpy).toHaveBeenCalledTimes(3);
+    expect(
+      syncRequestSpy.mock.calls.filter(
+        ([signal]) => signal === "meta.sync_requested",
+      ),
+    ).toHaveLength(3);
+    expect(registry.bootstrapFullSyncSatisfied).toBe(false);
+    expect(registry.bootstrapFullSyncRetryTimer).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(12000);
+
+    expect(inquireSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(
+      syncRequestSpy.mock.calls.filter(
+        ([signal]) => signal === "meta.sync_requested",
+      ).length,
+    ).toBeGreaterThanOrEqual(4);
+
+    if (!registry.bootstrapFullSyncSatisfied) {
+      await vi.advanceTimersByTimeAsync(25_000);
+    }
+
+    expect(registry.bootstrapFullSyncSatisfied).toBe(true);
+    expect(registry.bootstrapFullSyncRetryTimer).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(70_000);
+
+    expect(registry.bootstrapFullSyncSatisfied).toBe(true);
+    expect(registry.bootstrapFullSyncRetryTimer).toBeNull();
+    },
+    15_000,
+  );
+
+  it(
+    "restarts bootstrap full sync recovery from the first backoff step after a fresh authority recovery cycle",
+    async () => {
+      vi.useFakeTimers();
+
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.connectsToCadenzaDB = true;
+
+    const inquireSpy = vi.spyOn(Cadenza, "inquire").mockResolvedValue({
+      serviceInstances: [
+        {
+          uuid: "cadenza-db-1",
+          service_name: "CadenzaDB",
+          is_active: true,
+          is_non_responsive: false,
+          is_blocked: false,
+          is_frontend: false,
+          health: {},
+        },
+      ],
+      intentToTaskMaps: [
+        {
+          intent_name: "orders.lookup",
+          service_name: "OrdersService",
+          task_name: "LookupOrders",
+          task_version: 1,
+        },
+      ],
+      signalToTaskMaps: [],
+    } as any);
+
+    registry.bootstrapFullSync(() => {}, {}, "service_setup_completed");
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(12000);
+
+      expect(inquireSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
+      expect(registry.bootstrapFullSyncSatisfied).toBe(true);
+      expect(registry.bootstrapFullSyncRetryTimer).toBeNull();
+
+      registry.restartBootstrapFullSyncRetryChain("cadenza_db_fetch_handshake");
+
+      expect(registry.bootstrapFullSyncSatisfied).toBe(false);
+      expect(registry.bootstrapFullSyncRetryTimer).not.toBeNull();
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(inquireSpy.mock.calls.length).toBeGreaterThanOrEqual(5);
+      expect(registry.bootstrapFullSyncSatisfied).toBe(false);
+    },
+    15_000,
+  );
+
+  it("registers a single bootstrap full-sync deputy with the long timeout", () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.connectsToCadenzaDB = true;
+
+    registry.bootstrapFullSync(() => {}, {}, "service_setup_completed");
+
+    const fullSyncDeputies = Array.from(
+      registry.remoteIntentDeputiesByKey.values(),
+    ).filter(
+      (descriptor: any) =>
+        descriptor.intentName === "meta-service-registry-full-sync",
+    );
+
+    expect(fullSyncDeputies).toHaveLength(1);
+    expect(fullSyncDeputies[0]).toMatchObject({
+      serviceName: "CadenzaDB",
+      remoteTaskName: "Respond service registry full sync",
+    });
+    expect(fullSyncDeputies[0].localTask.timeout).toBe(120_000);
+  });
+
+  it("marks full-sync inquiries as syncing and applies the long timeout", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.connectsToCadenzaDB = true;
+    registry.bootstrapFullSyncRetryIndex = 4;
+
+    registry.bootstrapFullSync(() => {}, {}, "service_setup_completed");
+
+    const inquireSpy = vi.spyOn(Cadenza, "inquire").mockResolvedValue({
+      serviceInstances: [
+        {
+          uuid: "cadenza-db-1",
+          service_name: "CadenzaDB",
+          is_active: true,
+          is_non_responsive: false,
+          is_blocked: false,
+          is_frontend: false,
+          health: {},
+        },
+      ],
+      intentToTaskMaps: [
+        {
+          intent_name: "orders.lookup",
+          service_name: "OrdersService",
+          task_name: "LookupOrders",
+          task_version: 1,
+        },
+      ],
+      signalToTaskMaps: [],
+    } as any);
+
+    Cadenza.run(registry.fullSyncTask, {
+      __reason: "service_setup_completed",
+    });
+
+    await waitForCondition(() => inquireSpy.mock.calls.length >= 1, 1_500);
+
+    expect(inquireSpy).toHaveBeenCalledWith(
+      "meta-service-registry-full-sync",
+      expect.objectContaining({
+        syncScope: "service-registry-full-sync",
+        __syncing: true,
+      }),
+      expect.objectContaining({
+        timeout: 120_000,
+      }),
+    );
+  });
+
+  it("builds the authority full-sync response shape from collected authority rows", () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+
+    const result = registry.collectBootstrapFullSyncPayload({
+      serviceInstances: [
+        {
+          uuid: "orders-1",
+          service_name: "OrdersService",
+          is_active: true,
+          is_non_responsive: false,
+          is_blocked: false,
+        },
+      ],
+      serviceInstanceTransports: [
+        {
+          uuid: "orders-internal-1",
+          service_instance_id: "orders-1",
+          role: "internal",
+          origin: "http://orders.example:7000",
+          protocols: ["rest", "socket"],
+        },
+      ],
+      serviceManifests: [
+        {
+          service_instance_id: "orders-1",
+          manifest: {
+            serviceName: "OrdersService",
+            serviceInstanceId: "orders-1",
+            revision: 1,
+            manifestHash: "orders-manifest-v1",
+            publishedAt: "2026-03-29T18:00:00.000Z",
+            tasks: [],
+            signals: [],
+            intents: [],
+            actors: [],
+            routines: [],
+            directionalTaskMaps: [],
+            actorTaskMaps: [],
+            taskToRoutineMaps: [],
+            signalToTaskMaps: [
+              {
+                signal_name: "global.orders.updated",
+                service_name: "OrdersService",
+                is_global: true,
+              },
+            ],
+            intentToTaskMaps: [
+              {
+                intent_name: "orders.lookup",
+                service_name: "OrdersService",
+                task_name: "LookupOrders",
+                task_version: 1,
+              },
+            ],
+          },
+        },
+      ],
+    }) as Record<string, any>;
+
+    expect(result).toMatchObject({
+      serviceInstances: [
+        expect.objectContaining({
+          uuid: "orders-1",
+          service_name: "OrdersService",
+        }),
+      ],
+      serviceInstanceTransports: [
+        expect.objectContaining({
+          uuid: "orders-internal-1",
+          service_instance_id: "orders-1",
+        }),
+      ],
+      signalToTaskMaps: [
+        expect.objectContaining({
+          signal_name: "global.orders.updated",
+          service_name: "OrdersService",
+        }),
+      ],
+      intentToTaskMaps: [
+        expect.objectContaining({
+          intent_name: "orders.lookup",
+          service_name: "OrdersService",
+          task_name: "LookupOrders",
+        }),
+      ],
+    });
+  });
+
+  it("prefers the latest manifest revision per service instance when composing authority full sync", () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+
+    const result = registry.collectBootstrapFullSyncPayload({
+      serviceInstances: [
+        {
+          uuid: "orders-1",
+          service_name: "OrdersService",
+          is_active: true,
+          is_non_responsive: false,
+          is_blocked: false,
+        },
+      ],
+      serviceInstanceTransports: [
+        {
+          uuid: "orders-internal-1",
+          service_instance_id: "orders-1",
+          role: "internal",
+          origin: "http://orders.example:7000",
+          protocols: ["rest", "socket"],
+        },
+      ],
+      serviceManifests: [
+        {
+          service_instance_id: "orders-1",
+          manifest: {
+            serviceName: "OrdersService",
+            serviceInstanceId: "orders-1",
+            revision: 1,
+            manifestHash: "orders-manifest-v1",
+            publishedAt: "2026-03-29T18:00:00.000Z",
+            tasks: [],
+            signals: [],
+            intents: [],
+            actors: [],
+            routines: [],
+            directionalTaskMaps: [],
+            actorTaskMaps: [],
+            taskToRoutineMaps: [],
+            signalToTaskMaps: [
+              {
+                signal_name: "global.orders.stale",
+                service_name: "OrdersService",
+                task_name: "Handle stale orders update",
+                task_version: 1,
+                is_global: true,
+              },
+            ],
+            intentToTaskMaps: [],
+          },
+        },
+        {
+          service_instance_id: "orders-1",
+          manifest: {
+            serviceName: "OrdersService",
+            serviceInstanceId: "orders-1",
+            revision: 2,
+            manifestHash: "orders-manifest-v2",
+            publishedAt: "2026-03-29T18:05:00.000Z",
+            tasks: [],
+            signals: [],
+            intents: [],
+            actors: [],
+            routines: [],
+            directionalTaskMaps: [],
+            actorTaskMaps: [],
+            taskToRoutineMaps: [],
+            signalToTaskMaps: [
+              {
+                signal_name: "global.orders.updated",
+                service_name: "OrdersService",
+                task_name: "Handle orders update",
+                task_version: 1,
+                is_global: true,
+              },
+            ],
+            intentToTaskMaps: [],
+          },
+        },
+      ],
+    });
+
+    expect(result.serviceManifests).toEqual([
+      expect.objectContaining({
+        service_instance_id: "orders-1",
+        revision: 2,
+      }),
+    ]);
+    expect(result.signalToTaskMaps).toEqual([
+      expect.objectContaining({
+        signal_name: "global.orders.updated",
+        service_name: "OrdersService",
+        task_name: "Handle orders update",
+      }),
+    ]);
+  });
+
+  it("registers the authority full-sync responder as the one persisted responder", () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+
+    const responderTask = registry.ensureAuthorityFullSyncResponderTask();
+
+    expect(responderTask).toBeDefined();
+    expect(responderTask).toMatchObject({
+      name: "Respond service registry full sync",
+      register: true,
+      isHidden: false,
+    });
+    expect(responderTask?.handlesIntents.has("meta-service-registry-full-sync")).toBe(
+      true,
+    );
+  });
+
+  it("exports signal delivery metadata in the manifest snapshot", () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.serviceInstanceId = "orders-instance-1";
+
+    Cadenza.createTask("Consume order updates", () => true).doOn({
+      name: "global.orders.updated",
+      deliveryMode: "broadcast",
+      broadcastFilter: {
+        serviceNames: ["BillingService", "WarehouseService"],
+        origins: ["http://billing.internal"],
+      },
+    });
+
+    const manifest = buildServiceManifestSnapshot({
+      serviceName: "OrdersService",
+      serviceInstanceId: "orders-instance-1",
+      revision: 1,
+      publishedAt: "2026-04-04T12:00:00.000Z",
+    });
+
+    const exportedSignal = manifest.signals.find(
+      (signal) => signal.name === "global.orders.updated",
+    );
+
+    expect(exportedSignal).toMatchObject({
+      name: "global.orders.updated",
+      is_global: true,
+      is_meta: false,
+      delivery_mode: "broadcast",
+      broadcast_filter: {
+        serviceNames: ["BillingService", "WarehouseService"],
+        origins: ["http://billing.internal"],
+      },
+    });
+  });
+
+  it("resolves the authority full-sync inquiry through the single local responder", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.ensureAuthorityFullSyncResponderTask();
+
+    const queryAuthorityTableRowsSpy = vi
+      .spyOn(DatabaseController.instance, "queryAuthorityTableRows")
+      .mockImplementation(async (tableName: string) => {
+        switch (tableName) {
+          case "service_instance":
+            return [
+              {
+                uuid: "orders-1",
+                service_name: "OrdersService",
+                is_active: true,
+              },
+            ];
+          case "service_instance_transport":
+            return [
+              {
+                uuid: "orders-transport-1",
+                service_instance_id: "orders-1",
+                role: "internal",
+                origin: "http://orders.example:7000",
+                protocols: ["rest", "socket"],
+              },
+            ];
+          case "service_manifest":
+            return [
+              {
+                serviceName: "OrdersService",
+                serviceInstanceId: "orders-1",
+                revision: 1,
+                manifestHash: "orders-manifest-v1",
+                publishedAt: "2026-03-29T18:00:00.000Z",
+                signalToTaskMaps: [
+                  {
+                    signal_name: "global.orders.updated",
+                    service_name: "OrdersService",
+                    task_name: "Handle orders update",
+                    task_version: 1,
+                    is_global: true,
+                  },
+                ],
+                intentToTaskMaps: [
+                  {
+                    intent_name: "orders.lookup",
+                    service_name: "OrdersService",
+                    task_name: "LookupOrders",
+                    task_version: 1,
+                  },
+                ],
+              },
+            ];
+          default:
+            return [];
+        }
+      });
+
+    const result = await Cadenza.inquire("meta-service-registry-full-sync", {
+      syncScope: "service-registry-full-sync",
+      __syncing: true,
+    });
+
+    expect(queryAuthorityTableRowsSpy).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({
+      serviceInstances: [
+        expect.objectContaining({
+          uuid: "orders-1",
+          service_name: "OrdersService",
+        }),
+      ],
+      serviceInstanceTransports: [
+        expect.objectContaining({
+          uuid: "orders-transport-1",
+          service_instance_id: "orders-1",
+        }),
+      ],
+      signalToTaskMaps: [
+        expect.objectContaining({
+          signal_name: "global.orders.updated",
+          service_name: "OrdersService",
+        }),
+      ],
+      intentToTaskMaps: [
+        expect.objectContaining({
+          intent_name: "orders.lookup",
+          service_name: "OrdersService",
+          task_name: "LookupOrders",
+        }),
+      ],
+    });
+  });
+
+  it("registers the authority service communication handler only on CadenzaDB", () => {
+    const registry = ServiceRegistry.instance as any;
+
+    registry.serviceName = "OrdersService";
+    expect(registry.ensureAuthorityServiceCommunicationPersistenceTask()).toBeNull();
+
+    registry.serviceName = "CadenzaDB";
+    const task = registry.ensureAuthorityServiceCommunicationPersistenceTask();
+
+    expect(task).toBeDefined();
+    expect(task).toMatchObject({
+      name: "Handle service communication established",
+      register: true,
+      isHidden: false,
+    });
+    expect(Cadenza.get("Handle service communication established")).toBe(task);
+  });
+
+  it("retries authority service communication persistence until both service instances exist", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.ensureAuthorityServiceCommunicationPersistenceTask();
+
+    const processTask = Cadenza.get(
+      "Process authority service communication persistence",
+    );
+    expect(processTask).toBeDefined();
+
+    const queryAuthorityTableRowsSpy = vi
+      .spyOn(DatabaseController.instance, "queryAuthorityTableRows")
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ uuid: "runner-1" }]);
+    const persistAuthorityInsertSpy = vi.spyOn(
+      DatabaseController.instance,
+      "persistAuthorityInsert",
+    );
+    const scheduleSpy = vi.spyOn(Cadenza, "schedule").mockImplementation(() => undefined);
+
+    const result = await (processTask as any).taskFunction(
+      buildServiceCommunicationEstablishedContext({
+        serviceInstanceId: "telemetry-1",
+        serviceInstanceClientId: "runner-1",
+        communicationType: "delegation",
+      }),
+    );
+
+    expect(result).toBe(false);
+    expect(queryAuthorityTableRowsSpy).toHaveBeenCalledTimes(2);
+    expect(persistAuthorityInsertSpy).not.toHaveBeenCalled();
+    expect(scheduleSpy).toHaveBeenCalledWith(
+      META_SERVICE_COMMUNICATION_PERSIST_RETRY_SIGNAL,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          serviceInstanceId: "telemetry-1",
+          serviceInstanceClientId: "runner-1",
+          communicationType: "delegation",
+        }),
+        __serviceCommunicationRetryAttempt: 1,
+      }),
+      250,
+    );
+  });
+
+  it("persists authority service communication edges once both parents exist", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.ensureAuthorityServiceCommunicationPersistenceTask();
+
+    const processTask = Cadenza.get(
+      "Process authority service communication persistence",
+    );
+    expect(processTask).toBeDefined();
+
+    vi.spyOn(DatabaseController.instance, "queryAuthorityTableRows")
+      .mockResolvedValueOnce([{ uuid: "telemetry-1" }])
+      .mockResolvedValueOnce([{ uuid: "runner-1" }]);
+    const persistAuthorityInsertSpy = vi
+      .spyOn(DatabaseController.instance, "persistAuthorityInsert")
+      .mockResolvedValue({
+        rowCount: 1,
+        __success: true,
+      });
+
+    const result = await (processTask as any).taskFunction(
+      buildServiceCommunicationEstablishedContext({
+        serviceInstanceId: "telemetry-1",
+        serviceInstanceClientId: "runner-1",
+        communicationType: "signal",
+      }),
+    );
+
+    expect(persistAuthorityInsertSpy).toHaveBeenCalledWith(
+      "service_to_service_communication_map",
+      buildServiceCommunicationEstablishedContext({
+        serviceInstanceId: "telemetry-1",
+        serviceInstanceClientId: "runner-1",
+        communicationType: "signal",
+      }),
+    );
+    expect(result).toMatchObject({
+      rowCount: 1,
+      __success: true,
+    });
+  });
+
   it("keeps fetch-client helper tasks internal-only", () => {
     RestController.instance;
+    const scheduleSpy = vi
+      .spyOn(Cadenza, "schedule")
+      .mockImplementation(() => true as any);
 
     const setupFetchClientTask = Cadenza.get("Setup fetch client");
     expect(setupFetchClientTask).toBeDefined();
@@ -204,12 +1103,14 @@ describe("service registry transport registration", () => {
     });
 
     const handshakeTask = Cadenza.get(
-      "Send Handshake to http://orders.example:7000 (orders-public-1)",
+      `Send Handshake to http://orders.example:7000 (${buildHandleKey("orders-public-1", "rest")})`,
     );
     const statusTask = Cadenza.get(
-      "Request status from http://orders.example:7000 (orders-public-1)",
+      `Request status from http://orders.example:7000 (${buildHandleKey("orders-public-1", "rest")})`,
     );
-    const destroyTask = Cadenza.get("Destroy fetch client orders-public-1");
+    const destroyTask = Cadenza.get(
+      `Destroy fetch client ${buildHandleKey("orders-public-1", "rest")}`,
+    );
 
     expect(handshakeTask).toMatchObject({
       register: false,
@@ -223,6 +1124,15 @@ describe("service registry transport registration", () => {
       register: false,
       isHidden: true,
     });
+    expect(scheduleSpy).toHaveBeenCalledWith(
+      `meta.fetch.handshake_requested:${buildHandleKey("orders-public-1", "rest")}`,
+      expect.objectContaining({
+        serviceName: "OrdersService",
+        serviceTransportId: "orders-public-1",
+        fetchId: buildHandleKey("orders-public-1", "rest"),
+      }),
+      0,
+    );
   });
 
   it("does not bootstrap dependee clients for self-service intent maps", async () => {
@@ -296,6 +1206,1370 @@ describe("service registry transport registration", () => {
 
     expect(connected).toBe(false);
     expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("retires older local instances that advertise the same routeable transport endpoint", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.serviceInstanceId = "orders-new";
+
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-old",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-old-internal",
+            serviceInstanceId: "orders-old",
+            role: "internal",
+            origin: "http://orders.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+      {
+        uuid: "orders-new",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [],
+      },
+    ]);
+
+    const handleTransportUpdateTask = Cadenza.get("Handle Transport Update");
+    expect(handleTransportUpdateTask).toBeDefined();
+
+    Cadenza.run(handleTransportUpdateTask!, {
+      data: {
+        uuid: "orders-new-internal",
+        service_instance_id: "orders-new",
+        role: "internal",
+        origin: "http://orders.internal",
+        protocols: ["rest"],
+      },
+    });
+
+    await waitForCondition(
+      () => (registry.instances.get("OrdersService") ?? []).length === 1,
+      1_500,
+    );
+
+    expect(registry.instances.get("OrdersService")).toEqual([
+      expect.objectContaining({
+        uuid: "orders-new",
+        transports: expect.arrayContaining([
+          expect.objectContaining({
+            uuid: "orders-new-internal",
+            origin: "http://orders.internal",
+          }),
+        ]),
+      }),
+    ]);
+  });
+
+  it("retires older remote CadenzaDB instances for the same origin once the newer route is handshake-ready", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-1";
+
+    const retiredInstanceUpdates: Array<Record<string, unknown>> = [];
+    const retiredTransportUpdates: Array<Record<string, unknown>> = [];
+    const persistedInstanceUpdates: Array<Record<string, unknown>> = [];
+    const persistedTransportUpdates: Array<Record<string, unknown>> = [];
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture remote superseded instance updates",
+      (ctx) => {
+        retiredInstanceUpdates.push(ctx);
+        return true;
+      },
+    ).doOn("global.meta.service_instance.updated");
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture remote superseded transport updates",
+      (ctx) => {
+        retiredTransportUpdates.push(ctx);
+        return true;
+      },
+    ).doOn("global.meta.service_instance_transport.updated");
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture remote superseded instance persistence",
+      (ctx) => {
+        persistedInstanceUpdates.push(ctx);
+        return true;
+      },
+    ).doOn("meta.service_registry.instance_update_requested");
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture remote superseded transport persistence",
+      (ctx) => {
+        persistedTransportUpdates.push(ctx);
+        return true;
+      },
+    ).doOn("meta.service_registry.transport_update_requested");
+
+    registry.instances.set("TelemetryCollectorService", [
+      {
+        uuid: "telemetry-1",
+        serviceName: "TelemetryCollectorService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [],
+      },
+    ]);
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "cadenza-db-old",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-23T21:39:39.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "33333333-3333-4333-8333-333333333333",
+            serviceInstanceId: "cadenza-db-old",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+      {
+        uuid: "cadenza-db-new",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-23T21:47:24.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "44444444-4444-4444-8444-444444444444",
+            serviceInstanceId: "cadenza-db-new",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+    ]);
+
+    registry.markTransportClientReady(registry.instances.get("CadenzaDB")[1], {
+      uuid: "44444444-4444-4444-8444-444444444444",
+      serviceInstanceId: "cadenza-db-new",
+      role: "internal",
+      origin: "http://cadenza-db-service:8080",
+    });
+
+    const handleTransportUpdateTask = Cadenza.get("Handle Transport Update");
+    expect(handleTransportUpdateTask).toBeDefined();
+
+    Cadenza.run(handleTransportUpdateTask!, {
+      data: {
+        uuid: "33333333-3333-4333-8333-333333333333",
+        service_instance_id: "cadenza-db-old",
+        role: "internal",
+        origin: "http://cadenza-db-service:8080",
+        protocols: ["rest", "socket"],
+      },
+    });
+    Cadenza.run(handleTransportUpdateTask!, {
+      data: {
+        uuid: "44444444-4444-4444-8444-444444444444",
+        service_instance_id: "cadenza-db-new",
+        role: "internal",
+        origin: "http://cadenza-db-service:8080",
+        protocols: ["rest", "socket"],
+      },
+    });
+
+    await waitForCondition(
+      () => (registry.instances.get("CadenzaDB") ?? []).length === 1,
+      1_500,
+    );
+
+    expect(registry.instances.get("CadenzaDB")).toEqual([
+      expect.objectContaining({
+        uuid: "cadenza-db-new",
+      }),
+    ]);
+    expect(retiredInstanceUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            is_active: false,
+            is_non_responsive: false,
+            deleted: false,
+          }),
+          filter: {
+            uuid: "cadenza-db-old",
+          },
+        }),
+      ]),
+    );
+    expect(retiredTransportUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            deleted: true,
+          }),
+          filter: {
+            uuid: "33333333-3333-4333-8333-333333333333",
+          },
+        }),
+      ]),
+    );
+    const persistedInstanceUpdate = persistedInstanceUpdates.find(
+      (ctx) => ctx.queryData?.filter?.uuid === "cadenza-db-old",
+    );
+    expect(persistedInstanceUpdate).toBeUndefined();
+    expect(persistedTransportUpdates).toEqual([]);
+  });
+
+  it("authority defers same-origin instance retirement to cadenza-db canonicalization on transport update", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.serviceInstanceId = "cadenza-db-self";
+
+    const retiredInstanceUpdates: Array<Record<string, unknown>> = [];
+    const retiredTransportUpdates: Array<Record<string, unknown>> = [];
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture authority superseded instance updates",
+      (ctx) => {
+        retiredInstanceUpdates.push(ctx);
+        return true;
+      },
+    ).doOn("global.meta.service_instance.updated");
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture authority superseded transport updates",
+      (ctx) => {
+        retiredTransportUpdates.push(ctx);
+        return true;
+      },
+    ).doOn("global.meta.service_instance_transport.updated");
+
+    registry.instances.set("IotDbService", [
+      {
+        uuid: "iot-old",
+        serviceName: "IotDbService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-25T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "11111111-1111-4111-8111-111111111111",
+            serviceInstanceId: "iot-old",
+            role: "internal",
+            origin: "http://iot-db-service:3001",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+      {
+        uuid: "iot-new",
+        serviceName: "IotDbService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-26T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "22222222-2222-4222-8222-222222222222",
+            serviceInstanceId: "iot-new",
+            role: "internal",
+            origin: "http://iot-db-service:3001",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+    ]);
+
+    const handleTransportUpdateTask = Cadenza.get("Handle Transport Update");
+    expect(handleTransportUpdateTask).toBeDefined();
+
+    Cadenza.run(handleTransportUpdateTask!, {
+      data: {
+        uuid: "22222222-2222-4222-8222-222222222222",
+        service_instance_id: "iot-new",
+        role: "internal",
+        origin: "http://iot-db-service:3001",
+        protocols: ["rest"],
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(registry.instances.get("IotDbService")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          uuid: "iot-old",
+        }),
+        expect.objectContaining({
+          uuid: "iot-new",
+        }),
+      ]),
+    );
+    expect(retiredInstanceUpdates).toEqual([]);
+    expect(retiredTransportUpdates).toEqual([]);
+  });
+
+  it("authority defers same-origin public transport retirement to cadenza-db canonicalization too", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.serviceInstanceId = "cadenza-db-self";
+
+    const retiredInstanceUpdates: Array<Record<string, unknown>> = [];
+    const retiredTransportUpdates: Array<Record<string, unknown>> = [];
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture authority public superseded instance updates",
+      (ctx) => {
+        retiredInstanceUpdates.push(ctx);
+        return true;
+      },
+    ).doOn("global.meta.service_instance.updated");
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture authority public superseded transport updates",
+      (ctx) => {
+        retiredTransportUpdates.push(ctx);
+        return true;
+      },
+    ).doOn("global.meta.service_instance_transport.updated");
+
+    registry.instances.set("IotDbService", [
+      {
+        uuid: "iot-old-public",
+        serviceName: "IotDbService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-25T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "77777777-7777-4777-8777-777777777777",
+            serviceInstanceId: "iot-old-public",
+            role: "public",
+            origin: "http://iot-db.localhost",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+      {
+        uuid: "iot-new-public",
+        serviceName: "IotDbService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-26T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "88888888-8888-4888-8888-888888888888",
+            serviceInstanceId: "iot-new-public",
+            role: "public",
+            origin: "http://iot-db.localhost",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+    ]);
+
+    const handleTransportUpdateTask = Cadenza.get("Handle Transport Update");
+    expect(handleTransportUpdateTask).toBeDefined();
+
+    Cadenza.run(handleTransportUpdateTask!, {
+      data: {
+        uuid: "88888888-8888-4888-8888-888888888888",
+        service_instance_id: "iot-new-public",
+        role: "public",
+        origin: "http://iot-db.localhost",
+        protocols: ["rest"],
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(registry.instances.get("IotDbService")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          uuid: "iot-old-public",
+        }),
+        expect.objectContaining({
+          uuid: "iot-new-public",
+        }),
+      ]),
+    );
+    expect(retiredInstanceUpdates).toEqual([]);
+    expect(retiredTransportUpdates).toEqual([]);
+  });
+
+  it("does not clear a same-origin successor route when a stale deleted transport update arrives", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const routeKey = buildRouteKey(
+      "PredictorService",
+      "internal",
+      "http://predictor-b:3005",
+    );
+
+    registry.instances.set("PredictorService", [
+      {
+        uuid: "predictor-old",
+        serviceName: "PredictorService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: false,
+        isNonResponsive: true,
+        isBlocked: false,
+        runtimeState: "degraded",
+        acceptingWork: false,
+        reportedAt: "2026-03-25T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "transport-old",
+            serviceInstanceId: "predictor-old",
+            role: "internal",
+            origin: "http://predictor-b:3005",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: [],
+        clientPendingTransportIds: [],
+        clientReadyTransportIds: [],
+      },
+      {
+        uuid: "predictor-new",
+        serviceName: "PredictorService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-26T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "transport-new",
+            serviceInstanceId: "predictor-new",
+            role: "internal",
+            origin: "http://predictor-b:3005",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: [routeKey],
+        clientPendingTransportIds: [],
+        clientReadyTransportIds: [routeKey],
+      },
+    ]);
+
+    registry.remoteRoutesByKey.set(routeKey, {
+      key: routeKey,
+      serviceName: "PredictorService",
+      role: "internal",
+      origin: "http://predictor-b:3005",
+      protocols: ["rest"],
+      serviceInstanceId: "predictor-new",
+      serviceTransportId: "transport-new",
+      generation: "predictor-new|transport-new",
+      protocolState: {
+        rest: {
+          clientCreated: true,
+          clientPending: false,
+          clientReady: true,
+        },
+      },
+      balancing: {
+        selectionCount: 2,
+        lastSelectedAt: Date.now(),
+        lastSuccessAt: Date.now(),
+        lastFailureAt: null,
+        failurePenaltyUntil: null,
+        activeDispatchTokens: new Set(),
+      },
+      lastUpdatedAt: Date.now(),
+    });
+
+    const handleTransportUpdateTask = Cadenza.get("Handle Transport Update");
+    expect(handleTransportUpdateTask).toBeDefined();
+
+    Cadenza.run(handleTransportUpdateTask!, {
+      data: {
+        uuid: "transport-old",
+        service_instance_id: "predictor-old",
+        role: "internal",
+        origin: "http://predictor-b:3005",
+        protocols: ["rest"],
+        deleted: true,
+      },
+    });
+
+    await waitForCondition(
+      () =>
+        registry.instances
+          .get("PredictorService")
+          ?.find((instance: any) => instance.uuid === "predictor-old")
+          ?.transports?.length === 0,
+      1_500,
+    );
+
+    expect(registry.remoteRoutesByKey.get(routeKey)).toMatchObject({
+      serviceInstanceId: "predictor-new",
+      serviceTransportId: "transport-new",
+      protocolState: {
+        rest: {
+          clientCreated: true,
+          clientPending: false,
+          clientReady: true,
+        },
+      },
+    });
+
+    expect(
+      registry.instances
+        .get("PredictorService")
+        ?.find((instance: any) => instance.uuid === "predictor-new"),
+    ).toMatchObject({
+      clientCreatedTransportIds: expect.arrayContaining([routeKey]),
+      clientReadyTransportIds: expect.arrayContaining([routeKey]),
+    });
+  });
+
+  it("does not persist synthetic bootstrap transport retirements", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-1";
+
+    const persistedTransportUpdates: Array<Record<string, unknown>> = [];
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture synthetic transport retirement persistence",
+      (ctx) => {
+        persistedTransportUpdates.push(ctx);
+        return true;
+      },
+    ).doOn("meta.service_registry.transport_update_requested");
+
+    registry.instances.set("TelemetryCollectorService", [
+      {
+        uuid: "telemetry-1",
+        serviceName: "TelemetryCollectorService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [],
+      },
+    ]);
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "00000000-0000-4000-8000-000000000001",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-24T09:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "cadenza-db-internal-bootstrap",
+            serviceInstanceId: "00000000-0000-4000-8000-000000000001",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+      {
+        uuid: "00000000-0000-4000-8000-000000000002",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-24T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "22222222-2222-4222-8222-222222222222",
+            serviceInstanceId: "00000000-0000-4000-8000-000000000002",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientReadyTransportIds: ["22222222-2222-4222-8222-222222222222"],
+      },
+    ]);
+
+    Cadenza.run(registry.handleTransportUpdateTask, {
+      data: {
+        uuid: "22222222-2222-4222-8222-222222222222",
+        service_instance_id: "00000000-0000-4000-8000-000000000002",
+        role: "internal",
+        origin: "http://cadenza-db-service:8080",
+        protocols: ["rest", "socket"],
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(
+      persistedTransportUpdates.some(
+        (ctx) =>
+          ctx?.queryData?.filter?.uuid === "cadenza-db-internal-bootstrap",
+      ),
+    ).toBe(false);
+  });
+
+  it("flushes local runtime status updates to authority through the lightweight runtime-status intent", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.serviceInstanceId = "orders-1";
+    registry.connectsToCadenzaDB = true;
+    registry.useSocket = false;
+    registry.latestRuntimeMetricsSnapshot = {
+      sampledAt: "2026-04-07T10:00:00.000Z",
+      cpuUsage: 0.3,
+      memoryUsage: 0.45,
+      eventLoopLag: 9,
+      rssBytes: 300,
+      heapUsedBytes: 180,
+      heapTotalBytes: 220,
+      memoryLimitBytes: 700,
+    };
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 2,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-24T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "22222222-2222-4222-8222-222222222222",
+            serviceInstanceId: "orders-1",
+            role: "internal",
+            origin: "http://orders:5000",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+    ]);
+
+    let authorityReport: Record<string, unknown> | null = null;
+    let durableUpdate: Record<string, unknown> | null = null;
+    let peerRuntimeStatus: Record<string, unknown> | null = null;
+
+    Cadenza.createMetaTask(
+      "Capture authority runtime status report",
+      (ctx) => {
+        authorityReport = { ...ctx };
+        return {
+          applied: true,
+          serviceName: ctx.serviceName,
+          serviceInstanceId: ctx.serviceInstanceId,
+        };
+      },
+      "",
+      { register: false },
+    ).respondsTo(AUTHORITY_RUNTIME_STATUS_REPORT_INTENT);
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture unexpected durable runtime status update",
+      (ctx) => {
+        durableUpdate = { ...ctx };
+        return ctx;
+      },
+      "",
+      { register: false },
+    ).doOn("meta.service_registry.instance_update_requested");
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture peer runtime status update",
+      (ctx) => {
+        peerRuntimeStatus = { ...ctx };
+        return ctx;
+      },
+      "",
+      { register: false },
+    ).doOn("meta.service.updated");
+
+    Cadenza.emit("meta.service_registry.runtime_status_broadcast_requested", {
+      force: true,
+      reason: "test",
+    });
+
+    await waitForCondition(() => authorityReport !== null, 1_500);
+
+    expect(authorityReport).toMatchObject({
+      serviceName: "OrdersService",
+      serviceInstanceId: "orders-1",
+      cpuUsage: 0.3,
+      memoryUsage: 0.45,
+      eventLoopLag: 9,
+      isActive: true,
+      isNonResponsive: false,
+      isBlocked: false,
+      health: {
+        runtimeMetrics: {
+          sampledAt: "2026-04-07T10:00:00.000Z",
+          rssBytes: 300,
+          heapUsedBytes: 180,
+          heapTotalBytes: 220,
+          memoryLimitBytes: 700,
+        },
+      },
+    });
+    expect(durableUpdate).toBeNull();
+    expect(peerRuntimeStatus).toMatchObject({
+      serviceName: "OrdersService",
+      serviceInstanceId: "orders-1",
+      cpuUsage: 0.3,
+      memoryUsage: 0.45,
+      eventLoopLag: 9,
+    });
+    expect(peerRuntimeStatus?.health).toBeUndefined();
+  });
+
+  it("broadcasts significant runtime metric changes to peers without increasing authority flush cadence", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.serviceInstanceId = "orders-1";
+    registry.connectsToCadenzaDB = true;
+    registry.useSocket = false;
+    registry.latestRuntimeMetricsSnapshot = {
+      sampledAt: "2026-04-07T10:00:00.000Z",
+      cpuUsage: 0.1,
+      memoryUsage: 0.2,
+      eventLoopLag: 9,
+      rssBytes: 300,
+      heapUsedBytes: 180,
+      heapTotalBytes: 220,
+      memoryLimitBytes: 700,
+    };
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 2,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-24T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "22222222-2222-4222-8222-222222222222",
+            serviceInstanceId: "orders-1",
+            role: "internal",
+            origin: "http://orders:5000",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+    ]);
+
+    const authorityReports: Record<string, unknown>[] = [];
+    const peerRuntimeUpdates: Record<string, unknown>[] = [];
+
+    Cadenza.createMetaTask(
+      "Capture authority runtime status report for metric delta test",
+      (ctx) => {
+        authorityReports.push({ ...ctx });
+        return {
+          applied: true,
+          serviceName: ctx.serviceName,
+          serviceInstanceId: ctx.serviceInstanceId,
+        };
+      },
+      "",
+      { register: false },
+    ).respondsTo(AUTHORITY_RUNTIME_STATUS_REPORT_INTENT);
+
+    Cadenza.createMetaTask(
+      "Capture peer runtime status metric delta update",
+      (ctx) => {
+        peerRuntimeUpdates.push({ ...ctx });
+        return ctx;
+      },
+      "",
+      { register: false },
+    ).doOn("meta.service.updated");
+
+    Cadenza.emit("meta.service_registry.runtime_status_broadcast_requested", {
+      force: true,
+      reason: "test",
+    });
+
+    await waitForCondition(() => authorityReports.length === 1, 1_500);
+    await waitForCondition(() => peerRuntimeUpdates.length === 1, 1_500);
+
+    registry.latestRuntimeMetricsSnapshot = {
+      sampledAt: "2026-04-07T10:00:05.000Z",
+      cpuUsage: 0.18,
+      memoryUsage: 0.31,
+      eventLoopLag: 18,
+      rssBytes: 420,
+      heapUsedBytes: 250,
+      heapTotalBytes: 300,
+      memoryLimitBytes: 700,
+    };
+
+    Cadenza.emit("meta.service_registry.runtime_status.peer_update_requested", {
+      reason: "runtime_metrics_sample",
+      detailLevel: "minimal",
+      peerOnly: true,
+    });
+
+    await waitForCondition(() => peerRuntimeUpdates.length === 2, 1_500);
+
+    expect(authorityReports).toHaveLength(1);
+    expect(peerRuntimeUpdates.at(-1)).toMatchObject({
+      serviceName: "OrdersService",
+      serviceInstanceId: "orders-1",
+      cpuUsage: 0.18,
+      memoryUsage: 0.31,
+      eventLoopLag: 18,
+      health: undefined,
+    });
+  });
+
+  it("refreshes stale REST-only dependee runtime metrics without waiting for heartbeat fallback", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const now = Date.now();
+
+    registry.instances.set("PredictorService", [
+      {
+        uuid: "predictor-b-1",
+        serviceName: "PredictorService",
+        numberOfRunningGraphs: 2,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date(now - 30_000).toISOString(),
+        health: {
+          cpuUsage: 0.02,
+          memoryUsage: 0.05,
+          eventLoopLag: 12,
+        },
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "predictor-b-transport",
+            serviceInstanceId: "predictor-b-1",
+            role: "internal",
+            origin: "http://predictor-b:3005",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+    ]);
+    registry.dependeesByService.set(
+      "PredictorService",
+      new Set(["predictor-b-1"]),
+    );
+    registry.lastHeartbeatAtByInstance.set("predictor-b-1", now - 30_000);
+    registry.missedHeartbeatsByInstance.set("predictor-b-1", 0);
+
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          serviceName: "PredictorService",
+          serviceInstanceId: "predictor-b-1",
+          reportedAt: "2026-04-07T10:00:10.000Z",
+          state: "overloaded",
+          acceptingWork: true,
+          numberOfRunningGraphs: 800,
+          cpuUsage: 0.72,
+          memoryUsage: 0.61,
+          eventLoopLag: 48,
+          isActive: true,
+          isNonResponsive: false,
+          isBlocked: false,
+          health: {
+            runtimeMetrics: {
+              sampledAt: "2026-04-07T10:00:10.000Z",
+              cpuUsage: 0.72,
+              memoryUsage: 0.61,
+              eventLoopLag: 48,
+              rssBytes: 2_000,
+              heapUsedBytes: 900,
+              heapTotalBytes: 1_100,
+              memoryLimitBytes: 4_000,
+            },
+          },
+        }),
+      } as Response);
+
+    Cadenza.emit("meta.service_registry.runtime_status.rest_refresh_tick", {});
+
+    await waitForCondition(() => {
+      const instance = registry.instances.get("PredictorService")?.[0];
+      return instance?.health?.cpuUsage === 0.72;
+    }, 1_500);
+
+    expect(fetchSpy).toHaveBeenCalledWith("http://predictor-b:3005/status", {
+      method: "GET",
+      signal: expect.any(Object),
+    });
+    expect(registry.instances.get("PredictorService")?.[0]).toMatchObject({
+      runtimeState: "overloaded",
+      numberOfRunningGraphs: 800,
+      health: {
+        cpuUsage: 0.72,
+        memoryUsage: 0.61,
+        eventLoopLag: 48,
+        runtimeMetrics: {
+          rssBytes: 2_000,
+          heapUsedBytes: 900,
+          heapTotalBytes: 1_100,
+          memoryLimitBytes: 4_000,
+        },
+      },
+    });
+  });
+
+  it("prefers lower runtime metrics before graph count when balancing equivalent routes", () => {
+    const registry = ServiceRegistry.instance as any;
+
+    const cooler = {
+      availability: "available",
+      runtimeState: "healthy",
+      acceptingWork: true,
+      inFlightDelegations: 0,
+      cpuUsage: 0.2,
+      memoryUsage: 0.3,
+      eventLoopLag: 5,
+      numberOfRunningGraphs: 12,
+      selectionCount: 0,
+      lastSelectedAt: 0,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      failurePenaltyUntil: null,
+    };
+    const hotterButShorterQueue = {
+      availability: "available",
+      runtimeState: "healthy",
+      acceptingWork: true,
+      inFlightDelegations: 0,
+      cpuUsage: 0.8,
+      memoryUsage: 0.7,
+      eventLoopLag: 20,
+      numberOfRunningGraphs: 1,
+      selectionCount: 0,
+      lastSelectedAt: 0,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      failurePenaltyUntil: null,
+    };
+
+    expect(
+      registry.compareRouteBalancingSnapshots(cooler, hotterButShorterQueue),
+    ).toBeLessThan(0);
+  });
+
+  it("does not penalize routes with missing runtime metrics during balancing", () => {
+    const registry = ServiceRegistry.instance as any;
+
+    const withoutMetrics = {
+      availability: "available",
+      runtimeState: "healthy",
+      acceptingWork: true,
+      inFlightDelegations: 0,
+      cpuUsage: null,
+      memoryUsage: null,
+      eventLoopLag: null,
+      numberOfRunningGraphs: 4,
+      selectionCount: 0,
+      lastSelectedAt: 0,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      failurePenaltyUntil: null,
+    };
+    const withMetrics = {
+      ...withoutMetrics,
+      cpuUsage: 0.9,
+      memoryUsage: 0.9,
+      eventLoopLag: 30,
+    };
+
+    expect(
+      registry.compareRouteBalancingSnapshots(withoutMetrics, withMetrics),
+    ).toBe(0);
+  });
+
+  it("ignores tiny cpu deltas when other runtime metrics are materially worse", () => {
+    const registry = ServiceRegistry.instance as any;
+
+    const slightlyLowerCpuButHotter = {
+      availability: "available",
+      runtimeState: "overloaded",
+      acceptingWork: true,
+      inFlightDelegations: 0,
+      cpuUsage: 0.01,
+      memoryUsage: 0.12,
+      eventLoopLag: 48,
+      numberOfRunningGraphs: 1200,
+      selectionCount: 1,
+      lastSelectedAt: 100,
+      lastSuccessAt: 100,
+      lastFailureAt: null,
+      failurePenaltyUntil: null,
+    };
+    const slightlyHigherCpuButCooler = {
+      availability: "available",
+      runtimeState: "overloaded",
+      acceptingWork: true,
+      inFlightDelegations: 0,
+      cpuUsage: 0.03,
+      memoryUsage: 0.05,
+      eventLoopLag: 36,
+      numberOfRunningGraphs: 120,
+      selectionCount: 0,
+      lastSelectedAt: null,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      failurePenaltyUntil: null,
+    };
+
+    expect(
+      registry.compareRouteBalancingSnapshots(
+        slightlyLowerCpuButHotter,
+        slightlyHigherCpuButCooler,
+      ),
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not retire remote CadenzaDB duplicates from gathered sync before any route is handshake-ready", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-1";
+
+    registry.instances.set("TelemetryCollectorService", [
+      {
+        uuid: "telemetry-1",
+        serviceName: "TelemetryCollectorService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [],
+      },
+    ]);
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "cadenza-db-old",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-23T21:39:39.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "cadenza-db-old-internal",
+            serviceInstanceId: "cadenza-db-old",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+    ]);
+
+    const handleInstanceUpdateTask = Cadenza.get("Handle Instance Update");
+    expect(handleInstanceUpdateTask).toBeDefined();
+
+    Cadenza.run(handleInstanceUpdateTask!, {
+      serviceInstance: {
+        uuid: "cadenza-db-new",
+        serviceName: "CadenzaDB",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-23T21:47:24.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "cadenza-db-new-internal",
+            serviceInstanceId: "cadenza-db-new",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(registry.instances.get("CadenzaDB")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          uuid: "cadenza-db-old",
+        }),
+        expect.objectContaining({
+          uuid: "cadenza-db-new",
+          transports: expect.arrayContaining([
+            expect.objectContaining({
+              uuid: "cadenza-db-new-internal",
+              origin: "http://cadenza-db-service:8080",
+            }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("ignores deleted service instances when hydrating gathered sync service lists", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-1";
+
+    const splitServiceInstancesTask = Cadenza.get("Split service instances");
+    expect(splitServiceInstancesTask).toBeDefined();
+
+    Cadenza.run(splitServiceInstancesTask!, {
+      service_instances: [
+        {
+          uuid: "cadenza-db-deleted",
+          service_name: "CadenzaDB",
+          is_active: true,
+          is_non_responsive: false,
+          is_blocked: false,
+          is_frontend: false,
+          is_database: true,
+          deleted: true,
+          health: {},
+        },
+        {
+          uuid: "cadenza-db-live",
+          service_name: "CadenzaDB",
+          is_active: true,
+          is_non_responsive: false,
+          is_blocked: false,
+          is_frontend: false,
+          is_database: true,
+          health: {},
+        },
+      ],
+      service_instance_transports: [
+        {
+          uuid: "cadenza-db-deleted-internal",
+          service_instance_id: "cadenza-db-deleted",
+          role: "internal",
+          origin: "http://cadenza-db-service:8080",
+          protocols: ["rest", "socket"],
+          deleted: true,
+        },
+        {
+          uuid: "cadenza-db-live-internal",
+          service_instance_id: "cadenza-db-live",
+          role: "internal",
+          origin: "http://cadenza-db-service:8080",
+          protocols: ["rest", "socket"],
+        },
+      ],
+    });
+
+    await waitForCondition(
+      () => (registry.instances.get("CadenzaDB") ?? []).length === 1,
+      1_500,
+    );
+
+    expect(registry.instances.get("CadenzaDB")).toEqual([
+      expect.objectContaining({
+        uuid: "cadenza-db-live",
+        transports: expect.arrayContaining([
+          expect.objectContaining({
+            uuid: "cadenza-db-live-internal",
+          }),
+        ]),
+      }),
+    ]);
   });
 
   it("persists each yielded transport registration without collapsing them into one resolver execution", async () => {
@@ -511,6 +2785,58 @@ describe("service registry transport registration", () => {
     );
   });
 
+  it("preserves transport metadata through resolved service_instance insert flow", async () => {
+    const registrations: Array<Record<string, unknown>> = [];
+    const registry = ServiceRegistry.instance as any;
+
+    Cadenza.createMetaTask("Capture resolved transport registration request", (ctx) => {
+      registrations.push(ctx.data);
+      return true;
+    }).doOn("meta.service_registry.transport_registration_requested");
+
+    Cadenza.createMetaTask("Insert service_instance", (ctx) => {
+      return {
+        ...ctx,
+        uuid:
+          (ctx.queryData as any)?.data?.uuid ??
+          (ctx.data as any)?.uuid ??
+          "missing-uuid",
+        data: (ctx.queryData as any)?.data ?? ctx.data,
+      };
+    });
+
+    Cadenza.run(registry.insertServiceInstanceTask, {
+      data: {
+        uuid: "orders-transport-flow",
+        process_pid: 1,
+        service_name: "OrdersService",
+        is_active: true,
+      },
+      __transportData: [
+        {
+          uuid: "transport-flow-public",
+          role: "public",
+          origin: "http://orders-transport-flow.localhost",
+          protocols: ["rest", "socket"],
+        },
+      ],
+      __useSocket: true,
+      __retryCount: 3,
+      __isFrontend: false,
+    });
+
+    await waitForCondition(() => registrations.length === 1, 1_500);
+
+    expect(registrations[0]).toEqual(
+      expect.objectContaining({
+        uuid: "transport-flow-public",
+        role: "public",
+        origin: "http://orders-transport-flow.localhost",
+        service_instance_id: "orders-transport-flow",
+      }),
+    );
+  });
+
   it("resolves the local service instance insert task at execution time", async () => {
     const registry = ServiceRegistry.instance as any;
     const capturedQueryData: Array<Record<string, unknown>> = [];
@@ -555,12 +2881,62 @@ describe("service registry transport registration", () => {
     });
   });
 
+  it("reschedules local CadenzaDB service_instance inserts until the generated insert task exists", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.serviceInstanceId = "cadenza-db-1";
+
+    const scheduleSpy = vi.spyOn(Cadenza, "schedule");
+    const remoteInsertExecutions: Array<Record<string, unknown>> = [];
+
+    Cadenza.createEphemeralMetaTask(
+      "Capture remote service instance insert execution request",
+      (ctx) => {
+        remoteInsertExecutions.push(ctx);
+        return true;
+      },
+    ).doOn("meta.service_registry.insert_execution_requested:service_instance:remote");
+
+    expect(Cadenza.get("Insert service_instance")).toBeUndefined();
+
+    const result = await registry.insertServiceInstanceTask.taskFunction(
+      {
+        data: {
+          uuid: "cadenza-db-1",
+          process_pid: 1,
+          service_name: "CadenzaDB",
+          is_active: true,
+        },
+        __serviceName: "CadenzaDB",
+        __serviceInstanceId: "cadenza-db-1",
+      },
+      Cadenza.emit.bind(Cadenza),
+    );
+
+    expect(result).toBe(false);
+    expect(scheduleSpy).toHaveBeenCalledWith(
+      "meta.service_registry.instance_registration_requested",
+      expect.objectContaining({
+        __serviceName: "CadenzaDB",
+        __serviceInstanceId: "cadenza-db-1",
+      }),
+      250,
+    );
+    expect(remoteInsertExecutions).toEqual([]);
+  });
+
   it("reconstructs service_instance registration payloads before insert resolution", () => {
     const prepareTask = Cadenza.get("Prepare service instance registration") as any;
 
     expect(prepareTask).toBeDefined();
 
     const result = prepareTask.taskFunction({
+      __registrationData: {
+        name: "OrdersService",
+        description: "Orders",
+        display_name: "Orders",
+        is_meta: false,
+      },
       __serviceName: "OrdersService",
       queryData: {
         data: {
@@ -587,6 +2963,12 @@ describe("service registry transport registration", () => {
       },
       __serviceName: "OrdersService",
       __serviceInstanceId: "orders-4",
+    });
+    expect(result.data).not.toMatchObject({
+      name: "OrdersService",
+      description: "Orders",
+      display_name: "Orders",
+      is_meta: false,
     });
   });
 
@@ -707,7 +3089,7 @@ describe("service registry transport registration", () => {
     });
   });
 
-  it("mirrors remote service_instance insert payload onto root data", async () => {
+  it("strips stale delegation result snapshots before service_instance inserts", async () => {
     resetRuntimeState();
 
     const capturedContexts: Array<Record<string, unknown>> = [];
@@ -746,6 +3128,25 @@ describe("service registry transport registration", () => {
     const registry = ServiceRegistry.instance as any;
     const result = await registry.insertServiceInstanceTask.taskFunction(
       {
+        __status: "success",
+        __delegationRequestContext: {
+          __serviceName: "DemoFrontend",
+          __serviceInstanceId: "frontend-1",
+          data: {
+            name: "DemoFrontend",
+          },
+          queryData: {
+            onConflict: {
+              target: ["name"],
+              action: {
+                do: "nothing",
+              },
+            },
+            data: {
+              name: "DemoFrontend",
+            },
+          },
+        },
         onConflict: {
           target: ["name"],
           action: {
@@ -784,6 +3185,11 @@ describe("service registry transport registration", () => {
         }),
       }),
     ]);
+    expect(capturedContexts[0].queryData).not.toMatchObject({
+      onConflict: {
+        target: ["name"],
+      },
+    });
     expect(result).toMatchObject({
       uuid: "frontend-1",
     });
@@ -883,6 +3289,651 @@ describe("service registry transport registration", () => {
     expect(selectedContexts[0].__transportId).toBeUndefined();
   });
 
+  it("clears stale delegation errors before rerouting a fetch target", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const selectedContexts: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture clean fetch selection", (ctx) => {
+      selectedContexts.push(ctx);
+      return true;
+    }).doOn(
+      `meta.service_registry.selected_instance_for_fetch:${buildHandleKey(buildRouteKey("OrdersService", "internal", "http://orders.internal"), "rest")}`,
+    );
+
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-transport-1",
+            serviceInstanceId: "orders-1",
+            role: "internal",
+            origin: "http://orders.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+            clientCreated: true,
+          },
+        ],
+        clientCreatedTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+        clientReadyTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+      },
+    ]);
+
+    Cadenza.run(registry.getBalancedInstance, {
+      __serviceName: "OrdersService",
+      __remoteRoutineName: "HandleOrdersDelegation",
+      errored: true,
+      failed: true,
+      __error: "Previous delegation failed",
+      error: "Previous delegation failed",
+      returnedValue: {},
+      __metadata: {
+        __deputyExecId: "retry-routing-1",
+      },
+    });
+
+    await waitForCondition(() => selectedContexts.length === 1, 1_500);
+
+    expect(selectedContexts[0]).toMatchObject({
+      __instance: "orders-1",
+      __fetchId: buildHandleKey(
+        buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        "rest",
+      ),
+      __transportOrigin: "http://orders.internal",
+    });
+    expect(selectedContexts[0].errored).toBeUndefined();
+    expect(selectedContexts[0].failed).toBeUndefined();
+    expect(selectedContexts[0].__error).toBeUndefined();
+    expect(selectedContexts[0].error).toBeUndefined();
+    expect(selectedContexts[0].returnedValue).toBeUndefined();
+  });
+
+  it("prefers the freshest ready instance when duplicate routes share the same origin", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const selectedContexts: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture freshest duplicate route selection", (ctx) => {
+      selectedContexts.push(ctx);
+      return true;
+    }).doOn(
+      `meta.service_registry.selected_instance_for_fetch:${buildHandleKey(buildRouteKey("OrdersService", "internal", "http://orders.internal"), "rest")}`,
+    );
+
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-old",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-25T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-transport-old",
+            serviceInstanceId: "orders-old",
+            role: "internal",
+            origin: "http://orders.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+        clientReadyTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+      },
+      {
+        uuid: "orders-new",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 1,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-03-26T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-transport-new",
+            serviceInstanceId: "orders-new",
+            role: "internal",
+            origin: "http://orders.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+        clientReadyTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+      },
+    ]);
+
+    Cadenza.run(registry.getBalancedInstance, {
+      __serviceName: "OrdersService",
+      __remoteRoutineName: "HandleOrdersDelegation",
+      __metadata: {
+        __deputyExecId: "freshest-route-1",
+      },
+    });
+
+    await waitForCondition(() => selectedContexts.length === 1, 1_500);
+
+    expect(selectedContexts[0]).toMatchObject({
+      __instance: "orders-new",
+      __fetchId: buildHandleKey(
+        buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        "rest",
+      ),
+      __transportOrigin: "http://orders.internal",
+    });
+  });
+
+  it("rotates across equivalent healthy routes on repeated selections", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const routeKeyA = buildRouteKey(
+      "OrdersService",
+      "internal",
+      "http://orders-a.internal",
+    );
+    const routeKeyB = buildRouteKey(
+      "OrdersService",
+      "internal",
+      "http://orders-b.internal",
+    );
+
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-04-04T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-transport-1",
+            serviceInstanceId: "orders-1",
+            role: "internal",
+            origin: "http://orders-a.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: [
+          routeKeyA,
+        ],
+        clientReadyTransportIds: [
+          routeKeyA,
+        ],
+      },
+      {
+        uuid: "orders-2",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-04-04T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-transport-2",
+            serviceInstanceId: "orders-2",
+            role: "internal",
+            origin: "http://orders-b.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: [
+          routeKeyB,
+        ],
+        clientReadyTransportIds: [
+          routeKeyB,
+        ],
+      },
+    ]);
+
+    const [ordersA, ordersB] = registry.instances.get("OrdersService");
+    const transportA = ordersA.transports[0];
+    const transportB = ordersB.transports[0];
+
+    const routeA = registry.upsertRemoteRouteRecord(
+      "OrdersService",
+      ordersA.uuid,
+      transportA,
+    );
+    const routeB = registry.upsertRemoteRouteRecord(
+      "OrdersService",
+      ordersB.uuid,
+      transportB,
+    );
+
+    registry.recordBalancedRouteSelection(routeA.key, {
+      __deputyExecId: "balanced-route-1",
+      __routeKey: routeA.key,
+      __fetchId: buildHandleKey(routeA.key, "rest"),
+    });
+
+    const snapshotA = registry.buildRouteBalancingSnapshot(routeA, ordersA);
+    const snapshotB = registry.buildRouteBalancingSnapshot(routeB, ordersB);
+
+    expect(
+      registry.compareRouteBalancingSnapshots(snapshotA, snapshotB),
+    ).toBeGreaterThan(0);
+  });
+
+  it("filters broadcast selections to matching receivers", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const selectedContexts: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture filtered broadcast selection", (ctx) => {
+      selectedContexts.push(ctx);
+      return true;
+    }).doOn(
+      `meta.service_registry.selected_instance_for_fetch:${buildHandleKey(buildRouteKey("OrdersService", "internal", "http://orders-b.internal"), "rest")}`,
+    );
+
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-04-04T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-transport-1",
+            serviceInstanceId: "orders-1",
+            role: "internal",
+            origin: "http://orders-a.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders-a.internal"),
+        ],
+        clientReadyTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders-a.internal"),
+        ],
+      },
+      {
+        uuid: "orders-2",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-04-04T10:00:00.000Z",
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-transport-2",
+            serviceInstanceId: "orders-2",
+            role: "internal",
+            origin: "http://orders-b.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders-b.internal"),
+        ],
+        clientReadyTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders-b.internal"),
+        ],
+      },
+    ]);
+
+    Cadenza.run(registry.getBalancedInstance, {
+      __serviceName: "OrdersService",
+      __remoteRoutineName: "BroadcastOrdersUpdate",
+      __broadcast: true,
+      __broadcastFilter: {
+        serviceInstanceIds: ["orders-2"],
+      },
+      __metadata: {
+        __deputyExecId: "broadcast-filter-1",
+      },
+    });
+
+    await waitForCondition(() => selectedContexts.length === 1, 1_500);
+
+    expect(selectedContexts[0]).toMatchObject({
+      __instance: "orders-2",
+      __transportOrigin: "http://orders-b.internal",
+    });
+  });
+
+  it("restores the original delegation request shape before rerouting a failed fetch delegation", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const selectedContexts: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture restored fetch selection", (ctx) => {
+      selectedContexts.push(ctx);
+      return true;
+    }).doOn(
+      `meta.service_registry.selected_instance_for_fetch:${buildHandleKey(buildRouteKey("OrdersService", "internal", "http://orders.internal"), "rest")}`,
+    );
+
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-transport-1",
+            serviceInstanceId: "orders-1",
+            role: "internal",
+            origin: "http://orders.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+            clientCreated: true,
+          },
+        ],
+        clientCreatedTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+        clientReadyTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+      },
+    ]);
+
+    const originalRequest = {
+      __serviceName: "OrdersService",
+      __remoteRoutineName: "Insert actor_session_state",
+      __metadata: {
+        __deputyExecId: "actor-session-retry-1",
+      },
+      data: {
+        actor_name: "TelemetrySessionActor",
+        actor_version: 1,
+        actor_key: "device-1",
+        durable_state: { foo: "bar" },
+        durable_version: 2,
+        service_name: "TelemetryCollectorService",
+      },
+      queryData: {
+        data: {
+          actor_name: "TelemetrySessionActor",
+          actor_version: 1,
+          actor_key: "device-1",
+          durable_state: { foo: "bar" },
+          durable_version: 2,
+          service_name: "TelemetryCollectorService",
+        },
+        onConflict: {
+          keys: ["actor_name", "actor_key"],
+        },
+      },
+    };
+
+    Cadenza.run(registry.getBalancedInstance, {
+      __serviceName: "OrdersService",
+      __remoteRoutineName: "Insert actor_session_state",
+      __metadata: {
+        __deputyExecId: "actor-session-retry-1",
+      },
+      __deputyExecId: "actor-session-retry-1",
+      __delegationRequestContext: originalRequest,
+      actor_name: "TelemetrySessionActor",
+      actor_version: 1,
+      actor_key: "device-1",
+      durable_state: { foo: "bar" },
+      durable_version: 2,
+      service_name: "TelemetryCollectorService",
+      onConflict: {
+        keys: ["actor_name", "actor_key"],
+      },
+      rowCount: 0,
+      __status: "success",
+      __success: true,
+      __isDeputy: true,
+      __signalEmission: {
+        fullSignalName: `meta.fetch.delegate_failed:${buildHandleKey(buildRouteKey("OrdersService", "internal", "http://orders.internal"), "rest")}`,
+      },
+      __retries: 1,
+      __triedInstances: ["orders-1"],
+    });
+
+    await waitForCondition(() => selectedContexts.length === 1, 1_500);
+
+    expect(selectedContexts[0]).toMatchObject({
+      __instance: "orders-1",
+      __fetchId: buildHandleKey(
+        buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        "rest",
+      ),
+      __transportOrigin: "http://orders.internal",
+      __deputyExecId: "actor-session-retry-1",
+      data: expect.objectContaining({
+        actor_name: "TelemetrySessionActor",
+        actor_key: "device-1",
+      }),
+      queryData: expect.objectContaining({
+        data: expect.objectContaining({
+          actor_name: "TelemetrySessionActor",
+          actor_key: "device-1",
+        }),
+        onConflict: expect.objectContaining({
+          keys: ["actor_name", "actor_key"],
+        }),
+      }),
+      __retries: 2,
+      __triedInstances: ["orders-1"],
+    });
+    expect(selectedContexts[0].rowCount).toBeUndefined();
+    expect(selectedContexts[0].__status).toBeUndefined();
+    expect(selectedContexts[0].__success).toBeUndefined();
+  });
+
+  it("preserves the live deputy identity over a stale embedded snapshot during routing", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const selectedContexts: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture live deputy fetch selection", (ctx) => {
+      selectedContexts.push(ctx);
+      return true;
+    }).doOn(
+      `meta.service_registry.selected_instance_for_fetch:${buildHandleKey(buildRouteKey("OrdersService", "internal", "http://orders.internal"), "rest")}`,
+    );
+
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-transport-1",
+            serviceInstanceId: "orders-1",
+            role: "internal",
+            origin: "http://orders.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+            clientCreated: true,
+          },
+        ],
+        clientCreatedTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+        clientReadyTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+      },
+    ]);
+
+    Cadenza.run(registry.getBalancedInstance, {
+      __serviceName: "OrdersService",
+      __remoteRoutineName: "Insert service_instance",
+      __localTaskName: "Insert service_instance in CadenzaDB",
+      __metadata: {
+        __deputyExecId: "live-routing-1",
+      },
+      __deputyExecId: "live-routing-1",
+      __resolverRequestId: "resolver-live-1",
+      __resolverQueryData: {
+        data: {
+          uuid: "orders-live-1",
+          process_pid: 123,
+          service_name: "OrdersService",
+        },
+        onConflict: {
+          target: ["uuid"],
+        },
+      },
+      data: {
+        uuid: "orders-live-1",
+        process_pid: 123,
+        service_name: "OrdersService",
+      },
+      queryData: {
+        data: {
+          uuid: "orders-live-1",
+          process_pid: 123,
+          service_name: "OrdersService",
+        },
+        onConflict: {
+          target: ["uuid"],
+        },
+      },
+      __delegationRequestContext: {
+        __serviceName: "OrdersService",
+        __remoteRoutineName: "Insert service_instance",
+        __localTaskName: "Insert service_instance in CadenzaDB",
+        __metadata: {
+          __deputyExecId: "stale-routing-1",
+        },
+        __deputyExecId: "stale-routing-1",
+        __resolverRequestId: "resolver-stale-1",
+        queryData: {
+          data: {
+            name: "stale",
+          },
+        },
+      },
+    });
+
+    await waitForCondition(() => selectedContexts.length === 1, 1_500);
+
+    expect(selectedContexts[0]).toMatchObject({
+      __deputyExecId: "live-routing-1",
+      __resolverRequestId: "resolver-live-1",
+      __serviceName: "OrdersService",
+      __remoteRoutineName: "Insert service_instance",
+      __localTaskName: "Insert service_instance in CadenzaDB",
+      queryData: expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "orders-live-1",
+          process_pid: 123,
+          service_name: "OrdersService",
+        }),
+      }),
+    });
+    expect(selectedContexts[0].__metadata).toMatchObject({
+      __deputyExecId: "live-routing-1",
+    });
+  });
+
   it("does not create server transport clients for frontend instances", async () => {
     const registry = ServiceRegistry.instance as any;
     const dependeeRegistrations: Array<Record<string, unknown>> = [];
@@ -928,6 +3979,129 @@ describe("service registry transport registration", () => {
     expect(dependeeRegistrations).toEqual([]);
     expect(
       registry.instances.get("DashboardFrontend")?.[0]?.clientCreatedTransportIds,
+    ).toEqual([]);
+  });
+
+  it("does not eagerly create dependee clients from authority transport updates", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const dependeeRegistrations: Array<Record<string, unknown>> = [];
+
+    registry.serviceName = "CadenzaDB";
+    registry.serviceInstanceId = "cadenza-db-1";
+    registry.remoteSignals.set("TelemetryCollectorService", new Set(["signal.test"]));
+    registry.instances.set("TelemetryCollectorService", [
+      {
+        uuid: "telemetry-1",
+        serviceName: "TelemetryCollectorService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [],
+        clientCreatedTransportIds: [],
+        clientPendingTransportIds: [],
+        clientReadyTransportIds: [],
+      },
+    ]);
+
+    Cadenza.createMetaTask(
+      "Capture authority-skipped dependee registration",
+      (ctx) => {
+        dependeeRegistrations.push(ctx.data ?? ctx);
+        return true;
+      },
+    ).doOn("meta.service_registry.dependee_registered");
+
+    Cadenza.run(registry.handleTransportUpdateTask, {
+      serviceTransport: {
+        uuid: "telemetry-internal-1",
+        serviceInstanceId: "telemetry-1",
+        role: "internal",
+        origin: "http://telemetry-collector:3004",
+        protocols: ["rest"],
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(dependeeRegistrations).toEqual([]);
+    expect(
+      registry.instances.get("TelemetryCollectorService")?.[0]
+        ?.clientPendingTransportIds,
+    ).toEqual([]);
+  });
+
+  it("does not demand-create authority clients for global meta signal routing", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const dependeeRegistrations: Array<Record<string, unknown>> = [];
+
+    registry.serviceName = "CadenzaDB";
+    registry.serviceInstanceId = "cadenza-db-1";
+    registry.remoteSignals.set(
+      "ScheduledRunnerService",
+      new Set(["global.meta.service_instance.updated"]),
+    );
+    registry.instances.set("ScheduledRunnerService", [
+      {
+        uuid: "scheduled-runner-1",
+        serviceName: "ScheduledRunnerService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "scheduled-runner-internal",
+            serviceInstanceId: "scheduled-runner-1",
+            role: "internal",
+            origin: "http://scheduled-runner:3002",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+          },
+        ],
+        clientCreatedTransportIds: [],
+        clientPendingTransportIds: [],
+        clientReadyTransportIds: [],
+      },
+    ]);
+
+    Cadenza.createMetaTask(
+      "Capture authority meta-signal dependee registration",
+      (ctx) => {
+        dependeeRegistrations.push(ctx.data ?? ctx);
+        return true;
+      },
+    ).doOn("meta.service_registry.dependee_registered");
+
+    Cadenza.run(registry.getBalancedInstance, {
+      __serviceName: "ScheduledRunnerService",
+      __signalName: "global.meta.service_instance.updated",
+      __metadata: {
+        __deputyExecId: "authority-meta-signal-1",
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(dependeeRegistrations).toEqual([]);
+    expect(
+      registry.instances.get("ScheduledRunnerService")?.[0]
+        ?.clientPendingTransportIds,
     ).toEqual([]);
   });
 
@@ -1006,8 +4180,10 @@ describe("service registry transport registration", () => {
       transportProtocols: ["rest"],
     });
     expect(
-      registry.instances.get("IotDbService")?.[0]?.clientCreatedTransportIds,
-    ).toContain("iot-db-internal");
+      registry.instances.get("IotDbService")?.[0]?.clientPendingTransportIds,
+    ).toContain(
+      buildRouteKey("IotDbService", "internal", "http://iot-db-service:3001"),
+    );
   });
 
   it("backfills dependee clients when deputy registration happens after an authoritative transport update", async () => {
@@ -1071,13 +4247,448 @@ describe("service registry transport registration", () => {
       serviceOrigin: "http://cadenza-db-service:8080",
     });
     expect(
-      registry.instances.get("CadenzaDB")?.[0]?.clientCreatedTransportIds,
+      registry.instances.get("CadenzaDB")?.[0]?.clientPendingTransportIds,
     ).toEqual(
       expect.arrayContaining([
-        "cadenza-db-internal-bootstrap",
-        "cadenza-db-internal-authority",
+        buildRouteKey("CadenzaDB", "internal", "http://cadenza-db-service:8080"),
       ]),
     );
+  });
+
+  it("does not route delegated work through pending transports before handshake readiness", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const selectedContexts: Array<Record<string, unknown>> = [];
+    const failedContexts: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture pending fetch selection", (ctx) => {
+      selectedContexts.push(ctx);
+      return true;
+    }).doOn(
+      `meta.service_registry.selected_instance_for_fetch:${buildHandleKey(buildRouteKey("OrdersService", "internal", "http://orders.internal"), "rest")}`,
+    );
+
+    Cadenza.createMetaTask("Capture pending fetch failure", (ctx) => {
+      failedContexts.push(ctx);
+      return true;
+    }).doOn("meta.service_registry.load_balance_failed:pending-routing-1");
+
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "orders-transport-1",
+            serviceInstanceId: "orders-1",
+            role: "internal",
+            origin: "http://orders.internal",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientPendingTransportIds: [
+          buildRouteKey("OrdersService", "internal", "http://orders.internal"),
+        ],
+      },
+    ]);
+
+    Cadenza.run(registry.getBalancedInstance, {
+      __serviceName: "OrdersService",
+      __remoteRoutineName: "HandleOrdersDelegation",
+      __metadata: {
+        __deputyExecId: "pending-routing-1",
+      },
+    });
+
+    await waitForCondition(() => failedContexts.length === 1, 1_500);
+
+    expect(selectedContexts).toEqual([]);
+    expect(failedContexts[0]?.__error).toContain(
+      "No routeable internal transport available for OrdersService",
+    );
+  });
+
+  it("enters no-route cooldown after repeated misses and wakes on matching internal transport readiness", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const failedContexts: Array<Record<string, unknown>> = [];
+    const selectedContexts: Array<Record<string, unknown>> = [];
+
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-collector-1";
+    registry.retryCount = 0;
+
+    Cadenza.createMetaTask("Capture routing cooldown failures", (ctx) => {
+      failedContexts.push(ctx);
+      return true;
+    }).doOn("meta.service_registry.load_balance_failed:cooldown-routing-1");
+
+    Cadenza.createMetaTask("Capture routing cooldown wake selection", (ctx) => {
+      selectedContexts.push(ctx);
+      return true;
+    }).doOn(
+      `meta.service_registry.selected_instance_for_fetch:${buildHandleKey(buildRouteKey("IotDbService", "internal", "http://iot-db-service:3001"), "rest")}`,
+    );
+
+    registry.instances.set("IotDbService", [
+      {
+        uuid: "iot-1",
+        serviceName: "IotDbService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "iot-internal-1",
+            serviceInstanceId: "iot-1",
+            role: "internal",
+            origin: "http://iot-db-service:3001",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientPendingTransportIds: ["iot-internal-1"],
+        clientReadyTransportIds: [],
+      },
+    ]);
+
+    const failureContext = {
+      __serviceName: "IotDbService",
+      __remoteRoutineName: "Query telemetry",
+      __metadata: {
+        __deputyExecId: "cooldown-routing-1",
+      },
+    };
+
+    Cadenza.run(registry.getBalancedInstance, { ...failureContext });
+    Cadenza.run(registry.getBalancedInstance, { ...failureContext });
+    Cadenza.run(registry.getBalancedInstance, { ...failureContext });
+    Cadenza.run(registry.getBalancedInstance, { ...failureContext });
+
+    await waitForCondition(() => failedContexts.length === 4, 1_500);
+
+    expect(
+      registry.routingCooldownsByKey.get("IotDbService|internal|rest"),
+    ).toEqual(
+      expect.objectContaining({
+        serviceName: "IotDbService",
+        role: "internal",
+        protocol: "rest",
+      }),
+    );
+    expect(String(failedContexts[3]?.__error ?? "")).toContain(
+      "Waiting for authority route updates before retrying",
+    );
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceName: "IotDbService",
+      serviceInstanceId: "iot-1",
+      serviceTransportId: "iot-internal-1",
+      communicationTypes: ["rest"],
+    });
+
+    await waitForCondition(
+      () => !registry.routingCooldownsByKey.has("IotDbService|internal|rest"),
+      1_500,
+    );
+
+    Cadenza.run(registry.getBalancedInstance, {
+      __serviceName: "IotDbService",
+      __remoteRoutineName: "Query telemetry",
+      __metadata: {
+        __deputyExecId: "cooldown-routing-2",
+      },
+    });
+
+    await waitForCondition(() => selectedContexts.length === 1, 1_500);
+
+    expect(selectedContexts[0]).toMatchObject({
+      __instance: "iot-1",
+      __transportId: "iot-internal-1",
+      __transportOrigin: "http://iot-db-service:3001",
+    });
+  });
+
+  it("does not wake internal routing cooldowns from public-only transport readiness", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const failedContexts: Array<Record<string, unknown>> = [];
+
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-collector-1";
+    registry.retryCount = 0;
+
+    Cadenza.createMetaTask("Capture public-only cooldown failures", (ctx) => {
+      failedContexts.push(ctx);
+      return true;
+    }).doOn("meta.service_registry.load_balance_failed:cooldown-routing-public");
+
+    registry.instances.set("IotDbService", [
+      {
+        uuid: "iot-public-only",
+        serviceName: "IotDbService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "iot-public-1",
+            serviceInstanceId: "iot-public-only",
+            role: "public",
+            origin: "http://iot-db.localhost",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientPendingTransportIds: ["iot-public-1"],
+        clientReadyTransportIds: [],
+      },
+    ]);
+
+    const failureContext = {
+      __serviceName: "IotDbService",
+      __remoteRoutineName: "Query telemetry",
+      __metadata: {
+        __deputyExecId: "cooldown-routing-public",
+      },
+    };
+
+    Cadenza.run(registry.getBalancedInstance, { ...failureContext });
+    Cadenza.run(registry.getBalancedInstance, { ...failureContext });
+    Cadenza.run(registry.getBalancedInstance, { ...failureContext });
+
+    await waitForCondition(
+      () => registry.routingCooldownsByKey.has("IotDbService|internal|rest"),
+      1_500,
+    );
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceName: "IotDbService",
+      serviceInstanceId: "iot-public-only",
+      serviceTransportId: "iot-public-1",
+      communicationTypes: ["rest"],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(
+      registry.routingCooldownsByKey.has("IotDbService|internal|rest"),
+    ).toBe(true);
+
+    Cadenza.run(registry.getBalancedInstance, { ...failureContext });
+
+    await waitForCondition(() => failedContexts.length === 4, 1_500);
+
+    expect(String(failedContexts[3]?.__error ?? "")).toContain(
+      "Waiting for authority route updates before retrying",
+    );
+  });
+
+  it("demotes repeated timeout transport failures before rebalancing", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const serviceNotRespondingContexts: Array<Record<string, unknown>> = [];
+
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-collector-1";
+    registry.retryCount = 0;
+
+    Cadenza.createMetaTask("Capture dead-route demotion", (ctx) => {
+      serviceNotRespondingContexts.push(ctx);
+      return true;
+    }).doOn("global.meta.service_registry.service_not_responding");
+
+    registry.instances.set("IotDbService", [
+      {
+        uuid: "iot-dead-route",
+        serviceName: "IotDbService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "iot-dead-transport",
+            serviceInstanceId: "iot-dead-route",
+            role: "internal",
+            origin: "http://iot-db-service:3001",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: ["iot-dead-transport"],
+        clientPendingTransportIds: [],
+        clientReadyTransportIds: ["iot-dead-transport"],
+      },
+    ]);
+
+    const failureContext = {
+      __serviceName: "IotDbService",
+      __remoteRoutineName: "Query telemetry",
+      __instance: "iot-dead-route",
+      __transportId: "iot-dead-transport",
+      __fetchId: "iot-dead-transport",
+      __error:
+        "Error: AbortError: The operation was aborted after timeout while contacting http://iot-db-service:3001/delegation",
+      __metadata: {
+        __deputyExecId: "dead-route-demotion-1",
+      },
+      __signalEmission: {
+        fullSignalName: "meta.fetch.delegate_failed:iot-dead-transport",
+      },
+    };
+
+    Cadenza.run(registry.getBalancedInstance, { ...failureContext });
+    Cadenza.run(registry.getBalancedInstance, { ...failureContext });
+
+    await waitForCondition(
+      () =>
+        (registry.instances.get("IotDbService")?.[0]?.clientReadyTransportIds ?? [])
+          .length === 0 &&
+        serviceNotRespondingContexts.length === 1,
+      1_500,
+    );
+
+    expect(serviceNotRespondingContexts[0]).toMatchObject({
+      filter: {
+        uuid: "iot-dead-route",
+      },
+      data: {
+        isActive: false,
+        isNonResponsive: true,
+      },
+    });
+    expect(registry.instances.get("IotDbService")?.[0]).toMatchObject({
+      isActive: false,
+      isNonResponsive: true,
+      clientReadyTransportIds: [],
+    });
+  });
+
+  it("demotes a hard network transport failure on the first ECONNREFUSED", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const serviceNotRespondingContexts: Array<Record<string, unknown>> = [];
+
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-collector-1";
+    registry.retryCount = 0;
+
+    Cadenza.createMetaTask("Capture immediate hard-failure demotion", (ctx) => {
+      serviceNotRespondingContexts.push(ctx);
+      return true;
+    }).doOn("global.meta.service_registry.service_not_responding");
+
+    registry.instances.set("IotDbService", [
+      {
+        uuid: "iot-dead-route-immediate",
+        serviceName: "IotDbService",
+        numberOfRunningGraphs: 0,
+        isPrimary: true,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        reportedAt: new Date().toISOString(),
+        health: {},
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "iot-dead-transport-immediate",
+            serviceInstanceId: "iot-dead-route-immediate",
+            role: "internal",
+            origin: "http://iot-db-service:3001",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: ["iot-dead-transport-immediate"],
+        clientPendingTransportIds: [],
+        clientReadyTransportIds: ["iot-dead-transport-immediate"],
+      },
+    ]);
+
+    Cadenza.run(registry.getBalancedInstance, {
+      __serviceName: "IotDbService",
+      __remoteRoutineName: "Insert telemetry",
+      __instance: "iot-dead-route-immediate",
+      __transportId: "iot-dead-transport-immediate",
+      __fetchId: "iot-dead-transport-immediate",
+      __error:
+        "Error: FetchError: request to http://iot-db-service:3001/delegation failed, reason: connect ECONNREFUSED 172.18.0.4:3001",
+      __metadata: {
+        __deputyExecId: "dead-route-demotion-immediate-1",
+      },
+      __signalEmission: {
+        fullSignalName:
+          "meta.fetch.delegate_failed:iot-dead-transport-immediate",
+      },
+    });
+
+    await waitForCondition(
+      () =>
+        (registry.instances.get("IotDbService")?.[0]?.clientReadyTransportIds ?? [])
+          .length === 0 &&
+        serviceNotRespondingContexts.length === 1,
+      1_500,
+    );
+
+    expect(serviceNotRespondingContexts[0]).toMatchObject({
+      filter: {
+        uuid: "iot-dead-route-immediate",
+      },
+      data: {
+        isActive: false,
+        isNonResponsive: true,
+      },
+    });
+    expect(registry.instances.get("IotDbService")?.[0]).toMatchObject({
+      isActive: false,
+      isNonResponsive: true,
+      clientReadyTransportIds: [],
+    });
   });
 
   it("merges top-level sync transports into split service instances before dependee backfill", async () => {
@@ -1153,8 +4764,10 @@ describe("service registry transport registration", () => {
       transportProtocols: ["rest"],
     });
     expect(
-      registry.instances.get("IotDbService")?.[0]?.clientCreatedTransportIds,
-    ).toContain("iot-db-internal");
+      registry.instances.get("IotDbService")?.[0]?.clientPendingTransportIds,
+    ).toContain(
+      buildRouteKey("IotDbService", "internal", "http://iot-db-service:3001"),
+    );
     expect(registry.instances.get("IotDbService")?.[0]?.transports).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1166,71 +4779,961 @@ describe("service registry transport registration", () => {
     );
   });
 
-  it("reconciles gathered sync transmitters from self sync payloads and requests one extra sync wave", async () => {
+  it("preserves transport and manifest arrays through distributed bootstrap full sync", async () => {
     const registry = ServiceRegistry.instance as any;
-    const syncTickRequests: Array<Record<string, unknown>> = [];
+    registry.serviceName = "ScheduledRunnerService";
+    registry.connectsToCadenzaDB = false;
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.registerBootstrapFullSyncDeputies(() => {}, {});
 
+    vi.spyOn(Cadenza, "inquire").mockResolvedValue({
+      serviceInstances: [
+        {
+          uuid: "cadenza-db-1",
+          service_name: "CadenzaDB",
+          is_active: true,
+          is_non_responsive: false,
+          is_blocked: false,
+          is_frontend: false,
+          health: {},
+        },
+      ],
+      serviceInstanceTransports: [
+        {
+          uuid: "cadenza-db-internal",
+          service_instance_id: "cadenza-db-1",
+          role: "internal",
+          origin: "http://cadenza-db-service:8080",
+          protocols: ["rest", "socket"],
+        },
+      ],
+      serviceManifests: [
+        {
+          service_instance_id: "scheduled-runner-1",
+          manifest: {
+            serviceName: "ScheduledRunnerService",
+            serviceInstanceId: "scheduled-runner-1",
+            revision: 1,
+            manifestHash: "runner-manifest-v1",
+            publishedAt: "2026-03-30T11:30:00.000Z",
+            tasks: [],
+            signals: [],
+            intents: [],
+            actors: [],
+            routines: [],
+            directionalTaskMaps: [],
+            signalTaskMaps: [],
+            intentTaskMaps: [],
+            actorTaskMaps: [],
+            taskToRoutineMaps: [],
+          },
+        },
+      ],
+      signalToTaskMaps: [
+        {
+          signal_name: "global.meta.service_instance.inserted",
+          service_name: "ScheduledRunnerService",
+          task_name: "Handle Instance Update",
+          task_version: 1,
+          is_global: true,
+        },
+      ],
+      intentToTaskMaps: [],
+      tasks: [],
+      signals: [],
+      intents: [],
+      actors: [],
+      routines: [],
+      directionalTaskMaps: [],
+      actorTaskMaps: [],
+      taskToRoutineMaps: [],
+      __inquiryMeta: {
+        inquiry: "meta-service-registry-full-sync",
+      },
+    } as any);
+
+    const result = await (registry.fullSyncTask as any).taskFunction({
+      __syncing: true,
+      __reason: "test_full_sync_transport_manifest_passthrough",
+    });
+
+    expect(result).toMatchObject({
+      serviceInstanceTransports: [
+        expect.objectContaining({
+          uuid: "cadenza-db-internal",
+          service_instance_id: "cadenza-db-1",
+        }),
+      ],
+      serviceManifests: [
+        expect.objectContaining({
+          service_instance_id: "scheduled-runner-1",
+        }),
+      ],
+      signalToTaskMaps: [
+        expect.objectContaining({
+          signal_name: "global.meta.service_instance.inserted",
+          service_name: "ScheduledRunnerService",
+          task_name: "Handle Instance Update",
+          task_version: 1,
+        }),
+      ],
+    });
+  });
+
+  it("queries authority control-plane rows directly for CadenzaDB full sync", async () => {
+    const registry = ServiceRegistry.instance as any;
     registry.serviceName = "CadenzaDB";
     registry.serviceInstanceId = "cadenza-db-1";
 
-    Cadenza.createMetaTask("Capture gathered sync follow-up tick", (ctx) => {
-      syncTickRequests.push(ctx);
-      return true;
-    }).doOn("meta.cadenza_db.sync_tick");
+    const authorityQuerySpy = vi
+      .spyOn(DatabaseController.instance, "queryAuthorityTableRows")
+      .mockImplementation(async (tableName: string) => {
+        switch (tableName) {
+          case "service_instance":
+            return [
+              {
+                uuid: "runner-1",
+                service_name: "ScheduledRunnerService",
+                is_active: true,
+                is_non_responsive: false,
+                is_blocked: false,
+                is_frontend: false,
+                is_database: false,
+                health: {},
+              },
+            ];
+          case "service_instance_transport":
+            return [
+              {
+                uuid: "runner-transport-1",
+                service_instance_id: "runner-1",
+                role: "internal",
+                origin: "http://scheduled-runner:3002",
+                protocols: ["rest"],
+                deleted: false,
+              },
+            ];
+          case "service_manifest":
+            return [
+              {
+                service_instance_id: "runner-1",
+                manifest: {
+                  serviceName: "ScheduledRunnerService",
+                  serviceInstanceId: "runner-1",
+                  revision: 1,
+                  manifestHash: "runner-manifest-v1",
+                  publishedAt: "2026-03-30T12:00:00.000Z",
+                  tasks: [],
+                  signals: [],
+                  intents: [],
+                  actors: [],
+                  routines: [],
+                  directionalTaskMaps: [],
+                  signalToTaskMaps: [],
+                  intentToTaskMaps: [],
+                  actorTaskMaps: [],
+                  taskToRoutineMaps: [],
+                },
+              },
+            ];
+          default:
+            return [];
+        }
+      });
 
-    Cadenza.run(registry.reconcileGatheredSyncTransmissionsTask, {
-      __signalName: "global.meta.cadenza_db.gathered_sync_data",
+    registry.ensureAuthorityFullSyncResponderTask();
+
+    const result = await Cadenza.inquire("meta-service-registry-full-sync", {
+      syncScope: "service-registry-full-sync",
+      __syncing: true,
+    }, {
+      requireComplete: true,
+    });
+
+    expect(authorityQuerySpy).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({
       serviceInstances: [
+        expect.objectContaining({
+          uuid: "runner-1",
+          service_name: "ScheduledRunnerService",
+        }),
+      ],
+      serviceInstanceTransports: [
+        expect.objectContaining({
+          uuid: "runner-transport-1",
+          service_instance_id: "runner-1",
+        }),
+      ],
+      serviceManifests: [
+        expect.objectContaining({
+          service_instance_id: "runner-1",
+        }),
+      ],
+    });
+  });
+
+  it("requests one extra full sync wave when authority reports a manifest update", async () => {
+    const registry = ServiceRegistry.instance as any;
+    const syncRequests: Array<Record<string, unknown>> = [];
+
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+
+    Cadenza.createMetaTask("Capture manifest-triggered sync request", (ctx) => {
+      syncRequests.push(ctx);
+      return true;
+    }).doOn("meta.sync_requested");
+
+    Cadenza.emit(AUTHORITY_SERVICE_MANIFEST_UPDATED_SIGNAL, {
+      serviceName: "TelemetryCollectorService",
+      serviceInstanceId: "telemetry-1",
+      revision: 4,
+      manifestHash: "manifest-4",
+      publishedAt: new Date().toISOString(),
+    });
+
+    await waitForCondition(() => syncRequests.length === 1, 1_500);
+
+    expect(syncRequests).toEqual([
+      expect.objectContaining({
+        __syncing: false,
+        __reason: "cadenza_db_manifest_updated",
+        __bootstrapFullSync: true,
+        __bootstrapFullSyncAttempt: 1,
+      }),
+    ]);
+  });
+
+  it("seeds reserved authority bootstrap intent deputies without intent-to-task maps", () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "cadenza-db-1",
+        serviceName: "CadenzaDB",
+        isActive: true,
+        isFrontend: false,
+        isDatabase: true,
+        transports: [
+          {
+            uuid: "cadenza-db-transport-1",
+            serviceInstanceId: "cadenza-db-1",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            deleted: false,
+          },
+        ],
+      },
+    ]);
+
+    expect(
+      Cadenza.inquiryBroker.inquiryObservers.get(
+        AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+      )?.tasks.size ?? 0,
+    ).toBe(0);
+    expect(
+      Cadenza.inquiryBroker.inquiryObservers.get(
+        AUTHORITY_RUNTIME_STATUS_REPORT_INTENT,
+      )?.tasks.size ?? 0,
+    ).toBe(0);
+
+    expect(
+      registry.ensureBootstrapAuthorityControlPlaneForInquiry(
+        AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+        { __reason: "test" },
+      ),
+    ).toBe(true);
+    expect(
+      registry.ensureBootstrapAuthorityControlPlaneForInquiry(
+        AUTHORITY_RUNTIME_STATUS_REPORT_INTENT,
+        { __reason: "test" },
+      ),
+    ).toBe(true);
+
+    const deputies = Array.from(registry.remoteIntentDeputiesByKey.values());
+    expect(deputies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          intentName: AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+          serviceName: "CadenzaDB",
+          remoteTaskName: "Report service manifest to authority",
+        }),
+        expect.objectContaining({
+          intentName: AUTHORITY_RUNTIME_STATUS_REPORT_INTENT,
+          serviceName: "CadenzaDB",
+          remoteTaskName: "Record authority runtime status report",
+        }),
+      ]),
+    );
+    expect(
+      Cadenza.inquiryBroker.inquiryObservers.get(
+        AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+      )?.tasks.size ?? 0,
+    ).toBeGreaterThan(0);
+    expect(
+      Cadenza.inquiryBroker.inquiryObservers.get(
+        AUTHORITY_RUNTIME_STATUS_REPORT_INTENT,
+      )?.tasks.size ?? 0,
+    ).toBeGreaterThan(0);
+  });
+
+  it("requests the direct authority bootstrap handshake when seeding reserved authority deputies without an emitter", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+    registry.instances.set("CadenzaDB", [
+      {
+        uuid: "cadenza-db",
+        serviceName: "CadenzaDB",
+        isActive: true,
+        isFrontend: false,
+        isDatabase: true,
+        isBootstrapPlaceholder: true,
+        transports: [
+          {
+            uuid: "cadenza-db-internal-bootstrap",
+            serviceInstanceId: "cadenza-db",
+            role: "internal",
+            origin: "http://cadenza-db-service:8080",
+            protocols: ["rest", "socket"],
+            deleted: false,
+          },
+        ],
+        clientCreatedTransportIds: [],
+        clientPendingTransportIds: [],
+        clientReadyTransportIds: [],
+      },
+    ]);
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        __status: "success",
+        __serviceInstanceId: "cadenza-db-live-1",
+      }),
+    } as any);
+    const emitSpy = vi.spyOn(Cadenza, "emit");
+
+    expect(
+      registry.ensureBootstrapAuthorityControlPlaneForInquiry(
+        AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+        { __reason: "test" },
+      ),
+    ).toBe(true);
+
+    await waitForCondition(() => fetchSpy.mock.calls.length === 1, 1_500);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://cadenza-db-service:8080/handshake",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+    expect(emitSpy).toHaveBeenCalledWith(
+      "meta.fetch.handshake_complete",
+      expect.objectContaining({
+        serviceName: "CadenzaDB",
+        serviceInstanceId: "cadenza-db-live-1",
+        serviceTransportId: null,
+        serviceOrigin: "http://cadenza-db-service:8080",
+        routeKey: "CadenzaDB|internal|http://cadenza-db-service:8080",
+        fetchId: buildHandleKey(
+          "CadenzaDB|internal|http://cadenza-db-service:8080",
+          "rest",
+        ),
+      }),
+    );
+  });
+
+  it("routes bootstrap service-instance registration through the reserved authority intent", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+
+    vi.spyOn(Cadenza, "getLocalCadenzaDBInsertTask").mockImplementation(
+      (tableName: string) =>
+        tableName === "service_instance"
+          ? undefined
+          : ({
+              name: `Insert ${tableName}`,
+            } as any),
+    );
+    const inquireSpy = vi.spyOn(Cadenza, "inquire").mockResolvedValue({
+      uuid: "scheduled-runner-1",
+      data: {
+        uuid: "scheduled-runner-1",
+        process_pid: 42,
+        service_name: "ScheduledRunnerService",
+        is_active: true,
+      },
+      queryData: {
+        data: {
+          uuid: "scheduled-runner-1",
+          process_pid: 42,
+          service_name: "ScheduledRunnerService",
+          is_active: true,
+        },
+      },
+    } as any);
+
+    Cadenza.emit("meta.service_registry.instance_registration_requested", {
+      data: {
+        uuid: "scheduled-runner-1",
+        process_pid: 42,
+        service_name: "ScheduledRunnerService",
+        is_active: true,
+      },
+      __registrationData: {
+        uuid: "scheduled-runner-1",
+        process_pid: 42,
+        service_name: "ScheduledRunnerService",
+        is_active: true,
+      },
+      __serviceName: "ScheduledRunnerService",
+      __serviceInstanceId: "scheduled-runner-1",
+    });
+
+    await waitForCondition(() => inquireSpy.mock.calls.length >= 1, 1_500);
+
+    expect(inquireSpy).toHaveBeenCalledWith(
+      AUTHORITY_SERVICE_INSTANCE_REGISTER_INTENT,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "scheduled-runner-1",
+          service_name: "ScheduledRunnerService",
+        }),
+      }),
+      expect.objectContaining({
+        requireComplete: true,
+      }),
+    );
+  });
+
+  it("does not emit service-instance resolved when bootstrap authority registration fails", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+
+    vi.spyOn(Cadenza, "getLocalCadenzaDBInsertTask").mockImplementation(
+      (tableName: string) =>
+        tableName === "service_instance"
+          ? undefined
+          : ({
+              name: `Insert ${tableName}`,
+            } as any),
+    );
+    vi.spyOn(Cadenza, "inquire").mockResolvedValue({
+      errored: true,
+      __error: "Authority bootstrap route is not established yet",
+      data: {
+        uuid: "scheduled-runner-1",
+        process_pid: 42,
+        service_name: "ScheduledRunnerService",
+        is_active: true,
+      },
+      queryData: {
+        data: {
+          uuid: "scheduled-runner-1",
+          process_pid: 42,
+          service_name: "ScheduledRunnerService",
+          is_active: true,
+        },
+      },
+    } as any);
+
+    const emitSpy = vi.fn();
+    const result = await registry.insertServiceInstanceTask.taskFunction(
+      {
+        data: {
+          uuid: "scheduled-runner-1",
+          process_pid: 42,
+          service_name: "ScheduledRunnerService",
+          is_active: true,
+        },
+        __registrationData: {
+          uuid: "scheduled-runner-1",
+          process_pid: 42,
+          service_name: "ScheduledRunnerService",
+          is_active: true,
+        },
+        __serviceName: "ScheduledRunnerService",
+        __serviceInstanceId: "scheduled-runner-1",
+      },
+      emitSpy,
+    );
+
+    expect(result).toMatchObject({
+      errored: true,
+    });
+    expect(emitSpy).not.toHaveBeenCalledWith(
+      "meta.service_registry.insert_resolved:service_instance",
+      expect.anything(),
+    );
+  });
+
+  it("routes bootstrap service transport registration through the reserved authority intent", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+
+    vi.spyOn(Cadenza, "getLocalCadenzaDBInsertTask").mockImplementation(
+      (tableName: string) =>
+        tableName === "service_instance_transport"
+          ? undefined
+          : ({
+              name: `Insert ${tableName}`,
+            } as any),
+    );
+    const inquireSpy = vi.spyOn(Cadenza, "inquire").mockResolvedValue({
+      uuid: "scheduled-runner-transport-1",
+      data: {
+        uuid: "scheduled-runner-transport-1",
+        service_instance_id: "scheduled-runner-1",
+        role: "internal",
+        origin: "http://scheduled-runner:3002",
+        protocols: ["rest"],
+      },
+      queryData: {
+        data: {
+          uuid: "scheduled-runner-transport-1",
+          service_instance_id: "scheduled-runner-1",
+          role: "internal",
+          origin: "http://scheduled-runner:3002",
+          protocols: ["rest"],
+        },
+      },
+    } as any);
+
+    Cadenza.emit("meta.service_registry.transport_registration_requested", {
+      data: {
+        uuid: "scheduled-runner-transport-1",
+        service_instance_id: "scheduled-runner-1",
+        role: "internal",
+        origin: "http://scheduled-runner:3002",
+        protocols: ["rest"],
+      },
+      __registrationData: {
+        uuid: "scheduled-runner-transport-1",
+        service_instance_id: "scheduled-runner-1",
+        role: "internal",
+        origin: "http://scheduled-runner:3002",
+        protocols: ["rest"],
+      },
+      __serviceName: "ScheduledRunnerService",
+      __serviceInstanceId: "scheduled-runner-1",
+    });
+
+    await waitForCondition(() => inquireSpy.mock.calls.length === 1, 1_500);
+
+    expect(inquireSpy).toHaveBeenCalledWith(
+      AUTHORITY_SERVICE_INSTANCE_TRANSPORT_REGISTER_INTENT,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          uuid: "scheduled-runner-transport-1",
+          service_instance_id: "scheduled-runner-1",
+        }),
+      }),
+      expect.objectContaining({
+        requireComplete: true,
+      }),
+    );
+  });
+
+  it("creates reserved authority bootstrap signal transmissions without signal-to-task maps", () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.serviceInstanceId = "cadenza-db-1";
+    registry.instances.set("ScheduledRunnerService", [
+      {
+        uuid: "scheduled-runner-1",
+        serviceName: "ScheduledRunnerService",
+        isActive: true,
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "scheduled-runner-transport-1",
+            serviceInstanceId: "scheduled-runner-1",
+            role: "internal",
+            origin: "http://scheduled-runner:3002",
+            protocols: ["rest"],
+            deleted: false,
+          },
+        ],
+      },
+    ]);
+
+    expect(
+      Cadenza.get(
+        `Transmit signal: ${AUTHORITY_SERVICE_MANIFEST_UPDATED_SIGNAL} to ScheduledRunnerService`,
+      ),
+    ).toBeUndefined();
+
+    expect(registry.ensureAuthorityBootstrapSignalTransmissions()).toBe(true);
+
+    expect(
+      registry.remoteSignals.get("ScheduledRunnerService")?.has(
+        AUTHORITY_SERVICE_MANIFEST_UPDATED_SIGNAL,
+      ),
+    ).toBe(true);
+  });
+
+  it("rechecks reserved authority responders after bootstrap control-plane seeding", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+
+    const ensureSpy = vi
+      .spyOn(registry, "ensureBootstrapAuthorityControlPlaneForInquiry")
+      .mockImplementation((intentName: string) => {
+        Cadenza.createMetaTask(
+          "Fake authority bootstrap manifest responder",
+          () => ({
+            applied: true,
+          }),
+          "",
+          {
+            register: false,
+            isHidden: true,
+          },
+        ).respondsTo(intentName);
+        return true;
+      });
+
+    const result = await Cadenza.inquire(
+      AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+      {},
+      {
+        requireComplete: true,
+      },
+    );
+
+    expect(result).toMatchObject({
+      applied: true,
+    });
+    expect(ensureSpy).toHaveBeenCalledWith(
+      AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+      {},
+    );
+  });
+
+  it("routes reserved authority manifest inquiries through the post-handshake bootstrap channel", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+    registry.noteAuthorityBootstrapHandshake({
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-live-1",
+      serviceTransportId: "cadenza-db-transport-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          __status: "success",
+          applied: true,
+          authorityInstanceId: "cadenza-db-live-1",
+        }),
+      } as any);
+
+    registry.ensureBootstrapAuthorityControlPlaneForInquiry(
+      AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+      {},
+    );
+
+    const result = await Cadenza.inquire(
+      AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+      {
+        serviceName: "ScheduledRunnerService",
+        serviceInstanceId: "scheduled-runner-1",
+      },
+      {
+        requireComplete: true,
+      },
+    );
+
+    expect(result).toMatchObject({
+      applied: true,
+      authorityInstanceId: "cadenza-db-live-1",
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://cadenza-db-service:8080/delegation",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body ?? "{}"));
+    expect(body).toMatchObject({
+      __remoteRoutineName: "Report service manifest to authority",
+      __serviceName: "CadenzaDB",
+      __routeKey: "CadenzaDB|internal|http://cadenza-db-service:8080",
+      __fetchId: buildHandleKey(
+        "CadenzaDB|internal|http://cadenza-db-service:8080",
+        "rest",
+      ),
+    });
+    expect(body.targetServiceInstanceId).toBeUndefined();
+    expect(body.__transportId).toBeUndefined();
+  });
+
+  it("re-requests the authority bootstrap handshake when CadenzaDB is reported not responding", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+    registry.noteAuthorityBootstrapHandshake({
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-old-1",
+      serviceTransportId: "cadenza-db-transport-old-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+
+    const requestHandshakeSpy = vi
+      .spyOn(registry, "requestAuthorityBootstrapHandshake")
+      .mockReturnValue(true);
+
+    Cadenza.emit("global.meta.service_registry.service_not_responding", {
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-old-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+
+    await waitForCondition(
+      () => requestHandshakeSpy.mock.calls.length > 0,
+      1_500,
+    );
+
+    expect(requestHandshakeSpy).toHaveBeenCalled();
+    expect(registry.hasAuthorityBootstrapHandshakeEstablished()).toBe(false);
+  });
+
+  it("ignores stale CadenzaDB transport failures once a newer authority bootstrap route is established", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+    registry.noteAuthorityBootstrapHandshake({
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-live-2",
+      serviceTransportId: "cadenza-db-transport-live-2",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+
+    const requestHandshakeSpy = vi
+      .spyOn(registry, "requestAuthorityBootstrapHandshake")
+      .mockReturnValue(true);
+
+    Cadenza.emit("meta.fetch.handshake_failed", {
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-old-1",
+      serviceTransportId: "cadenza-db-transport-old-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+      __transportId: "cadenza-db-transport-old-1",
+      __transportOrigin: "http://cadenza-db-service:8080",
+      __routeKey: "CadenzaDB|internal|http://cadenza-db-service:8080",
+      __fetchId: buildHandleKey(
+        "CadenzaDB|internal|http://cadenza-db-service:8080",
+        "rest",
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(requestHandshakeSpy).not.toHaveBeenCalled();
+    expect(registry.hasAuthorityBootstrapHandshakeEstablished()).toBe(true);
+  });
+
+  it("retries current non-authority routes after a fetch handshake failure without marking the instance non-responsive", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "TelemetryCollectorService";
+    registry.serviceInstanceId = "telemetry-1";
+
+    const predictorInstance = {
+      uuid: "predictor-2",
+      serviceName: "PredictorService",
+      isFrontend: false,
+      isDatabase: false,
+      isActive: true,
+      isNonResponsive: false,
+      isBlocked: false,
+      numberOfRunningGraphs: 0,
+      acceptingWork: true,
+      reportedAt: new Date().toISOString(),
+      transports: [
         {
-          uuid: "telemetry-1",
-          serviceName: "TelemetryCollectorService",
-          isActive: true,
-          isNonResponsive: false,
-          isBlocked: false,
-          isFrontend: false,
-          isDatabase: false,
+          uuid: "predictor-transport-2",
+          serviceInstanceId: "predictor-2",
+          role: "internal",
+          origin: "http://predictor-b:3005",
+          protocols: ["rest"],
+          deleted: false,
         },
       ],
+      clientCreatedTransportIds: [],
+      clientPendingTransportIds: [],
+      clientReadyTransportIds: [],
+    };
+
+    registry.instances.set("PredictorService", [predictorInstance]);
+    registry.deputies.set("PredictorService", [
+      {
+        serviceName: "PredictorService",
+        intentName: "iot-prediction-compute",
+        localTaskName: "Normalize prediction compute input (Proxy)",
+      },
+    ]);
+    registry.upsertRemoteRouteRecord(
+      "PredictorService",
+      "predictor-2",
+      predictorInstance.transports[0],
+    );
+
+    const scheduleSpy = vi
+      .spyOn(Cadenza, "schedule")
+      .mockImplementation(() => undefined as any);
+
+    Cadenza.emit("meta.fetch.handshake_failed", {
+      __signalName: "meta.fetch.handshake_failed",
+      serviceName: "PredictorService",
+      serviceInstanceId: "predictor-2",
+      serviceTransportId: "predictor-transport-2",
+      serviceOrigin: "http://predictor-b:3005",
+      routeKey: "PredictorService|internal|http://predictor-b:3005",
+      __routeKey: "PredictorService|internal|http://predictor-b:3005",
+      __transportId: "predictor-transport-2",
+      __transportOrigin: "http://predictor-b:3005",
+      communicationTypes: ["delegation"],
     });
 
     await waitForCondition(
       () =>
-        registry.gatheredSyncTransmissionServices?.has(
-          "TelemetryCollectorService",
-        ) === true,
+        scheduleSpy.mock.calls.some(
+          ([signal]) => signal === "meta.service_registry.dependee_registered",
+        ),
       1_500,
     );
 
-    expect(registry.gatheredSyncTransmissionServices).toEqual(
-      new Set(["TelemetryCollectorService"]),
-    );
-    await waitForCondition(() => syncTickRequests.length === 1, 1_500);
-
-    expect(syncTickRequests).toEqual([
+    expect(scheduleSpy).toHaveBeenCalledWith(
+      "meta.service_registry.dependee_registered",
       expect.objectContaining({
-        __syncing: true,
-        __reason: "gathered_sync_transmissions_reconciled",
+        serviceName: "PredictorService",
+        serviceInstanceId: "predictor-2",
+        serviceTransportId: "predictor-transport-2",
+        serviceOrigin: "http://predictor-b:3005",
+        routeKey: "PredictorService|internal|http://predictor-b:3005",
+        __reason: "fetch_handshake_failed_retry",
       }),
-    ]);
+      expect.any(Number),
+    );
+    expect(
+      registry.instances.get("PredictorService")?.[0]?.isNonResponsive,
+    ).toBe(false);
+  });
 
-    Cadenza.run(registry.reconcileGatheredSyncTransmissionsTask, {
-      __signalName: "global.meta.cadenza_db.gathered_sync_data",
-      serviceInstances: [
-        {
-          uuid: "telemetry-1",
-          serviceName: "TelemetryCollectorService",
-          isActive: true,
-          isNonResponsive: false,
-          isBlocked: false,
-          isFrontend: false,
-          isDatabase: false,
-        },
-      ],
+  it("retries manifest publication when authority has no eligible responder", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+    registry.noteAuthorityBootstrapHandshake({
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-live-1",
+      serviceTransportId: "cadenza-db-transport-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    (Cadenza as any).serviceManifestRevision = 0;
+    (Cadenza as any).lastPublishedServiceManifestHash = null;
 
-    expect(syncTickRequests).toHaveLength(1);
+    const retrySpy = vi
+      .spyOn(Cadenza as any, "scheduleServiceManifestPublicationRetry")
+      .mockImplementation(() => {});
+    const inquireSpy = vi.spyOn(Cadenza, "inquire").mockRejectedValue({
+      __error:
+        "Inquiry 'meta-service-registry-authority-service-manifest-report' had no eligible responders",
+      errored: true,
+    });
+
+    const result = await (Cadenza as any).publishServiceManifestIfNeeded(
+      "service_setup_completed",
+    );
+
+    expect(result).toBe(false);
+    expect(inquireSpy).toHaveBeenCalledWith(
+      AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+      expect.objectContaining({
+        serviceName: "ScheduledRunnerService",
+        serviceInstanceId: "scheduled-runner-1",
+      }),
+      expect.objectContaining({
+        timeout: 15_000,
+        requireComplete: true,
+      }),
+    );
+    expect(retrySpy).toHaveBeenCalledWith("service_setup_completed");
+    expect((Cadenza as any).lastPublishedServiceManifestHash).toBeNull();
+    expect((Cadenza as any).serviceManifestRevision).toBe(0);
+  });
+
+  it("defers manifest publication until the authority bootstrap handshake is established", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+
+    (Cadenza as any).serviceManifestRevision = 0;
+    (Cadenza as any).lastPublishedServiceManifestHash = null;
+
+    const retrySpy = vi
+      .spyOn(Cadenza as any, "scheduleServiceManifestPublicationRetry")
+      .mockImplementation(() => {});
+    const inquireSpy = vi.spyOn(Cadenza, "inquire");
+
+    const result = await (Cadenza as any).publishServiceManifestIfNeeded(
+      "service_setup_completed",
+    );
+
+    expect(result).toBe(false);
+    expect(inquireSpy).not.toHaveBeenCalled();
+    expect(retrySpy).toHaveBeenCalledWith("service_setup_completed");
   });
 
   it("does not call task.execute directly from resolver wrappers", () => {

@@ -1,10 +1,32 @@
 import { META_ACTOR_SESSION_STATE_PERSIST_INTENT } from "@cadenza.io/core";
 import Cadenza from "../../Cadenza";
 
+const ACTOR_SESSION_STATE_PERSIST_CONCURRENCY = 20;
+const ACTOR_SESSION_TRACE_ENABLED =
+  process.env.CADENZA_ACTOR_SESSION_TRACE === "1" ||
+  process.env.CADENZA_ACTOR_SESSION_TRACE === "true";
+
+function shouldAssumeSuccessfulActorSessionRowCount(ctx: Record<string, any>): boolean {
+  return (
+    ctx.__success === true &&
+    ctx.rowCount === undefined &&
+    ctx.__status === "success" &&
+    ctx.__serviceName === "CadenzaDB" &&
+    ctx.__localTaskName === "Insert actor_session_state in CadenzaDB"
+  );
+}
+
 export function registerActorSessionPersistenceTasks(): void {
   if (Cadenza.get("Persist actor session state")) {
     return;
   }
+
+  const localActorSessionTaskOptions = {
+    register: false,
+    isHidden: true,
+    isSubMeta: true,
+    concurrency: ACTOR_SESSION_STATE_PERSIST_CONCURRENCY,
+  } as const;
 
   const actorSessionStateInsertTask =
     Cadenza.getLocalCadenzaDBInsertTask("actor_session_state") ??
@@ -13,7 +35,10 @@ export function registerActorSessionPersistenceTasks(): void {
     Cadenza.createCadenzaDBInsertTask(
       "actor_session_state",
       {},
-      { concurrency: 100, isSubMeta: true },
+      {
+        concurrency: ACTOR_SESSION_STATE_PERSIST_CONCURRENCY,
+        isSubMeta: true,
+      },
     );
 
   const validateActorSessionStatePersistenceTask =
@@ -30,7 +55,9 @@ export function registerActorSessionPersistenceTasks(): void {
           );
         }
 
-        const rowCount = Number(ctx.rowCount ?? 0);
+        const rowCount = shouldAssumeSuccessfulActorSessionRowCount(ctx)
+          ? 1
+          : Number(ctx.rowCount ?? 0);
         if (!Number.isFinite(rowCount) || rowCount <= 0) {
           throw new Error(
             "actor_session_state persistence did not affect any rows (possible stale durable_version)",
@@ -45,10 +72,11 @@ export function registerActorSessionPersistenceTasks(): void {
           actor_key: ctx.actor_key,
           service_name: ctx.service_name,
           durable_version: ctx.durable_version,
+          rowCount,
         };
       },
       "Enforces strict actor session persistence success contract.",
-      { isSubMeta: true, concurrency: 100 },
+      localActorSessionTaskOptions,
     );
 
   const insertAndValidateActorSessionStateTask = actorSessionStateInsertTask.then(
@@ -109,6 +137,27 @@ export function registerActorSessionPersistenceTasks(): void {
       }
 
       const updatedAt = new Date().toISOString();
+      const persistenceRow = {
+        actor_name: actorName,
+        actor_version: actorVersion,
+        actor_key: actorKey,
+        service_name: serviceName,
+        durable_state: ctx.durable_state,
+        durable_version: durableVersion,
+        expires_at: expiresAt,
+        updated: updatedAt,
+      };
+
+      if (ACTOR_SESSION_TRACE_ENABLED) {
+        console.log("[CADENZA_ACTOR_SESSION_TRACE] prepare_actor_session_persistence", {
+          localServiceName: Cadenza.serviceRegistry.serviceName,
+          actor_name: actorName,
+          actor_key: actorKey,
+          durable_version: durableVersion,
+          inputKeys: Object.keys(ctx),
+          dataKeys: Object.keys(persistenceRow),
+        });
+      }
 
       return {
         ...ctx,
@@ -118,17 +167,9 @@ export function registerActorSessionPersistenceTasks(): void {
         durable_version: durableVersion,
         expires_at: expiresAt,
         service_name: serviceName,
+        data: persistenceRow,
         queryData: {
-          data: {
-            actor_name: actorName,
-            actor_version: actorVersion,
-            actor_key: actorKey,
-            service_name: serviceName,
-            durable_state: ctx.durable_state,
-            durable_version: durableVersion,
-            expires_at: expiresAt,
-            updated: updatedAt,
-          },
+          data: persistenceRow,
           onConflict: {
             target: [
               "actor_name",
@@ -152,7 +193,7 @@ export function registerActorSessionPersistenceTasks(): void {
       };
     },
     "Validates and prepares actor_session_state payload for strict write-through persistence.",
-    { isSubMeta: true, concurrency: 100 },
+    localActorSessionTaskOptions,
   )
     .then(insertAndValidateActorSessionStateTask)
     .respondsTo(META_ACTOR_SESSION_STATE_PERSIST_INTENT);

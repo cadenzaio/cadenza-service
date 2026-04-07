@@ -67,6 +67,15 @@ import {
   summarizeResponderStatuses,
 } from "./utils/inquiry";
 import { normalizeServiceTransportConfig } from "./utils/transport";
+import {
+  type BrowserRuntimeActorHandle,
+  type BrowserRuntimeActorOptions,
+  resetBrowserRuntimeActorHandles,
+  createBrowserRuntimeActor as createBrowserRuntimeActorHelper,
+} from "./frontend/createBrowserRuntimeActor";
+import { buildServiceManifestSnapshot } from "./registry/serviceManifest";
+import { AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT } from "./registry/serviceManifestContract";
+import { isAuthorityBootstrapIntent } from "./registry/authorityBootstrapControlPlane";
 
 export type SecurityProfile = "low" | "medium" | "high";
 export type NetworkMode =
@@ -79,6 +88,70 @@ export type NetworkMode =
 const POSTGRES_SETUP_DEBUG_ENABLED =
   process.env.CADENZA_POSTGRES_SETUP_DEBUG === "1" ||
   process.env.CADENZA_POSTGRES_SETUP_DEBUG === "true";
+
+function resolveInquiryFailureError(
+  inquiry: string,
+  value: unknown,
+  depth = 3,
+  seen = new Set<unknown>(),
+): string {
+  if (depth < 0 || value === null || value === undefined) {
+    return `Inquiry '${inquiry}' did not complete successfully`;
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value instanceof Error) {
+    return value.message;
+  }
+
+  if (typeof value !== "object" || seen.has(value)) {
+    return `Inquiry '${inquiry}' did not complete successfully`;
+  }
+
+  seen.add(value);
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["__error", "error", "message"] as const) {
+    const candidate = record[key];
+
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate;
+    }
+
+    if (candidate && typeof candidate === "object") {
+      const resolved = resolveInquiryFailureError(
+        inquiry,
+        candidate,
+        depth - 1,
+        seen,
+      );
+      if (resolved !== `Inquiry '${inquiry}' did not complete successfully`) {
+        return resolved;
+      }
+    }
+  }
+
+  for (const nested of Object.values(record)) {
+    if (!nested || typeof nested !== "object") {
+      continue;
+    }
+
+    const resolved = resolveInquiryFailureError(
+      inquiry,
+      nested,
+      depth - 1,
+      seen,
+    );
+    if (resolved !== `Inquiry '${inquiry}' did not complete successfully`) {
+      return resolved;
+    }
+  }
+
+  return `Inquiry '${inquiry}' did not complete successfully`;
+}
 
 export type ServerOptions = {
   customServiceId?: string; // TODO
@@ -126,10 +199,124 @@ export default class CadenzaService {
   protected static isBootstrapped = false;
   protected static serviceCreated = false;
   protected static bootstrapSyncCompleted = false;
+  protected static bootstrapSignalRegistrationsCompleted = false;
+  protected static bootstrapIntentRegistrationsCompleted = false;
   protected static defaultDatabaseServiceName: string | null = null;
   protected static warnedInvalidMetaIntentResponderKeys: Set<string> = new Set();
   protected static hydratedInquiryResults: Map<string, AnyObject> = new Map();
   protected static frontendSyncScheduled = false;
+  protected static serviceManifestRevision = 0;
+  protected static lastPublishedServiceManifestHash: string | null = null;
+  protected static serviceManifestPublicationInFlight = false;
+  protected static serviceManifestPublicationPendingReason: string | null = null;
+  private static shutdownHandlersRegistered = false;
+  private static shutdownInFlight = false;
+  private static shutdownHandlerCleanup: Array<() => void> = [];
+
+  private static unregisterGracefulShutdownHandlers(): void {
+    for (const cleanup of this.shutdownHandlerCleanup) {
+      cleanup();
+    }
+    this.shutdownHandlerCleanup = [];
+    this.shutdownHandlersRegistered = false;
+    this.shutdownInFlight = false;
+  }
+
+  private static registerGracefulShutdownHandlers(): void {
+    if (
+      isBrowser ||
+      this.shutdownHandlersRegistered ||
+      typeof process === "undefined" ||
+      typeof process.once !== "function" ||
+      typeof process.removeListener !== "function"
+    ) {
+      return;
+    }
+
+    const gracefulShutdownTimeoutMs = Math.max(
+      1_500,
+      readIntegerEnv("CADENZA_GRACEFUL_SHUTDOWN_TIMEOUT_MS", 5_000),
+    );
+    const transportShutdownDelayMs = Math.min(
+      Math.max(500, Math.floor(gracefulShutdownTimeoutMs / 3)),
+      Math.max(500, gracefulShutdownTimeoutMs - 500),
+    );
+    const shutdownSignals = ["SIGTERM", "SIGINT"] as const;
+
+    for (const signal of shutdownSignals) {
+      const handler = () => {
+        if (this.shutdownInFlight) {
+          return;
+        }
+
+        this.shutdownInFlight = true;
+
+        const exitTimer = setTimeout(() => {
+          this.unregisterGracefulShutdownHandlers();
+          if (typeof process.kill === "function") {
+            process.kill(process.pid, signal);
+            return;
+          }
+
+          process.exit(0);
+        }, gracefulShutdownTimeoutMs);
+
+        exitTimer.unref?.();
+
+        void (async () => {
+          try {
+            const shutdownPersisted =
+              (await this.serviceRegistry?.reportLocalShutdownToAuthority(
+                signal,
+                Math.max(1_500, gracefulShutdownTimeoutMs - 750),
+              )) ?? false;
+
+            if (!shutdownPersisted) {
+              this.emit("meta.service_registry.instance_shutdown_reported", {
+                serviceName: this.serviceRegistry?.serviceName ?? null,
+                serviceInstanceId: this.serviceRegistry?.serviceInstanceId ?? null,
+                reason: signal,
+                graceful: true,
+              });
+            }
+          } catch {
+            try {
+              this.emit("meta.service_registry.instance_shutdown_reported", {
+                serviceName: this.serviceRegistry?.serviceName ?? null,
+                serviceInstanceId: this.serviceRegistry?.serviceInstanceId ?? null,
+                reason: signal,
+                graceful: true,
+              });
+            } catch {
+              // Best-effort shutdown reporting must not block process termination.
+            }
+          } finally {
+            try {
+              this.schedule(
+                "meta.socket_server_shutdown_requested",
+                { reason: signal },
+                transportShutdownDelayMs,
+              );
+              this.schedule(
+                "meta.server_shutdown_requested",
+                { reason: signal },
+                transportShutdownDelayMs,
+              );
+            } catch {
+              // Best-effort shutdown reporting must not block process termination.
+            }
+          }
+        })();
+      };
+
+      process.once(signal, handler);
+      this.shutdownHandlerCleanup.push(() =>
+        process.removeListener(signal, handler),
+      );
+    }
+
+    this.shutdownHandlersRegistered = true;
+  }
 
   private static replayRegisteredTaskIntentAssociations(): void {
     for (const task of this.registry.tasks.values()) {
@@ -175,6 +362,191 @@ export default class CadenzaService {
   private static replayRegisteredTaskGraphMetadata(): void {
     this.replayRegisteredTaskSignalObservations();
     this.replayRegisteredTaskIntentAssociations();
+  }
+
+  private static requestServiceManifestPublication(
+    reason: string,
+    immediate = false,
+  ): void {
+    if (!this.serviceRegistry.serviceName || !this.serviceRegistry.serviceInstanceId) {
+      return;
+    }
+
+    const signalName = "meta.service_manifest.publish_requested";
+    const payload = {
+      __reason: reason,
+      __serviceName: this.serviceRegistry.serviceName,
+      __serviceInstanceId: this.serviceRegistry.serviceInstanceId,
+    };
+
+    if (immediate) {
+      this.emit(signalName, payload);
+      return;
+    }
+
+    this.debounce(signalName, payload, 100);
+  }
+
+  private static scheduleServiceManifestPublicationRetry(reason: string): void {
+    if (!this.serviceRegistry.serviceName || !this.serviceRegistry.serviceInstanceId) {
+      return;
+    }
+
+    setTimeout(() => {
+      this.requestServiceManifestPublication(reason, false);
+    }, 1000);
+  }
+
+  private static async publishServiceManifestIfNeeded(
+    reason: string,
+  ): Promise<
+    | false
+    | {
+        serviceManifest: ReturnType<typeof buildServiceManifestSnapshot>;
+        published: true;
+      }
+  > {
+    if (
+      !this.serviceRegistry.connectsToCadenzaDB ||
+      !this.serviceRegistry.serviceName ||
+      !this.serviceRegistry.serviceInstanceId
+    ) {
+      return false;
+    }
+
+    const publishReason =
+      typeof reason === "string" && reason.trim().length > 0
+        ? reason.trim()
+        : "service_manifest_publish";
+
+    if (this.serviceManifestPublicationInFlight) {
+      this.serviceManifestPublicationPendingReason = publishReason;
+      return false;
+    }
+
+    const snapshot = buildServiceManifestSnapshot({
+      serviceName: this.serviceRegistry.serviceName,
+      serviceInstanceId: this.serviceRegistry.serviceInstanceId,
+      revision: this.serviceManifestRevision + 1,
+      publishedAt: new Date().toISOString(),
+    });
+
+    if (
+      this.lastPublishedServiceManifestHash &&
+      this.lastPublishedServiceManifestHash === snapshot.manifestHash
+    ) {
+      return false;
+    }
+
+    this.serviceManifestPublicationInFlight = true;
+    try {
+      this.serviceRegistry.ensureBootstrapAuthorityControlPlaneForInquiry(
+        AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+        snapshot,
+      );
+      if (!this.serviceRegistry.hasAuthorityBootstrapHandshakeEstablished()) {
+        this.scheduleServiceManifestPublicationRetry(publishReason);
+        return false;
+      }
+      await this.inquire(AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT, snapshot, {
+        timeout: 15_000,
+        requireComplete: true,
+      });
+      this.serviceManifestRevision = snapshot.revision;
+      this.lastPublishedServiceManifestHash = snapshot.manifestHash;
+      return {
+        serviceManifest: snapshot,
+        published: true,
+      };
+    } catch (error) {
+      this.log("Service manifest publication failed. Scheduling retry.", {
+        serviceName: this.serviceRegistry.serviceName,
+        serviceInstanceId: this.serviceRegistry.serviceInstanceId,
+        reason: publishReason,
+        error: resolveInquiryFailureError(
+          AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+          error,
+        ),
+        inquiryMeta:
+          error && typeof error === "object" && "__inquiryMeta" in error
+            ? (error as Record<string, unknown>).__inquiryMeta
+            : null,
+      });
+      this.scheduleServiceManifestPublicationRetry(publishReason);
+      return false;
+    } finally {
+      this.serviceManifestPublicationInFlight = false;
+      if (this.serviceManifestPublicationPendingReason) {
+        const pendingReason = this.serviceManifestPublicationPendingReason;
+        this.serviceManifestPublicationPendingReason = null;
+        this.debounce(
+          "meta.service_manifest.publish_requested",
+          { __reason: pendingReason },
+          100,
+        );
+      }
+    }
+  }
+
+  private static ensureServiceManifestPublicationTasks(): void {
+    if (this.get("Publish service manifest")) {
+      return;
+    }
+
+    this.createMetaTask(
+      "Publish service manifest",
+      async (ctx) =>
+        this.publishServiceManifestIfNeeded(
+          typeof ctx.__reason === "string" && ctx.__reason.trim().length > 0
+            ? ctx.__reason.trim()
+            : "service_manifest_publish",
+        ),
+      "Publishes a full static manifest snapshot to authority when the manifest hash changes.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    ).doOn("meta.service_manifest.publish_requested");
+
+    this.createMetaTask(
+      "Request manifest publication after structural change",
+      (ctx) => {
+        const reason =
+          typeof ctx.signal === "string" && ctx.signal.trim().length > 0
+            ? ctx.signal
+            : typeof ctx.__reason === "string" && ctx.__reason.trim().length > 0
+              ? ctx.__reason
+              : "manifest_structural_update";
+        this.requestServiceManifestPublication(
+          reason,
+          reason === "meta.service_registry.instance_inserted",
+        );
+        return true;
+      },
+      "Requests a manifest publication when a static service primitive changes.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    ).doOn(
+      "meta.service_registry.instance_inserted",
+      "meta.task.created",
+      "meta.task.destroyed",
+      "meta.task.relationship_added",
+      "meta.task.relationship_removed",
+      "meta.task.intent_associated",
+      "meta.task.observed_signal",
+      "meta.task.attached_signal",
+      "meta.task.detached_signal",
+      "meta.actor.created",
+      "meta.actor.task_associated",
+      "meta.fetch.handshake_complete",
+      "meta.service_registry.registered_global_signals",
+      "meta.service_registry.registered_global_intents",
+      "meta.service_registry.initial_sync_complete",
+      "global.meta.graph_metadata.routine_created",
+      "global.meta.graph_metadata.routine_updated",
+    );
   }
 
   private static buildLegacyLocalCadenzaDBTaskName(
@@ -366,8 +738,14 @@ export default class CadenzaService {
    *
    * @return {Function} The run strategy function defined in the Cadenza configuration.
    */
-  public static get runStrategy() {
-    return Cadenza.runStrategy;
+  public static get runStrategy(): {
+    PARALLEL: unknown;
+    SEQUENTIAL: unknown;
+  } {
+    return Cadenza.runStrategy as {
+      PARALLEL: unknown;
+      SEQUENTIAL: unknown;
+    };
   }
 
   /**
@@ -382,6 +760,38 @@ export default class CadenzaService {
 
   public static hasCompletedBootstrapSync(): boolean {
     return !this.serviceCreated || this.bootstrapSyncCompleted;
+  }
+
+  public static isServiceReady(): boolean {
+    return this.serviceCreated && this.bootstrapSyncCompleted;
+  }
+
+  public static getServiceReadySignalName(serviceName?: string): string {
+    const resolvedServiceName =
+      serviceName ??
+      this.serviceRegistry?.serviceName ??
+      "";
+
+    if (!resolvedServiceName) {
+      throw new Error("Cannot resolve service-ready signal without a service name");
+    }
+
+    return `${snakeCase(resolvedServiceName)}.ready`;
+  }
+
+  private static getServiceReadyHandoffSignalName(serviceName?: string): string {
+    const resolvedServiceName =
+      serviceName ??
+      this.serviceRegistry?.serviceName ??
+      "";
+
+    if (!resolvedServiceName) {
+      throw new Error(
+        "Cannot resolve service-ready handoff signal without a service name",
+      );
+    }
+
+    return `meta.service_registry.emit_ready_requested:${snakeCase(resolvedServiceName)}`;
   }
 
   public static markBootstrapSyncCompleted(): void {
@@ -583,10 +993,8 @@ export default class CadenzaService {
           context?.__executionTraceId) === "string"
           ? context.__metadata?.__executionTraceId ?? context.__executionTraceId
           : null,
-      routineExecutionId:
-        typeof context?.__inquirySourceRoutineExecutionId === "string"
-          ? context.__inquirySourceRoutineExecutionId
-          : null,
+      // Persist the inquiry row first, then attach routine linkage on completion.
+      routineExecutionId: null,
       context: inquiryContext,
       metadata,
       isMeta: false,
@@ -608,13 +1016,27 @@ export default class CadenzaService {
       return hydratedResult;
     }
 
-    const observer = this.inquiryBroker?.inquiryObservers.get(inquiry);
-    const allResponders = observer
-      ? Array.from(observer.tasks).map((task) => ({
-          task,
-          descriptor: this.getInquiryResponderDescriptor(task),
-        }))
-      : [];
+    const collectAllResponders = () => {
+      const observer = this.inquiryBroker?.inquiryObservers.get(inquiry);
+      return observer
+        ? Array.from(observer.tasks).map((task) => ({
+            task,
+            descriptor: this.getInquiryResponderDescriptor(task),
+          }))
+        : [];
+    };
+
+    let allResponders = collectAllResponders();
+    if (
+      allResponders.length === 0 &&
+      isAuthorityBootstrapIntent(inquiry) &&
+      this.serviceRegistry?.ensureBootstrapAuthorityControlPlaneForInquiry?.(
+        inquiry,
+        context,
+      )
+    ) {
+      allResponders = collectAllResponders();
+    }
     const isMetaInquiry = isMetaIntentName(inquiry);
     const startedAt = Date.now();
     const persistInquiry = this.shouldPersistInquiry(inquiry, context);
@@ -675,6 +1097,7 @@ export default class CadenzaService {
 
       if (logicalInquiryId) {
         this.emit("meta.inquiry_broker.inquiry_completed", {
+          insertData: inquiryStartData,
           data: {
             fulfilledAt: formatTimestamp(startedAt),
             duration: 0,
@@ -720,6 +1143,7 @@ export default class CadenzaService {
     }
 
     const resultsByTask = new Map<Task, AnyObject>();
+    const failedResultsByTask = new Map<Task, AnyObject>();
     const resolverTasks: Task[] = [];
     const pending = new Set(responders.map((r) => r.task));
     const startTimeByTask = new Map<Task, number>();
@@ -771,9 +1195,15 @@ export default class CadenzaService {
 
         if (logicalInquiryId) {
           this.emit("meta.inquiry_broker.inquiry_completed", {
+            insertData: inquiryStartData,
             data: {
               fulfilledAt: formatTimestamp(finishedAt),
               duration: finishedAt - startedAt,
+              routineExecutionId:
+                typeof inquiryStartData?.metadata?.__inquirySourceRoutineExecutionId ===
+                "string"
+                  ? inquiryStartData.metadata.__inquirySourceRoutineExecutionId
+                  : null,
               metadata: {
                 ...(inquiryStartData?.metadata ?? {}),
                 inquiryMeta,
@@ -792,9 +1222,24 @@ export default class CadenzaService {
             inquiryMeta.timedOut > 0 ||
             inquiryMeta.pending > 0)
         ) {
+          const failedResponderResult = responders
+            .map((responder) => failedResultsByTask.get(responder.task))
+            .find((result): result is AnyObject => Boolean(result));
+          const failedResponderError = statuses.find(
+            (status) =>
+              status.status === "failed" &&
+              typeof status.error === "string" &&
+              status.error.trim().length > 0,
+          )?.error;
+
           reject({
             ...responseContext,
-            __error: `Inquiry '${inquiry}' did not complete successfully`,
+            __error:
+              (failedResponderResult
+                ? resolveInquiryFailureError(inquiry, failedResponderResult)
+                : undefined) ??
+              failedResponderError ??
+              resolveInquiryFailureError(inquiry, responseContext),
             errored: true,
           });
           return;
@@ -833,6 +1278,7 @@ export default class CadenzaService {
                 status.error = String(
                   resultCtx?.__error ?? resultCtx?.error ?? "Inquiry responder failed",
                 );
+                failedResultsByTask.set(task, resultCtx);
               } else {
                 status.status = "fulfilled";
                 resultsByTask.set(task, resultCtx);
@@ -1448,10 +1894,13 @@ export default class CadenzaService {
 
     const serviceId = options.customServiceId ?? uuid();
     this.bootstrapSyncCompleted = false;
+    this.bootstrapSignalRegistrationsCompleted = false;
+    this.bootstrapIntentRegistrationsCompleted = false;
     this.serviceRegistry.serviceName = serviceName;
     this.serviceRegistry.serviceInstanceId = serviceId;
     this.serviceRegistry.connectsToCadenzaDB = !!options.cadenzaDB?.connect;
     this.setHydrationResults(options.hydration);
+    this.registerGracefulShutdownHandlers();
 
     const explicitFrontendMode = options.isFrontend;
 
@@ -1482,25 +1931,133 @@ export default class CadenzaService {
       serviceId,
       !!options.useSocket,
     );
+    this.serviceRegistry.seedLocalInstance(
+      {
+        uuid: serviceId,
+        service_name: serviceName,
+        number_of_running_graphs: 0,
+        is_primary: false,
+        is_active: true,
+        is_non_responsive: false,
+        is_blocked: false,
+        health: {},
+        is_frontend: isFrontend,
+        is_database: !!options.isDatabase,
+        transports: declaredTransports.map((transport) => ({
+          uuid: transport.uuid,
+          service_instance_id: serviceId,
+          role: transport.role,
+          origin: transport.origin,
+          protocols: transport.protocols ?? ["rest", "socket"],
+          security_profile: transport.securityProfile ?? null,
+          auth_strategy: transport.authStrategy ?? null,
+        })),
+      },
+      {
+        // Local startup truth should be available before the authority echo path.
+        markTransportsReady: true,
+      },
+    );
     this.serviceRegistry.isFrontend = isFrontend;
     this.serviceRegistry.useSocket = !!options.useSocket;
     this.serviceRegistry.retryCount = options.retryCount ?? 3;
     this.ensureTransportControllers(isFrontend);
+    this.ensureServiceManifestPublicationTasks();
+
+    if (serviceName === "CadenzaDB") {
+      this.serviceRegistry.ensureAuthorityFullSyncResponderTask();
+      this.serviceRegistry.ensureAuthorityServiceCommunicationPersistenceTask();
+    }
+
+    const finalizeBootstrapReadinessTask = this.createMetaTask(
+      "Initialize graph metadata controller after sync registrations",
+      () => {
+        if (
+          this.bootstrapSyncCompleted ||
+          !this.bootstrapSignalRegistrationsCompleted ||
+          !this.bootstrapIntentRegistrationsCompleted
+        ) {
+          return false;
+        }
+
+        this.markBootstrapSyncCompleted();
+
+        if (!isFrontend) {
+          GraphMetadataController.instance;
+          this.replayRegisteredTaskGraphMetadata();
+          this.serviceRegistry.reconcileKnownGlobalSignalRegistrations();
+        }
+
+        this.emit(this.getServiceReadyHandoffSignalName(serviceName), {
+          serviceName,
+          serviceInstanceId: serviceId,
+          ready: true,
+        });
+
+        return true;
+      },
+      "Marks the local service ready after bootstrap sync and emits a local ready signal for business flows.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+
+    this.createMetaTask(
+      "Emit service ready signal",
+      (ctx) => {
+        // Service readiness is a service-level lifecycle event, so emit it on a
+        // fresh trace instead of reusing the bootstrap handoff routine trace.
+        this.emit(this.getServiceReadySignalName(serviceName), {
+          serviceName:
+            typeof ctx.serviceName === "string" ? ctx.serviceName : serviceName,
+          serviceInstanceId:
+            typeof ctx.serviceInstanceId === "string"
+              ? ctx.serviceInstanceId
+              : serviceId,
+          ready: true,
+        });
+
+        return true;
+      },
+      "Emits the local business-facing ready signal after bootstrap observability is available.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    ).doOn(this.getServiceReadyHandoffSignalName(serviceName));
+
+    this.createMetaTask(
+      "Mark bootstrap global signal registration complete",
+      () => {
+        this.bootstrapSignalRegistrationsCompleted = true;
+        return true;
+      },
+      "Marks the bootstrap global signal registration branch as complete.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    )
+      .doOn("meta.service_registry.registered_global_signals")
+      .then(finalizeBootstrapReadinessTask);
+
+    this.createMetaTask(
+      "Mark bootstrap global intent registration complete",
+      () => {
+        this.bootstrapIntentRegistrationsCompleted = true;
+        return true;
+      },
+      "Marks the bootstrap global intent registration branch as complete.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    )
+      .doOn("meta.service_registry.registered_global_intents")
+      .then(finalizeBootstrapReadinessTask);
 
     if (!isFrontend) {
-      this.createMetaTask(
-        "Initialize graph metadata controller after initial sync",
-        () => {
-          this.markBootstrapSyncCompleted();
-          GraphMetadataController.instance;
-          return true;
-        },
-        "Delays direct graph-metadata registration until the bootstrap sync has completed.",
-        {
-          register: false,
-          isHidden: true,
-        },
-      ).doOn("meta.service_registry.initial_sync_complete");
       GraphSyncController.instance.isCadenzaDBReady =
         serviceName === "CadenzaDB";
       GraphSyncController.instance.init();
@@ -1515,6 +2072,10 @@ export default class CadenzaService {
       : undefined;
 
     if (resolvedBootstrapEndpoint) {
+      this.serviceRegistry.seedAuthorityBootstrapRoute(
+        resolvedBootstrapEndpoint.url,
+        isFrontend ? "public" : "internal",
+      );
       options.cadenzaDB = {
         ...options.cadenzaDB,
         connect: true,
@@ -1630,6 +2191,7 @@ export default class CadenzaService {
     this.createMetaTask("Handle service setup completion", (ctx, emit) => {
       if (options.cadenzaDB?.connect) {
         this.serviceRegistry.bootstrapFullSync(emit, ctx, "service_setup_completed");
+        void this.publishServiceManifestIfNeeded("service_setup_completed");
       }
 
       if (isFrontend) {
@@ -1642,15 +2204,16 @@ export default class CadenzaService {
       return true;
     }).doOn("meta.service_registry.instance_inserted");
 
-    if (!options.cadenzaDB?.connect && isFrontend) {
+    if (!options.cadenzaDB?.connect) {
       Cadenza.schedule(
         "meta.service_registry.instance_registration_requested",
         {
           data: {
             uuid: serviceId,
-            process_pid: 1,
+            process_pid: isFrontend ? 1 : process.pid,
             service_name: serviceName,
-            is_frontend: true,
+            is_frontend: isFrontend,
+            is_database: !!options.isDatabase,
             is_active: true,
             is_non_responsive: false,
             is_blocked: false,
@@ -1658,9 +2221,10 @@ export default class CadenzaService {
           },
           __registrationData: {
             uuid: serviceId,
-            process_pid: 1,
+            process_pid: isFrontend ? 1 : process.pid,
             service_name: serviceName,
-            is_frontend: true,
+            is_frontend: isFrontend,
+            is_database: !!options.isDatabase,
             is_active: true,
             is_non_responsive: false,
             is_blocked: false,
@@ -1691,6 +2255,7 @@ export default class CadenzaService {
     }
 
     this.serviceCreated = true;
+    this.requestServiceManifestPublication("service_created", true);
   }
 
   /**
@@ -1708,6 +2273,20 @@ export default class CadenzaService {
   ) {
     options.isMeta = true;
     this.createCadenzaService(serviceName, description, options);
+  }
+
+  /**
+   * Creates a framework-agnostic browser runtime actor on top of frontend mode.
+   * The actor owns readiness and projected browser runtime state while the caller
+   * remains free to adapt that state into any frontend framework.
+   */
+  static createBrowserRuntimeActor<
+    TProjectionState extends Record<string, any>,
+  >(
+    options: BrowserRuntimeActorOptions<TProjectionState>,
+  ): BrowserRuntimeActorHandle<TProjectionState> {
+    this.bootstrap();
+    return createBrowserRuntimeActorHelper(this as any, options);
   }
 
   /**
@@ -2504,12 +3083,16 @@ export default class CadenzaService {
   static reset() {
     Cadenza.reset();
     this.serviceRegistry?.reset();
+    this.unregisterGracefulShutdownHandlers();
     this.isBootstrapped = false;
     this.serviceCreated = false;
     this.bootstrapSyncCompleted = false;
+    this.bootstrapSignalRegistrationsCompleted = false;
+    this.bootstrapIntentRegistrationsCompleted = false;
     this.defaultDatabaseServiceName = null;
     this.warnedInvalidMetaIntentResponderKeys = new Set();
     this.hydratedInquiryResults = new Map();
     this.frontendSyncScheduled = false;
+    resetBrowserRuntimeActorHandles();
   }
 }

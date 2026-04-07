@@ -1,7 +1,8 @@
+export { default } from "./Cadenza";
 import CadenzaService, {
   NetworkMode,
   SecurityProfile,
-  ServerOptions,
+  type ServerOptions,
 } from "./Cadenza";
 import {
   Actor,
@@ -28,6 +29,10 @@ import {
   type SessionPolicy,
   type RuntimeValidationPolicy,
   type RuntimeValidationScope,
+  type SignalDefinitionInput,
+  type SignalDeliveryMode,
+  type SignalMetadata,
+  type SignalReceiverFilter,
   DebounceTask,
   EphemeralTask,
   GraphRoutine,
@@ -57,6 +62,20 @@ import {
 } from "./runtime/RuntimeValidationController";
 import DatabaseController from "@service-database-controller";
 import {
+  buildExecutionPersistenceDependency,
+  buildExecutionPersistenceEnsureEvent,
+  buildExecutionPersistenceUpdateEvent,
+  createExecutionPersistenceBundle,
+  EXECUTION_PERSISTENCE_BUNDLE_SIGNAL,
+  type ExecutionPersistenceBundle,
+  type ExecutionPersistenceEnsureEntityType,
+  type ExecutionPersistenceEnsureEvent,
+  type ExecutionPersistenceEntityType,
+  type ExecutionPersistenceEvent,
+  type ExecutionPersistenceUpdateEntityType,
+  type ExecutionPersistenceUpdateEvent,
+} from "./execution/ExecutionPersistenceCoordinator";
+import {
   BootstrapOptions,
   HydrationOptions,
   ResolvedBootstrapEndpoint,
@@ -66,6 +85,13 @@ import {
   SSRInquiryBridge,
   SSRInquiryBridgeOptions,
 } from "./ssr/createSSRInquiryBridge";
+import type {
+  BrowserRuntimeActorHandle,
+  BrowserRuntimeActorOptions,
+  BrowserRuntimeActorRuntimeState,
+  BrowserRuntimeProjectionBinding,
+  BrowserRuntimeServiceOptions,
+} from "./frontend/createBrowserRuntimeActor";
 import {
   AggregateDefinition,
   AggregateFunction,
@@ -93,14 +119,95 @@ import type {
   ServiceTransportRole,
   ServiceTransportSecurityProfile,
 } from "./types/transport";
+import type {
+  DatabaseMigrationConstraintDefinition,
+  DatabaseMigrationDefinition,
+  DatabaseMigrationPolicy,
+  DatabaseMigrationStep,
+  DatabaseSchemaDefinition,
+  FieldDefinition,
+  TableDefinition,
+} from "./types/database";
+import {
+  AUTHORITY_RUNTIME_STATUS_REPORT_INTENT,
+  RUNTIME_STATUS_AUTHORITY_SYNC_REQUESTED_SIGNAL,
+  buildAuthorityRuntimeStatusSignature,
+  normalizeAuthorityRuntimeStatusReport,
+  type AuthorityRuntimeStatusReport,
+  type RuntimeMetricsHealthDetail,
+} from "./registry/runtimeStatusContract";
+import {
+  AUTHORITY_BOOTSTRAP_FULL_SYNC_INTENT,
+  AUTHORITY_BOOTSTRAP_SIGNAL_NAMES,
+  AUTHORITY_SERVICE_INSTANCE_REGISTER_INTENT,
+  AUTHORITY_SERVICE_INSTANCE_REGISTER_TASK_NAME,
+  AUTHORITY_SERVICE_INSTANCE_TRANSPORT_REGISTER_INTENT,
+  AUTHORITY_SERVICE_INSTANCE_TRANSPORT_REGISTER_TASK_NAME,
+  getAuthorityBootstrapInsertIntentSpecForTable,
+  isAuthorityBootstrapIntent,
+  isAuthorityBootstrapSignal,
+} from "./registry/authorityBootstrapControlPlane";
+import {
+  AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+  AUTHORITY_SERVICE_MANIFEST_UPDATED_SIGNAL,
+  normalizeServiceManifestSnapshot,
+  selectLatestServiceManifestSnapshots,
+} from "./registry/serviceManifestContract";
+import {
+  buildServiceManifestSnapshot,
+  explodeServiceManifestSnapshots,
+} from "./registry/serviceManifest";
+import type {
+  ServiceManifestActorDefinition,
+  ServiceManifestActorTaskMap,
+  ServiceManifestDirectionalTaskMap,
+  ServiceManifestIntentDefinition,
+  ServiceManifestIntentTaskMap,
+  ServiceManifestRoutineDefinition,
+  ServiceManifestSignalDefinition,
+  ServiceManifestSignalTaskMap,
+  ServiceManifestSnapshot,
+  ServiceManifestTaskDefinition,
+  ServiceManifestTaskRoutineMap,
+} from "./types/serviceManifest";
 
-export default CadenzaService;
+const emit = CadenzaService.emit.bind(CadenzaService) as typeof CadenzaService.emit;
+const log = CadenzaService.log.bind(CadenzaService) as typeof CadenzaService.log;
+const createTask = CadenzaService.createTask.bind(
+  CadenzaService,
+) as typeof CadenzaService.createTask;
+const createMetaTask = CadenzaService.createMetaTask.bind(
+  CadenzaService,
+) as typeof CadenzaService.createMetaTask;
+const createActor = CadenzaService.createActor.bind(
+  CadenzaService,
+) as typeof CadenzaService.createActor;
+const createCadenzaService = CadenzaService.createCadenzaService.bind(
+  CadenzaService,
+) as typeof CadenzaService.createCadenzaService;
+const createDatabaseService = CadenzaService.createDatabaseService.bind(
+  CadenzaService,
+) as typeof CadenzaService.createDatabaseService;
+const createBrowserRuntimeActor = CadenzaService.createBrowserRuntimeActor.bind(
+  CadenzaService,
+) as typeof CadenzaService.createBrowserRuntimeActor;
+const getServiceReadySignalName = CadenzaService.getServiceReadySignalName.bind(
+  CadenzaService,
+) as typeof CadenzaService.getServiceReadySignalName;
+const inquiryBroker = CadenzaService.inquiryBroker;
+const serviceRegistry = CadenzaService.serviceRegistry;
+
 export type {
   BootstrapOptions,
   HydrationOptions,
   ResolvedBootstrapEndpoint,
   SSRInquiryBridge,
   SSRInquiryBridgeOptions,
+  BrowserRuntimeActorHandle,
+  BrowserRuntimeActorOptions,
+  BrowserRuntimeActorRuntimeState,
+  BrowserRuntimeProjectionBinding,
+  BrowserRuntimeServiceOptions,
   ActorDefinition,
   ActorSpec,
   ActorStateDefinition,
@@ -155,6 +262,37 @@ export type {
   EphemeralTaskOptions,
   RuntimeValidationPolicy,
   RuntimeValidationScope,
+  SignalDefinitionInput,
+  SignalDeliveryMode,
+  SignalMetadata,
+  SignalReceiverFilter,
+  DatabaseMigrationConstraintDefinition,
+  DatabaseMigrationDefinition,
+  DatabaseMigrationPolicy,
+  DatabaseMigrationStep,
+  DatabaseSchemaDefinition,
+  ExecutionPersistenceBundle,
+  ExecutionPersistenceEnsureEntityType,
+  ExecutionPersistenceEnsureEvent,
+  ExecutionPersistenceEntityType,
+  ExecutionPersistenceEvent,
+  ExecutionPersistenceUpdateEntityType,
+  ExecutionPersistenceUpdateEvent,
+  FieldDefinition,
+  TableDefinition,
+  AuthorityRuntimeStatusReport,
+  RuntimeMetricsHealthDetail,
+  ServiceManifestActorDefinition,
+  ServiceManifestActorTaskMap,
+  ServiceManifestDirectionalTaskMap,
+  ServiceManifestIntentDefinition,
+  ServiceManifestIntentTaskMap,
+  ServiceManifestRoutineDefinition,
+  ServiceManifestSignalDefinition,
+  ServiceManifestSignalTaskMap,
+  ServiceManifestSnapshot,
+  ServiceManifestTaskDefinition,
+  ServiceManifestTaskRoutineMap,
 };
 export {
   Actor,
@@ -172,6 +310,41 @@ export {
   DebounceTask,
   EphemeralTask,
   GraphRoutine,
+  emit,
+  log,
+  createTask,
+  createMetaTask,
+  createActor,
+  createCadenzaService,
+  createDatabaseService,
+  createBrowserRuntimeActor,
+  buildExecutionPersistenceDependency,
+  buildExecutionPersistenceEnsureEvent,
+  buildExecutionPersistenceUpdateEvent,
+  createExecutionPersistenceBundle,
+  EXECUTION_PERSISTENCE_BUNDLE_SIGNAL,
+  AUTHORITY_BOOTSTRAP_FULL_SYNC_INTENT,
+  AUTHORITY_RUNTIME_STATUS_REPORT_INTENT,
+  RUNTIME_STATUS_AUTHORITY_SYNC_REQUESTED_SIGNAL,
+  AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+  AUTHORITY_SERVICE_MANIFEST_UPDATED_SIGNAL,
+  AUTHORITY_BOOTSTRAP_SIGNAL_NAMES,
+  AUTHORITY_SERVICE_INSTANCE_REGISTER_INTENT,
+  AUTHORITY_SERVICE_INSTANCE_REGISTER_TASK_NAME,
+  AUTHORITY_SERVICE_INSTANCE_TRANSPORT_REGISTER_INTENT,
+  AUTHORITY_SERVICE_INSTANCE_TRANSPORT_REGISTER_TASK_NAME,
+  getAuthorityBootstrapInsertIntentSpecForTable,
+  isAuthorityBootstrapIntent,
+  isAuthorityBootstrapSignal,
+  normalizeAuthorityRuntimeStatusReport,
+  buildAuthorityRuntimeStatusSignature,
+  normalizeServiceManifestSnapshot,
+  selectLatestServiceManifestSnapshots,
+  buildServiceManifestSnapshot,
+  explodeServiceManifestSnapshots,
+  getServiceReadySignalName,
+  inquiryBroker,
+  serviceRegistry,
   RUNTIME_VALIDATION_INTENTS,
   RUNTIME_VALIDATION_SIGNALS,
 };

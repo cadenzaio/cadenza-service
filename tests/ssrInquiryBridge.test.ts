@@ -212,4 +212,114 @@ describe("SSR inquiry bridge", () => {
       }),
     );
   });
+
+  it("skips stale active instances that lack an internal transport", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      const routineName = body.__remoteRoutineName;
+
+      if (url === "http://cadenza-db:5000/delegation") {
+        if (routineName === "Query intent_to_task_map") {
+          return {
+            json: async () => ({
+              rows: [
+                {
+                  intent_name: "devices.count",
+                  service_name: "IotDbService",
+                  task_name: "CountDevices",
+                  task_version: 1,
+                  deleted: false,
+                },
+              ],
+            }),
+          } as Response;
+        }
+
+        if (routineName === "Query service_instance") {
+          return {
+            json: async () => ({
+              rows: [
+                {
+                  uuid: "iot-stale",
+                  service_name: "IotDbService",
+                  is_active: true,
+                  is_non_responsive: false,
+                  is_blocked: false,
+                  is_primary: true,
+                },
+                {
+                  uuid: "iot-fresh",
+                  service_name: "IotDbService",
+                  is_active: true,
+                  is_non_responsive: false,
+                  is_blocked: false,
+                  is_primary: true,
+                },
+              ],
+            }),
+          } as Response;
+        }
+
+        if (routineName === "Query service_instance_transport") {
+          return {
+            json: async () => ({
+              rows: [
+                {
+                  uuid: "iot-stale-public",
+                  service_instance_id: "iot-stale",
+                  role: "public",
+                  origin: "http://iot-db.localhost",
+                  protocols: ["rest"],
+                  deleted: false,
+                },
+                {
+                  uuid: "iot-fresh-internal",
+                  service_instance_id: "iot-fresh",
+                  role: "internal",
+                  origin: "http://iot-db-service:3001",
+                  protocols: ["rest", "socket"],
+                  deleted: false,
+                },
+              ],
+            }),
+          } as Response;
+        }
+      }
+
+      if (url === "http://iot-db-service:3001/delegation") {
+        expect(routineName).toBe("CountDevices");
+        return {
+          json: async () => ({
+            count: 924,
+          }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const bridge = createSSRInquiryBridge({
+      bootstrap: {
+        url: "http://cadenza-db:5000",
+      },
+    });
+
+    const result = await bridge.inquire("devices.count");
+
+    expect(result.count).toBe(924);
+    expect(result.__inquiryMeta).toEqual(
+      expect.objectContaining({
+        inquiry: "devices.count",
+        responded: 1,
+        failed: 0,
+      }),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "http://iot-db.localhost/delegation",
+      expect.anything(),
+    );
+  });
 });

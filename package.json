@@ -13,16 +13,63 @@
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "browser": "dist/browser/index.mjs",
-  "types": "dist/types/index.d.ts",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/types/index.d.ts",
+      "types": "./dist/index.d.ts",
       "browser": {
         "import": "./dist/browser/index.mjs",
         "require": "./dist/browser/index.js"
       },
-      "require": "./dist/index.js",
-      "import": "./dist/index.mjs"
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      }
+    },
+    "./nuxt": {
+      "types": "./dist/nuxt/index.d.ts",
+      "require": {
+        "types": "./dist/nuxt/index.d.ts",
+        "default": "./dist/nuxt/index.js"
+      },
+      "import": {
+        "types": "./dist/nuxt/index.d.mts",
+        "default": "./dist/nuxt/index.mjs"
+      }
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "browser": {
+        "import": "./dist/browser/react/index.mjs",
+        "require": "./dist/browser/react/index.js"
+      },
+      "require": {
+        "types": "./dist/react/index.d.ts",
+        "default": "./dist/react/index.js"
+      },
+      "import": {
+        "types": "./dist/react/index.d.mts",
+        "default": "./dist/react/index.mjs"
+      }
+    },
+    "./vue": {
+      "types": "./dist/vue/index.d.ts",
+      "browser": {
+        "import": "./dist/browser/vue/index.mjs",
+        "require": "./dist/browser/vue/index.js"
+      },
+      "require": {
+        "types": "./dist/vue/index.d.ts",
+        "default": "./dist/vue/index.js"
+      },
+      "import": {
+        "types": "./dist/vue/index.d.mts",
+        "default": "./dist/vue/index.mjs"
+      }
     }
   },
   "release": {
@@ -78,7 +125,12 @@
     "@types/express": "^5.0.3",
     "@types/lodash-es": "^4.17.12",
     "@types/node": "^24.0.1",
+    "@types/react": "^19.0.0",
+    "@types/react-test-renderer": "^19.0.0",
     "prettier": "3.6.2",
+    "react": "^19.0.0",
+    "react-test-renderer": "^19.0.0",
+    "vue": "^3.5.13",
     "semantic-release": "^24.2.3",
     "tsup": "^8.4.0",
     "tsx": "^4.20.2",
@@ -102,5 +154,9 @@
     "socket.io-client": "^4.8.1",
     "uuid": "^10.0.0",
     "xss": "^1.0.15"
+  },
+  "peerDependencies": {
+    "react": ">=18 <20",
+    "vue": ">=3 <4"
   }
 }

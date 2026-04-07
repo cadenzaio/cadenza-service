@@ -1,7 +1,14 @@
 import Cadenza from "../Cadenza";
 import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
-import { ensureDelegationContextMetadata } from "../utils/delegation";
+import {
+  attachDelegationRequestSnapshot,
+  ensureDelegationContextMetadata,
+  stripTransportSelectionRoutingContext,
+  restoreDelegationRequestSnapshot,
+} from "../utils/delegation";
+import { buildServiceCommunicationEstablishedContext } from "../utils/serviceCommunication";
 import type { AnyObject } from "@cadenza.io/core";
+import { buildTransportHandleKey } from "../utils/transport";
 
 type TransportDetailLevel = "summary" | "full";
 
@@ -370,7 +377,16 @@ export default class RestController {
       (ctx) => {
         const serviceName = String(ctx.serviceName ?? "");
         const URL = String(ctx.serviceOrigin ?? "");
-        const fetchId = String(ctx.serviceTransportId ?? "");
+        const routeKey = String(
+          ctx.routeKey ?? ctx.__routeKey ?? ctx.serviceTransportId ?? "",
+        );
+        const fetchId = String(
+          ctx.fetchId ??
+            ctx.__fetchId ??
+            (routeKey ? buildTransportHandleKey(routeKey, "rest") : "") ??
+            ctx.serviceTransportId ??
+            "",
+        );
         if (!serviceName || !URL || !fetchId) {
           return false;
         }
@@ -410,7 +426,12 @@ export default class RestController {
                 fetchDiagnostics.lastHandshakeError = error;
                 fetchDiagnostics.updatedAt = Date.now();
                 this.recordFetchClientError(fetchId, serviceName, URL, error);
-                emit(`meta.fetch.handshake_failed:${fetchId}`, response);
+                emit(`meta.fetch.handshake_failed:${fetchId}`, {
+                  ...handshakeCtx,
+                  ...response,
+                  fetchId,
+                  routeKey,
+                });
                 return { ...handshakeCtx, __error: error, errored: true };
               }
 
@@ -421,15 +442,25 @@ export default class RestController {
               fetchDiagnostics.lastHandshakeError = null;
               fetchDiagnostics.updatedAt = Date.now();
 
+              const localServiceInstanceId =
+                Cadenza.serviceRegistry.serviceInstanceId;
+              if (!handshakeCtx.serviceInstanceId || !localServiceInstanceId) {
+                return {
+                  ...handshakeCtx,
+                  __error: "Fetch handshake missing service instance id",
+                  errored: true,
+                };
+              }
+
               for (const communicationType of handshakeCtx.communicationTypes) {
-                emit("global.meta.fetch.service_communication_established", {
-                  data: {
+                emit(
+                  "global.meta.fetch.service_communication_established",
+                  buildServiceCommunicationEstablishedContext({
                     serviceInstanceId: handshakeCtx.serviceInstanceId,
-                    serviceInstanceClientId:
-                      Cadenza.serviceRegistry.serviceInstanceId,
+                    serviceInstanceClientId: localServiceInstanceId,
                     communicationType,
-                  },
-                });
+                  }),
+                );
               }
             } catch (error) {
               fetchDiagnostics.connected = false;
@@ -464,8 +495,13 @@ export default class RestController {
               return;
             }
 
-            const normalizedDelegateCtx =
-              ensureDelegationContextMetadata(delegateCtx);
+            const routedDelegateCtx =
+              stripTransportSelectionRoutingContext(delegateCtx);
+            const normalizedDelegateCtx = ensureDelegationContextMetadata(
+              restoreDelegationRequestSnapshot(
+                attachDelegationRequestSnapshot(routedDelegateCtx),
+              ),
+            );
             const deputyExecId =
               normalizedDelegateCtx.__metadata.__deputyExecId;
 
@@ -601,7 +637,17 @@ export default class RestController {
 
         Cadenza.createEphemeralMetaTask(
           `Destroy fetch client ${fetchId}`,
-          () => {
+          (ctx) => {
+            if (
+              !Cadenza.serviceRegistry.shouldProcessRemoteRouteEvent({
+                ...ctx,
+                fetchId,
+                routeKey,
+              })
+            ) {
+              return false;
+            }
+
             fetchDiagnostics.connected = false;
             fetchDiagnostics.destroyed = true;
             fetchDiagnostics.updatedAt = Date.now();
@@ -609,6 +655,7 @@ export default class RestController {
             delegateTask.destroy();
             transmitTask.destroy();
             statusTask.destroy();
+            return true;
           },
           "",
           {
@@ -618,7 +665,6 @@ export default class RestController {
         )
           .doOn(
             `meta.fetch.destroy_requested:${fetchId}`,
-            `meta.socket_client.disconnected:${fetchId}`,
             `meta.fetch.handshake_failed:${fetchId}`,
           )
           .emits("meta.fetch.destroyed");
@@ -630,7 +676,7 @@ export default class RestController {
       .then(
         Cadenza.createMetaTask(
           "Prepare handshake",
-          (ctx, emit) => {
+          (ctx) => {
             const {
               serviceName,
               serviceInstanceId,
@@ -640,20 +686,36 @@ export default class RestController {
               transportProtocols,
             } = ctx;
 
-            const fetchId = String(serviceTransportId ?? "");
+            const routeKey = String(
+              ctx.routeKey ?? ctx.__routeKey ?? serviceTransportId ?? "",
+            );
+            const fetchId = String(
+              ctx.fetchId ??
+                ctx.__fetchId ??
+                (routeKey
+                  ? buildTransportHandleKey(routeKey, "rest")
+                  : serviceTransportId ?? ""),
+            );
 
-            emit(`meta.fetch.handshake_requested:${fetchId}`, {
+            Cadenza.schedule(`meta.fetch.handshake_requested:${fetchId}`, {
               serviceInstanceId,
               serviceName,
               communicationTypes,
               serviceTransportId,
               serviceOrigin,
+              fetchId,
+              routeKey,
+              socketClientId:
+                ctx.socketClientId ??
+                (routeKey ? buildTransportHandleKey(routeKey, "socket") : undefined),
               transportProtocols,
+              transportProtocol: "rest",
               handshakeData: {
                 instanceId: Cadenza.serviceRegistry.serviceInstanceId,
                 serviceName: Cadenza.serviceRegistry.serviceName,
               },
-            });
+            }, 0);
+            return true;
           },
           "Prepares handshake",
         ).attachSignal("meta.fetch.handshake_requested"),

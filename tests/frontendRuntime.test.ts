@@ -388,6 +388,32 @@ describe("frontend runtime mode", () => {
     });
   });
 
+  it("preserves nested responder errors when requireComplete rejects a failed inquiry", async () => {
+    const intentName = "failing-intent-preserves-error";
+
+    Cadenza.createTask("Failing responder with nested error", () => ({
+      errored: true,
+      returnedValue: {
+        __error:
+          "No routeable internal transport available for IotDbService. Waiting for authority route updates before retrying.",
+      },
+    })).respondsTo(intentName);
+
+    await expect(
+      Cadenza.inquire(
+        intentName,
+        {},
+        {
+          requireComplete: true,
+        },
+      ),
+    ).rejects.toMatchObject({
+      errored: true,
+      __error:
+        "No routeable internal transport available for IotDbService. Waiting for authority route updates before retrying.",
+    });
+  });
+
   it("normalizes mixed full-sync payloads for remote intents and signals", async () => {
     Cadenza.createCadenzaService("BrowserApp", "Frontend app", {
       isFrontend: true,

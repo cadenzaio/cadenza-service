@@ -156,6 +156,130 @@ Common table-level options:
 - `customSignals`
 - `customIntents`
 
+## 4.5 Migrations
+
+`PostgresActor` now supports explicit schema migrations in addition to the latest `tables` snapshot.
+
+Use this model:
+
+- `tables` describes the current desired additive schema
+- `migrations` describes ordered upgrade steps for existing databases
+- `migrationPolicy` controls how fresh and existing databases are treated
+
+Recommended rule:
+
+- additive schema changes can live in `tables`
+- destructive changes, renames, or data backfills should be explicit migrations
+
+Example:
+
+```ts
+const schema: DatabaseSchemaDefinition = {
+  version: 3,
+  tables: {
+    telemetry: {
+      fields: {
+        uuid: { type: "uuid", primary: true, required: true },
+        device_id: { type: "varchar", required: true, constraints: { maxLength: 128 } },
+        temperature: { type: "decimal", required: true, constraints: { precision: 10, scale: 2 } },
+        status: { type: "varchar", required: true, constraints: { maxLength: 32 } },
+        created: { type: "timestamp", required: true, default: "NOW()" },
+      },
+      indexes: [["device_id"], ["created"]],
+    },
+  },
+  migrations: [
+    {
+      version: 1,
+      name: "initial-schema",
+      steps: [
+        {
+          kind: "createTable",
+          table: "telemetry",
+          definition: {
+            fields: {
+              uuid: { type: "uuid", primary: true, required: true },
+              device_id: { type: "varchar", required: true, constraints: { maxLength: 128 } },
+              temperature: { type: "decimal", required: true, constraints: { precision: 10, scale: 2 } },
+              created: { type: "timestamp", required: true, default: "NOW()" },
+            },
+          },
+        },
+      ],
+    },
+    {
+      version: 2,
+      name: "add-status-column",
+      steps: [
+        {
+          kind: "addColumn",
+          table: "telemetry",
+          column: "status",
+          definition: {
+            type: "varchar",
+            required: false,
+            constraints: { maxLength: 32 },
+          },
+        },
+        {
+          kind: "sql",
+          sql: "UPDATE telemetry SET status = 'ok' WHERE status IS NULL",
+        },
+        {
+          kind: "alterColumn",
+          table: "telemetry",
+          column: "status",
+          setNotNull: true,
+        },
+      ],
+    },
+    {
+      version: 3,
+      name: "index-telemetry-status",
+      steps: [
+        {
+          kind: "addIndex",
+          table: "telemetry",
+          fields: ["status"],
+        },
+      ],
+    },
+  ],
+  migrationPolicy: {
+    baselineOnEmpty: true,
+    allowDestructive: false,
+    transactionalMode: "per_migration",
+  },
+};
+```
+
+Setup behavior:
+
+1. ensure the internal migration ledger exists
+2. baseline a fresh empty database from the latest `tables` snapshot
+3. record baseline-applied migrations up to `schema.version`
+4. on existing databases, apply pending migrations in ascending version order
+5. reconcile the additive `tables` snapshot after migrations
+
+The internal ledger table is `cadenza_schema_migration`.
+
+If a migration version is already recorded with a different checksum, setup fails instead of continuing with drift.
+
+Supported migration steps in v1:
+
+- `createTable`
+- `dropTable`
+- `addColumn`
+- `dropColumn`
+- `alterColumn`
+- `renameColumn`
+- `renameTable`
+- `addIndex`
+- `dropIndex`
+- `addConstraint`
+- `dropConstraint`
+- `sql`
+
 ## 5. CRUD Operations
 
 Each table gets auto-generated operations:

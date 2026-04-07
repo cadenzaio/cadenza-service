@@ -88,11 +88,6 @@ export function normalizeServiceInstanceDescriptor(
       raw.isBootstrapPlaceholder ?? raw.is_bootstrap_placeholder ?? false,
     ),
     transports,
-    clientCreatedTransportIds: Array.isArray(raw.clientCreatedTransportIds)
-      ? raw.clientCreatedTransportIds
-          .map((entry) => normalizeString(entry))
-          .filter((entry) => entry.length > 0)
-      : undefined,
   };
 }
 
@@ -114,5 +109,5 @@ export function getTransportClientKeyForRole(
     return null;
   }
 
-  return buildTransportClientKey(transport);
+  return buildTransportClientKey(transport, instance.serviceName);
 }

@@ -1,5 +1,23 @@
 import Cadenza from "../Cadenza";
+import {
+  buildExecutionPersistenceDependency,
+  buildExecutionPersistenceEnsureEvent,
+  createExecutionPersistenceBundle,
+  EXECUTION_PERSISTENCE_BUNDLE_SIGNAL,
+} from "../execution/ExecutionPersistenceCoordinator";
 import { decomposeSignalName } from "../utils/tools";
+import { v4 as uuid } from "uuid";
+import {
+  resolveRoutinePersistenceMetadata,
+  stripLocalRoutinePersistenceHints,
+  splitRoutinePersistenceContext,
+} from "../utils/routinePersistence";
+
+function resolveExecutionObservabilityServiceInstanceId(): string | null {
+  return Cadenza.hasCompletedBootstrapSync()
+    ? (Cadenza.serviceRegistry.serviceInstanceId ?? null)
+    : null;
+}
 
 function buildSignalDatabaseTriggerContext(
   data: Record<string, unknown>,
@@ -19,6 +37,35 @@ function buildSignalDatabaseTriggerContext(
       onConflict,
     },
   };
+}
+
+function isForeignSignalEmissionOrigin(
+  signalEmission: Record<string, any>,
+): boolean {
+  const localServiceName = Cadenza.serviceRegistry.serviceName ?? null;
+  const localServiceInstanceId = Cadenza.serviceRegistry.serviceInstanceId ?? null;
+  const originServiceName =
+    typeof signalEmission.serviceName === "string"
+      ? signalEmission.serviceName
+      : typeof signalEmission.service_name === "string"
+        ? signalEmission.service_name
+        : null;
+  const originServiceInstanceId =
+    typeof signalEmission.serviceInstanceId === "string"
+      ? signalEmission.serviceInstanceId
+      : typeof signalEmission.service_instance_id === "string"
+        ? signalEmission.service_instance_id
+        : null;
+
+  if (originServiceInstanceId && localServiceInstanceId) {
+    return originServiceInstanceId !== localServiceInstanceId;
+  }
+
+  if (originServiceName && localServiceName) {
+    return originServiceName !== localServiceName;
+  }
+
+  return false;
 }
 
 /**
@@ -58,7 +105,7 @@ export default class SignalController {
    * - Adding metadata to signal consumption events.
    *
    * It serves as an initializer for signals and tasks.
-   */
+  */
   constructor() {
     Cadenza.createMetaTask(
       "Handle Signal Registration",
@@ -102,7 +149,7 @@ export default class SignalController {
       .attachSignal("global.meta.signal_controller.signal_added");
 
     Cadenza.createMetaTask(
-      "Add data to signal emission",
+      "Prepare signal emission persistence",
       (ctx, emit) => {
         const signalEmission = ctx.__signalEmission;
         delete ctx.__signalEmission;
@@ -145,29 +192,170 @@ export default class SignalController {
           }
         }
 
+        const traceContext = { ...ctx };
+        delete traceContext.__traceCreatedBySignalBroker;
+        const sanitizedTraceContext = stripLocalRoutinePersistenceHints(traceContext);
+        const routineMetadata = resolveRoutinePersistenceMetadata(traceContext);
+        const { context: routineContext, metaContext: routineMetaContext } =
+          splitRoutinePersistenceContext(traceContext);
+        const traceCreatedBySignalBroker =
+          ctx.__traceCreatedBySignalBroker === true ||
+          signalEmission.__traceCreatedBySignalBroker === true;
+
+        const signalEmissionRow = {
+          uuid: signalEmission.uuid,
+          signal_name: signalEmission.signalName,
+          signal_tag: signalEmission.signalTag,
+          task_name: signalEmission.taskName,
+          task_version: signalEmission.taskVersion,
+          task_execution_id: signalEmission.taskExecutionId,
+          is_meta: signalEmission.isMeta,
+          is_metric: signalEmission.isMetric ?? false,
+          routine_execution_id: signalEmission.routineExecutionId,
+          execution_trace_id: signalEmission.executionTraceId,
+          context: sanitizedTraceContext,
+          metadata: signalEmission,
+          service_name: Cadenza.serviceRegistry.serviceName,
+          service_instance_id: resolveExecutionObservabilityServiceInstanceId(),
+        };
+
+        if (signalEmission.isMeta === true) {
+          return false;
+        }
+
+        if (isForeignSignalEmissionOrigin(signalEmission as Record<string, any>)) {
+          return false;
+        }
+
+        const executionTraceRow =
+          traceCreatedBySignalBroker
+            ? {
+                uuid: signalEmission.executionTraceId,
+                issuer_type: "service",
+                issuer_id:
+                  traceContext.__metadata?.__issuerId ??
+                  traceContext.__issuerId ??
+                  null,
+                issued_at: signalEmission.emittedAt,
+                intent:
+                  traceContext.__metadata?.__intent ??
+                  traceContext.__intent ??
+                  null,
+                context: {
+                  id: uuid(),
+                  context: traceContext,
+                },
+                is_meta: signalEmission.isMeta,
+                service_name: Cadenza.serviceRegistry.serviceName,
+                service_instance_id: null,
+              }
+            : null;
+
+        const routineExecutionRow =
+          signalEmission.routineExecutionId &&
+          routineMetadata.createdByRunner &&
+          routineMetadata.routineName
+            ? {
+                uuid: signalEmission.routineExecutionId,
+                name: routineMetadata.routineName,
+                execution_trace_id: signalEmission.executionTraceId,
+                context: routineContext,
+                meta_context: routineMetaContext,
+                created:
+                  routineMetadata.routineCreatedAt ?? signalEmission.emittedAt,
+                is_meta: routineMetadata.routineIsMeta,
+                service_name: Cadenza.serviceRegistry.serviceName,
+                service_instance_id:
+                  resolveExecutionObservabilityServiceInstanceId(),
+              }
+            : null;
+
         return {
-          data: {
-            uuid: signalEmission.uuid,
-            signal_name: signalEmission.signalName,
-            signal_tag: signalEmission.signalTag,
-            task_name: signalEmission.taskName,
-            task_version: signalEmission.taskVersion,
-            task_execution_id: signalEmission.taskExecutionId,
-            is_meta: signalEmission.isMeta,
-            is_metric: signalEmission.isMetric ?? false,
-            routine_execution_id: signalEmission.routineExecutionId,
-            execution_trace_id: signalEmission.executionTraceId,
-            context: ctx,
-            metadata: signalEmission,
-            service_name: Cadenza.serviceRegistry.serviceName,
-            service_instance_id: Cadenza.serviceRegistry.serviceInstanceId,
-          },
+          ...traceContext,
+          __traceCreatedBySignalBroker: traceCreatedBySignalBroker,
+          __signalEmissionRow: signalEmissionRow,
+          ...(routineExecutionRow
+            ? { __routineExecutionRow: routineExecutionRow }
+            : {}),
+          ...(executionTraceRow
+            ? { __executionTraceRow: executionTraceRow }
+            : {}),
         };
       },
       "",
       { isSubMeta: true, concurrency: 100 },
-    )
-      .doOn("sub_meta.signal_broker.emitting_signal")
-      .emits("global.sub_meta.signal_controller.signal_emitted");
+    ).doOn("sub_meta.signal_broker.emitting_signal");
+
+    const emitSignalEmissionPersistenceBundleTask = Cadenza.createMetaTask(
+      "Emit signal emission persistence bundle",
+      (ctx) => {
+        const signalEmissionRow =
+          ctx.__signalEmissionRow && typeof ctx.__signalEmissionRow === "object"
+            ? ({ ...ctx.__signalEmissionRow } as Record<string, any>)
+            : null;
+        const executionTraceRow =
+          ctx.__executionTraceRow && typeof ctx.__executionTraceRow === "object"
+            ? ({ ...ctx.__executionTraceRow } as Record<string, any>)
+            : null;
+        const routineExecutionRow =
+          ctx.__routineExecutionRow && typeof ctx.__routineExecutionRow === "object"
+            ? ({ ...ctx.__routineExecutionRow } as Record<string, any>)
+            : null;
+
+        if (!signalEmissionRow) {
+          return false;
+        }
+
+        return (
+          createExecutionPersistenceBundle({
+          traceId:
+            signalEmissionRow.executionTraceId ??
+            signalEmissionRow.execution_trace_id ??
+            executionTraceRow?.uuid ??
+            null,
+          ensures: [
+            buildExecutionPersistenceEnsureEvent(
+              "execution_trace",
+              executionTraceRow,
+            ),
+            buildExecutionPersistenceEnsureEvent(
+              "routine_execution",
+              routineExecutionRow,
+              [
+                buildExecutionPersistenceDependency(
+                  "execution_trace",
+                  routineExecutionRow?.executionTraceId ??
+                    routineExecutionRow?.execution_trace_id,
+                ),
+              ],
+            ),
+            buildExecutionPersistenceEnsureEvent("signal_emission", signalEmissionRow, [
+              buildExecutionPersistenceDependency(
+                "execution_trace",
+                signalEmissionRow.executionTraceId ??
+                  signalEmissionRow.execution_trace_id,
+              ),
+              buildExecutionPersistenceDependency(
+                "routine_execution",
+                signalEmissionRow.routineExecutionId ??
+                  signalEmissionRow.routine_execution_id,
+              ),
+              buildExecutionPersistenceDependency(
+                "task_execution",
+                signalEmissionRow.taskExecutionId ??
+                  signalEmissionRow.task_execution_id,
+              ),
+            ]),
+          ],
+          }) ?? false
+        );
+      },
+      "Emits one authority-routed execution persistence bundle for a signal emission.",
+      { isSubMeta: true, concurrency: 100 },
+    ).emits(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    Cadenza.get("Prepare signal emission persistence")?.then(
+      emitSignalEmissionPersistenceBundleTask,
+    );
   }
 }

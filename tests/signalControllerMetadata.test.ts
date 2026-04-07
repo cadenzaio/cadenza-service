@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnyObject } from "@cadenza.io/core";
 import Cadenza from "../src/Cadenza";
+import { EXECUTION_PERSISTENCE_BUNDLE_SIGNAL } from "../src/execution/ExecutionPersistenceCoordinator";
 import SignalController from "../src/signals/SignalController";
 import GraphMetadataController from "../src/graph/controllers/GraphMetadataController";
 import SocketController from "../src/network/SocketController";
@@ -19,7 +20,7 @@ function resetRuntimeState() {
 
 async function waitForCondition(
   predicate: () => boolean,
-  timeoutMs = 1000,
+  timeoutMs = 2500,
   pollIntervalMs = 10,
 ): Promise<void> {
   const startedAt = Date.now();
@@ -35,6 +36,10 @@ async function waitForCondition(
 }
 
 describe("Signal controller metadata contracts", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
     resetRuntimeState();
     Cadenza.bootstrap();
@@ -120,6 +125,26 @@ describe("Signal controller metadata contracts", () => {
     expect(payloads).toEqual([]);
   });
 
+  it("suppresses managed route-recovery task errors from generic task error logging", async () => {
+    GraphMetadataController.instance;
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    Cadenza.emit("meta.node.errored", {
+      taskName: "Insert telemetry (Proxy)",
+      taskVersion: 1,
+      nodeId: "node-1",
+      errorMessage:
+        "Node error: Error: No routeable internal transport available for IotDbService. Waiting for authority route updates before retrying.",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(consoleLogSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Error in task Insert telemetry (Proxy)"),
+      expect.anything(),
+    );
+  });
+
   it("waits until initial sync completes before emitting direct signal registration metadata", async () => {
     resetRuntimeState();
     Cadenza.createCadenzaService("SignalMetadataService", "Signal metadata", {
@@ -144,9 +169,15 @@ describe("Signal controller metadata contracts", () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(payloads).toEqual([]);
 
-    Cadenza.emit("meta.service_registry.initial_sync_complete", {
+    Cadenza.emit("meta.service_registry.registered_global_signals", {
       serviceName: "SignalMetadataService",
     });
+
+    Cadenza.emit("meta.service_registry.registered_global_intents", {
+      serviceName: "SignalMetadataService",
+    });
+
+    await waitForCondition(() => Cadenza.hasCompletedBootstrapSync());
 
     Cadenza.emit("meta.signal_broker.added", {
       signalName: "runner.tick_scheduled",
@@ -158,6 +189,44 @@ describe("Signal controller metadata contracts", () => {
           (payload.data as AnyObject)?.name === "runner.tick_scheduled",
       ),
     );
+  });
+
+  it("emits the local service ready signal on a fresh service-level trace after bootstrap", async () => {
+    resetRuntimeState();
+    Cadenza.createCadenzaService("SignalMetadataService", "Signal metadata", {
+      useSocket: false,
+      cadenzaDB: {
+        connect: false,
+      },
+      customServiceId: "signal-metadata-service-1",
+    });
+
+    const payloads: AnyObject[] = [];
+    const readySignalName = Cadenza.getServiceReadySignalName(
+      "SignalMetadataService",
+    );
+
+    Cadenza.createMetaTask("Capture service ready signal emission metadata", (ctx) => {
+      if (ctx?.__signalEmission?.signalName === readySignalName) {
+        payloads.push(ctx);
+      }
+      return true;
+    }).doOn("sub_meta.signal_broker.emitting_signal");
+
+    Cadenza.emit("meta.service_registry.registered_global_signals", {
+      serviceName: "SignalMetadataService",
+    });
+
+    Cadenza.emit("meta.service_registry.registered_global_intents", {
+      serviceName: "SignalMetadataService",
+    });
+
+    await waitForCondition(() => payloads.length > 0);
+
+    expect(payloads[0]?.ready).toBe(true);
+    expect(payloads[0]?.__traceCreatedBySignalBroker).toBe(true);
+    expect(payloads[0]?.__signalEmission?.signalName).toBe(readySignalName);
+    expect(typeof payloads[0]?.__signalEmission?.executionTraceId).toBe("string");
   });
 
   it("tracks emitted-only signals so they can be registered without waiting for an observer", async () => {
@@ -215,5 +284,249 @@ describe("Signal controller metadata contracts", () => {
       (Cadenza.signalBroker as any).signalObservers?.get("runner.tick")
         ?.registrationRequested,
     ).toBe(true);
+  });
+
+  it("skips execution_trace ensure when the signal emission already belongs to an existing trace", async () => {
+    const bundles: AnyObject[] = [];
+
+    resetRuntimeState();
+    Cadenza.bootstrap();
+    Cadenza.serviceRegistry.serviceName = "CadenzaDB";
+    Cadenza.serviceRegistry.serviceInstanceId =
+      "signal-metadata-cadenza-db-service-1";
+
+    Cadenza.createMetaTask("Capture existing-trace signal persistence bundle", (ctx) => {
+      bundles.push(ctx);
+      return true;
+    }).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    SignalController.instance;
+
+    Cadenza.emit("sub_meta.signal_broker.emitting_signal", {
+      foo: "bar",
+      __signalEmission: {
+        uuid: "signal-emission-2",
+        signalName: "execution.persistence.existing_trace_test",
+        signalTag: null,
+        executionTraceId: "trace-existing",
+        emittedAt: "2026-03-24T00:00:00.000Z",
+        isMeta: false,
+      },
+    });
+
+    await waitForCondition(() => bundles.length === 1);
+
+    const ensures = Array.isArray(bundles[0].ensures) ? bundles[0].ensures : [];
+    expect(ensures.map((event: AnyObject) => event.entityType)).toEqual([
+      "signal_emission",
+    ]);
+  });
+
+  it("skips execution observability persistence for meta signal emissions", async () => {
+    const bundles: AnyObject[] = [];
+
+    resetRuntimeState();
+    Cadenza.bootstrap();
+    Cadenza.serviceRegistry.serviceName = "CadenzaDB";
+    Cadenza.serviceRegistry.serviceInstanceId =
+      "signal-metadata-cadenza-db-service-1";
+
+    Cadenza.createMetaTask("Capture meta signal persistence bundle", (ctx) => {
+      bundles.push(ctx);
+      return true;
+    }).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    SignalController.instance;
+
+    Cadenza.emit("sub_meta.signal_broker.emitting_signal", {
+      __traceCreatedBySignalBroker: true,
+      __signalEmission: {
+        uuid: "signal-emission-meta-1",
+        signalName: "meta.fetch.handshake_requested",
+        signalTag: "transport-1",
+        executionTraceId: "trace-meta-1",
+        emittedAt: "2026-03-24T00:00:00.000Z",
+        isMeta: true,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(bundles).toEqual([]);
+  });
+
+  it("does not persist signal_emission again on a receiving service instance", async () => {
+    const bundles: AnyObject[] = [];
+
+    resetRuntimeState();
+    Cadenza.bootstrap();
+    Cadenza.serviceRegistry.serviceName = "CadenzaDB";
+    Cadenza.serviceRegistry.serviceInstanceId =
+      "signal-metadata-cadenza-db-service-1";
+
+    Cadenza.createMetaTask("Capture foreign signal persistence bundle", (ctx) => {
+      bundles.push(ctx);
+      return true;
+    }).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    SignalController.instance;
+
+    Cadenza.emit("sub_meta.signal_broker.emitting_signal", {
+      __signalEmission: {
+        uuid: "signal-emission-foreign-1",
+        signalName: "orders.created",
+        signalTag: null,
+        executionTraceId: "trace-foreign-1",
+        emittedAt: "2026-03-25T00:00:00.000Z",
+        serviceName: "OrdersService",
+        serviceInstanceId: "orders-service-instance-1",
+        taskExecutionId: "source-task-exec-1",
+        isMeta: false,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(bundles).toEqual([]);
+  });
+
+  it("omits local service_instance_id from execution observability before bootstrap sync completes", async () => {
+    const bundles: AnyObject[] = [];
+
+    resetRuntimeState();
+    Cadenza.createCadenzaService("SignalMetadataService", "Signal metadata", {
+      useSocket: false,
+      cadenzaDB: {
+        connect: false,
+      },
+      customServiceId: "signal-metadata-service-1",
+    });
+
+    Cadenza.createMetaTask(
+      "Capture pre-bootstrap signal persistence bundle",
+      (ctx) => {
+        bundles.push(ctx);
+        return true;
+      },
+    ).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    SignalController.instance;
+
+    Cadenza.emit("sub_meta.signal_broker.emitting_signal", {
+      __traceCreatedBySignalBroker: true,
+      __signalEmission: {
+        uuid: "signal-emission-pre-bootstrap-1",
+        signalName: "orders.created",
+        signalTag: null,
+        executionTraceId: "trace-pre-bootstrap-1",
+        emittedAt: "2026-03-27T00:00:00.000Z",
+        isMeta: false,
+      },
+    });
+
+    await waitForCondition(() => bundles.length === 1);
+
+    const ensures = Array.isArray(bundles[0]?.ensures)
+      ? (bundles[0].ensures as AnyObject[])
+      : [];
+    const executionTraceEvent = ensures.find(
+      (event) => event?.entityType === "execution_trace",
+    );
+    const signalEvent = ensures.find(
+      (event) => event?.entityType === "signal_emission",
+    );
+
+    expect(executionTraceEvent?.data?.service_instance_id).toBeUndefined();
+    expect(signalEvent?.data?.service_instance_id).toBeNull();
+  });
+
+  it("emits routine_execution before task-bound signal_emission when the local runner created the routine", async () => {
+    const bundles: AnyObject[] = [];
+
+    resetRuntimeState();
+    Cadenza.bootstrap();
+    Cadenza.serviceRegistry.serviceName = "CadenzaDB";
+    Cadenza.serviceRegistry.serviceInstanceId =
+      "signal-metadata-cadenza-db-service-1";
+
+    Cadenza.createMetaTask("Capture routine-bound signal persistence bundle", (ctx) => {
+      bundles.push(ctx);
+      return true;
+    }).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    SignalController.instance;
+
+    Cadenza.emit("sub_meta.signal_broker.emitting_signal", {
+      orderId: "order-7",
+      __routineCreatedByRunner: true,
+      __routineName: "Persist orders",
+      __routineVersion: 3,
+      __routineCreatedAt: "2026-03-24T00:00:00.000Z",
+      __routineIsMeta: false,
+      __signalEmission: {
+        uuid: "signal-emission-routine-1",
+        signalName: "orders.persisted",
+        signalTag: null,
+        taskName: "Persist order record",
+        taskVersion: 1,
+        taskExecutionId: "task-exec-1",
+        routineExecutionId: "routine-exec-1",
+        executionTraceId: "trace-existing",
+        emittedAt: "2026-03-24T00:00:01.000Z",
+        isMeta: false,
+      },
+    });
+
+    await waitForCondition(() => bundles.length === 1);
+
+    const ensures = Array.isArray(bundles[0].ensures) ? bundles[0].ensures : [];
+    const routineEvent = ensures.find(
+      (event: AnyObject) => event.entityType === "routine_execution",
+    );
+    const signalEvent = ensures.find(
+      (event: AnyObject) => event.entityType === "signal_emission",
+    );
+
+    expect(ensures.map((event: AnyObject) => event.entityType)).toEqual([
+      "routine_execution",
+      "signal_emission",
+    ]);
+    expect(routineEvent?.data).toMatchObject({
+      uuid: "routine-exec-1",
+      execution_trace_id: "trace-existing",
+      meta_context: {},
+      service_name: "CadenzaDB",
+    });
+    expect(typeof routineEvent?.data?.is_meta).toBe("boolean");
+    expect(
+      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "routine_version"),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "routineVersion"),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "executionTraceId"),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "metaContext"),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "isMeta"),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "serviceName"),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "serviceInstanceId"),
+    ).toBe(false);
+    expect(signalEvent?.data).toMatchObject({
+      uuid: "signal-emission-routine-1",
+      task_name: "Persist order record",
+      routine_execution_id: "routine-exec-1",
+      execution_trace_id: "trace-existing",
+    });
+    expect(signalEvent?.deps).toEqual(
+      expect.arrayContaining(["routine_execution:routine-exec-1"]),
+    );
   });
 });

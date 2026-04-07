@@ -11,8 +11,15 @@ import fetch from "node-fetch";
 import { v4 as uuid } from "uuid";
 import { isBrowser } from "../utils/environment";
 import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
-import { ensureDelegationContextMetadata } from "../utils/delegation";
+import {
+  attachDelegationRequestSnapshot,
+  ensureDelegationContextMetadata,
+  stripTransportSelectionRoutingContext,
+  stripDelegationRequestSnapshot,
+} from "../utils/delegation";
+import { buildServiceCommunicationEstablishedContext } from "../utils/serviceCommunication";
 import type { AnyObject } from "@cadenza.io/core";
+import { buildTransportHandleKey } from "../utils/transport";
 
 type TransportDetailLevel = "summary" | "full";
 
@@ -50,6 +57,19 @@ interface ParsedFetchResponse {
 }
 
 const FETCH_HANDSHAKE_TIMEOUT_MS = 5000;
+const DEFAULT_SIGNAL_TRANSMISSION_TIMEOUT_MS = 5000;
+const AUTHORITY_SIGNAL_TRANSMISSION_TIMEOUT_MS = 30000;
+const AUTHORITY_SIGNAL_TRANSMISSION_CONCURRENCY = 10;
+const INQUIRY_TRACE_ENABLED =
+  process.env.CADENZA_INQUIRY_TRACE === "1" ||
+  process.env.CADENZA_INQUIRY_TRACE === "true";
+const TRACED_INQUIRY_METADATA_SIGNALS = new Set([
+  "global.meta.graph_metadata.inquiry_created",
+  "global.meta.graph_metadata.inquiry_updated",
+]);
+const ACTOR_SESSION_TRACE_ENABLED =
+  process.env.CADENZA_ACTOR_SESSION_TRACE === "1" ||
+  process.env.CADENZA_ACTOR_SESSION_TRACE === "true";
 
 /**
  * RestController class is responsible for managing RESTful interactions, including defining
@@ -217,6 +237,24 @@ export default class RestController {
   }
 
   private resolveDelegationTimeoutMs(ctx: AnyObject): number {
+    const explicitTimeouts = [
+      ctx?.__timeout,
+      ctx?.__metadata?.__timeout,
+      ...(Array.isArray(ctx?.joinedContexts)
+        ? ctx.joinedContexts.flatMap((joinedCtx: AnyObject) => [
+            joinedCtx?.__timeout,
+            joinedCtx?.__metadata?.__timeout,
+          ])
+        : []),
+    ];
+    const explicitTimeoutMs = explicitTimeouts.find(
+      (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
+    );
+
+    if (typeof explicitTimeoutMs === "number") {
+      return explicitTimeoutMs;
+    }
+
     const syncing =
       ctx?.__syncing === true ||
       ctx?.__metadata?.__syncing === true ||
@@ -228,6 +266,35 @@ export default class RestController {
         ));
 
     return syncing ? 120_000 : 30_000;
+  }
+
+  private resolveSignalTransmissionTimeoutMs(
+    serviceName: string,
+    ctx: AnyObject,
+  ): number {
+    const syncing =
+      ctx?.__syncing === true ||
+      ctx?.__metadata?.__syncing === true ||
+      (Array.isArray(ctx?.joinedContexts) &&
+        ctx.joinedContexts.some(
+          (joinedCtx: AnyObject) =>
+            joinedCtx?.__syncing === true ||
+            joinedCtx?.__metadata?.__syncing === true,
+        ));
+
+    if (syncing) {
+      return 120_000;
+    }
+
+    return serviceName === "CadenzaDB"
+      ? AUTHORITY_SIGNAL_TRANSMISSION_TIMEOUT_MS
+      : DEFAULT_SIGNAL_TRANSMISSION_TIMEOUT_MS;
+  }
+
+  private resolveSignalTransmissionConcurrency(serviceName: string): number {
+    return serviceName === "CadenzaDB"
+      ? AUTHORITY_SIGNAL_TRANSMISSION_CONCURRENCY
+      : 0;
   }
 
   private recordFetchClientError(
@@ -410,6 +477,21 @@ export default class RestController {
           "Setup Express app security",
           (ctx, emit) => {
             if (isBrowser || ctx.__isFrontend) {
+              const browserTransportData = Array.isArray(ctx.__declaredTransports)
+                ? ctx.__declaredTransports.map((transport: any) => ({
+                    uuid: transport.uuid,
+                    service_instance_id: ctx.__serviceInstanceId,
+                    role: transport.role,
+                    origin: transport.origin,
+                    protocols: transport.protocols ?? ["rest", "socket"],
+                    ...(transport.securityProfile
+                      ? { security_profile: transport.securityProfile }
+                      : {}),
+                    ...(transport.authStrategy
+                      ? { auth_strategy: transport.authStrategy }
+                      : {}),
+                  }))
+                : [];
               emit("meta.service_registry.instance_registration_requested", {
                 ...ctx,
                 data: {
@@ -432,22 +514,20 @@ export default class RestController {
                   is_blocked: false,
                   health: {},
                 },
-                __transportData: Array.isArray(ctx.__declaredTransports)
-                  ? ctx.__declaredTransports.map((transport: any) => ({
-                      uuid: transport.uuid,
-                      service_instance_id: ctx.__serviceInstanceId,
-                      role: transport.role,
-                      origin: transport.origin,
-                      protocols: transport.protocols ?? ["rest", "socket"],
-                      ...(transport.securityProfile
-                        ? { security_profile: transport.securityProfile }
-                        : {}),
-                      ...(transport.authStrategy
-                        ? { auth_strategy: transport.authStrategy }
-                        : {}),
-                    }))
-                  : [],
+                __transportData: browserTransportData,
               });
+              if (browserTransportData.length > 0) {
+                Cadenza.schedule(
+                  "meta.service_registry.transport_registration_ensure_requested",
+                  {
+                    ...ctx,
+                    __transportData: browserTransportData,
+                    __serviceName: ctx.__serviceName,
+                    __serviceInstanceId: ctx.__serviceInstanceId,
+                  },
+                  250,
+                );
+              }
               return;
             }
 
@@ -556,7 +636,11 @@ export default class RestController {
                     const handshakePayload =
                       req.body && typeof req.body === "object" ? req.body : {};
 
-                    if (Object.keys(handshakePayload).length > 0) {
+                    if (
+                      Object.keys(handshakePayload).length > 0 &&
+                      (process.env.CADENZA_FETCH_CONNECTION_DEBUG === "1" ||
+                        process.env.CADENZA_FETCH_CONNECTION_DEBUG === "true")
+                    ) {
                       Cadenza.log("New fetch connection.", handshakePayload);
                     }
 
@@ -577,11 +661,91 @@ export default class RestController {
                 });
 
                 app.post("/delegation", (req: any, res: any) => {
-                  const ctx = ensureDelegationContextMetadata(req.body);
+                  const ctx = ensureDelegationContextMetadata(
+                    attachDelegationRequestSnapshot(req.body),
+                  );
                   const deputyExecId = ctx.__metadata.__deputyExecId;
                   const remoteRoutineName = ctx.__remoteRoutineName;
                   const targetNotFoundSignal = `meta.rest.delegation_target_not_found:${deputyExecId}`;
                   let resolved = false;
+
+                  if (
+                    (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+                      process.env.CADENZA_INSTANCE_DEBUG === "true") &&
+                    remoteRoutineName === "Insert service_instance"
+                  ) {
+                    console.log("[CADENZA_INSTANCE_DEBUG] rest_delegation_ingress", {
+                      localServiceName: Cadenza.serviceRegistry.serviceName,
+                      sourceServiceName:
+                        ctx.__localServiceName ?? ctx.__metadata?.__localServiceName ?? null,
+                      deputyExecId,
+                      dataKeys:
+                        ctx.data && typeof ctx.data === "object"
+                          ? Object.keys(ctx.data)
+                          : [],
+                      queryDataKeys:
+                        ctx.queryData && typeof ctx.queryData === "object"
+                          ? Object.keys(ctx.queryData)
+                          : [],
+                      queryDataDataKeys:
+                        ctx.queryData?.data &&
+                        typeof ctx.queryData.data === "object"
+                          ? Object.keys(ctx.queryData.data as AnyObject)
+                          : [],
+                    });
+                  }
+
+                  if (
+                    ACTOR_SESSION_TRACE_ENABLED &&
+                    remoteRoutineName === "Insert actor_session_state"
+                  ) {
+                    const queryData =
+                      ctx.queryData && typeof ctx.queryData === "object"
+                        ? (ctx.queryData as AnyObject)
+                        : null;
+                    const data =
+                      ctx.data && typeof ctx.data === "object" && !Array.isArray(ctx.data)
+                        ? (ctx.data as AnyObject)
+                        : null;
+
+                    console.log("[CADENZA_ACTOR_SESSION_TRACE] delegation_ingress", {
+                      localServiceName: Cadenza.serviceRegistry.serviceName,
+                      sourceServiceName:
+                        ctx.__localServiceName ?? ctx.__metadata?.__localServiceName ?? null,
+                      remoteRoutineName,
+                      deputyExecId:
+                        ctx.__deputyExecId ?? ctx.__metadata?.__deputyExecId ?? null,
+                      inquirySourceTaskExecutionId:
+                        ctx.__inquirySourceTaskExecutionId ??
+                        ctx.__metadata?.__inquirySourceTaskExecutionId ??
+                        null,
+                      inquirySourceRoutineExecutionId:
+                        ctx.__inquirySourceRoutineExecutionId ??
+                        ctx.__metadata?.__inquirySourceRoutineExecutionId ??
+                        null,
+                      inquiryName:
+                        ctx.__inquiryName ?? ctx.__metadata?.__inquiryName ?? null,
+                      hasData: data !== null,
+                      dataKeys: data ? Object.keys(data) : [],
+                      hasQueryData: queryData !== null,
+                      queryDataKeys: queryData ? Object.keys(queryData) : [],
+                      hasQueryDataData:
+                        !!(
+                          queryData &&
+                          queryData.data &&
+                          typeof queryData.data === "object" &&
+                          !Array.isArray(queryData.data)
+                        ),
+                      queryDataDataKeys:
+                        queryData &&
+                        queryData.data &&
+                        typeof queryData.data === "object" &&
+                        !Array.isArray(queryData.data)
+                          ? Object.keys(queryData.data as AnyObject)
+                          : [],
+                      rootKeys: Object.keys(ctx ?? {}).slice(0, 24),
+                    });
+                  }
 
                   const resolveDelegation = (
                     endCtx: AnyObject,
@@ -659,6 +823,12 @@ export default class RestController {
                     ...ctx,
                     __name: ctx.__remoteRoutineName,
                   });
+                  Cadenza.emit("meta.service_registry.instance_activity_observed", {
+                    serviceName: Cadenza.serviceRegistry.serviceName,
+                    serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                    activityAt: new Date().toISOString(),
+                    source: "rest-delegation",
+                  });
                 });
 
                 app.post("/signal", (req: any, res: any) => {
@@ -693,9 +863,18 @@ export default class RestController {
                       __error: e,
                     });
                     return;
-                  }
+                    }
 
-                  Cadenza.emit(ctx.__signalName, ctx);
+                    Cadenza.emit("meta.service_registry.instance_activity_observed", {
+                      serviceName: Cadenza.serviceRegistry.serviceName,
+                      serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                      activityAt: new Date().toISOString(),
+                      source: "rest-signal",
+                    });
+                    Cadenza.emit(ctx.__signalName, {
+                      ...ctx,
+                      __receivedSignalTransmission: true,
+                  });
                 });
 
                 app.get("/status", (req: any, res: any) => {
@@ -943,6 +1122,18 @@ export default class RestController {
                       "meta.service_registry.instance_registration_requested",
                       ctx,
                     );
+                    if (transportData.length > 0) {
+                      Cadenza.schedule(
+                        "meta.service_registry.transport_registration_ensure_requested",
+                        {
+                          ...ctx,
+                          __transportData: transportData,
+                          __serviceName: ctx.__serviceName,
+                          __serviceInstanceId: ctx.__serviceInstanceId,
+                        },
+                        250,
+                      );
+                    }
 
                     return ctx;
                   },
@@ -957,10 +1148,15 @@ export default class RestController {
                         Cadenza.createMetaTask(
                           "Start run",
                           (context, emit: any) => {
-                            if (context.task || context.routine) {
-                              const routine = context.task ?? context.routine;
-                              delete context.task;
-                              delete context.routine;
+                            const remoteRoutineName =
+                              context.__remoteRoutineName ??
+                              context.__name ??
+                              "unknown";
+                            const routine =
+                              Cadenza.get(remoteRoutineName) ??
+                              Cadenza.registry.routines.get(remoteRoutineName);
+
+                            if (routine) {
                               context.__routineExecId =
                                 context.__metadata?.__deputyExecId ?? null;
                               context.__isDeputy = true;
@@ -970,10 +1166,6 @@ export default class RestController {
                               const deputyExecId =
                                 context.__metadata?.__deputyExecId ??
                                 context.__deputyExecId;
-                              const remoteRoutineName =
-                                context.__remoteRoutineName ??
-                                context.__name ??
-                                "unknown";
                               context.errored = true;
                               context.__error = `No task or routine registered for delegation target ${remoteRoutineName}.`;
                               if (deputyExecId) {
@@ -989,10 +1181,7 @@ export default class RestController {
                           "Forward delegations to runner",
                         )
                           .attachSignal("meta.runner.failed")
-                          .doAfter(
-                            Cadenza.registry.getTaskByName,
-                            Cadenza.registry.getRoutineByName,
-                          );
+                          .doOn("meta.rest.delegation_requested");
                       },
                     ),
                   ),
@@ -1008,7 +1197,16 @@ export default class RestController {
       (ctx) => {
         const serviceName = String(ctx.serviceName ?? "");
         const URL = String(ctx.serviceOrigin ?? "");
-        const fetchId = String(ctx.serviceTransportId ?? "");
+        const routeKey = String(
+          ctx.routeKey ?? ctx.__routeKey ?? ctx.serviceTransportId ?? "",
+        );
+        const fetchId = String(
+          ctx.fetchId ??
+            ctx.__fetchId ??
+            (routeKey ? buildTransportHandleKey(routeKey, "rest") : "") ??
+            ctx.serviceTransportId ??
+            "",
+        );
         if (!serviceName || !URL || !fetchId) {
           return false;
         }
@@ -1023,7 +1221,26 @@ export default class RestController {
 
         if (Cadenza.get(`Send Handshake to ${clientTaskSuffix}`)) {
           console.error("Fetch client already exists", { URL, fetchId });
-          return;
+          Cadenza.schedule(
+            `meta.fetch.handshake_requested:${fetchId}`,
+            {
+              serviceInstanceId: ctx.serviceInstanceId,
+              serviceName,
+              communicationTypes: ctx.communicationTypes,
+              serviceTransportId: ctx.serviceTransportId,
+              serviceOrigin: URL,
+              fetchId,
+              routeKey,
+              socketClientId:
+                ctx.socketClientId ??
+                (routeKey ? buildTransportHandleKey(routeKey, "socket") : undefined),
+              transportProtocols: ctx.transportProtocols,
+              transportProtocol: "rest",
+              handshakeData: ctx.handshakeData,
+            },
+            0,
+          );
+          return true;
         }
 
         const handshakeTask = Cadenza.createMetaTask(
@@ -1054,7 +1271,12 @@ export default class RestController {
                   { error, serviceName, URL },
                   "warning",
                 );
-                emit(`meta.fetch.handshake_failed:${fetchId}`, response);
+                emit(`meta.fetch.handshake_failed:${fetchId}`, {
+                  ...ctx,
+                  ...response,
+                  fetchId,
+                  routeKey,
+                });
                 return { ...ctx, __error: error, errored: true };
               }
 
@@ -1071,16 +1293,25 @@ export default class RestController {
                 URL,
               });
 
+              const localServiceInstanceId =
+                Cadenza.serviceRegistry.serviceInstanceId;
+              if (!ctx.serviceInstanceId || !localServiceInstanceId) {
+                return {
+                  ...ctx,
+                  __error: "Fetch handshake missing service instance id",
+                  errored: true,
+                };
+              }
+
               for (const communicationType of ctx.communicationTypes) {
-                // TODO: Should be done in other situations as well
-                emit("global.meta.fetch.service_communication_established", {
-                  data: {
+                emit(
+                  "global.meta.fetch.service_communication_established",
+                  buildServiceCommunicationEstablishedContext({
                     serviceInstanceId: ctx.serviceInstanceId,
-                    serviceInstanceClientId:
-                      Cadenza.serviceRegistry.serviceInstanceId,
+                    serviceInstanceClientId: localServiceInstanceId,
                     communicationType,
-                  },
-                });
+                  }),
+                );
               }
             } catch (e) {
               fetchDiagnostics.connected = false;
@@ -1120,13 +1351,20 @@ export default class RestController {
               return;
             }
 
-            const delegateCtx = ensureDelegationContextMetadata(ctx);
+            const routedDelegateCtx = stripTransportSelectionRoutingContext(ctx);
+            const delegateCtx = ensureDelegationContextMetadata(
+              attachDelegationRequestSnapshot(
+                stripDelegationRequestSnapshot(routedDelegateCtx),
+              ),
+            );
             const deputyExecId = delegateCtx.__metadata.__deputyExecId;
+            const requestBody = stripDelegationRequestSnapshot(delegateCtx);
 
             fetchDiagnostics.delegationRequests++;
             fetchDiagnostics.updatedAt = Date.now();
 
             let resultContext;
+            let routeOutcome: "success" | "failure" | "neutral" = "neutral";
             try {
               resultContext = await this.fetchDataWithTimeout(
                 `${URL}/delegation`,
@@ -1135,10 +1373,21 @@ export default class RestController {
                     "Content-Type": "application/json",
                   },
                   method: "POST",
-                  body: JSON.stringify(delegateCtx),
+                  body: JSON.stringify(requestBody),
                 },
                 this.resolveDelegationTimeoutMs(delegateCtx),
               );
+              if (
+                resultContext &&
+                typeof resultContext === "object" &&
+                resultContext.__delegationRequestContext === undefined &&
+                delegateCtx.__delegationRequestContext !== undefined
+              ) {
+                resultContext = {
+                  ...resultContext,
+                  __delegationRequestContext: delegateCtx.__delegationRequestContext,
+                };
+              }
               if (resultContext?.errored || resultContext?.failed) {
                 fetchDiagnostics.delegationFailures++;
                 fetchDiagnostics.updatedAt = Date.now();
@@ -1148,6 +1397,26 @@ export default class RestController {
                   URL,
                   resultContext?.__error ?? resultContext?.error ?? "Delegation failed",
                 );
+              } else {
+                const serviceInstanceId = String(
+                  delegateCtx.__instance ?? delegateCtx.targetServiceInstanceId ?? "",
+                ).trim();
+                if (serviceName && serviceInstanceId) {
+                  emit("meta.service_registry.remote_activity_observed", {
+                    serviceName,
+                    serviceInstanceId,
+                    serviceTransportId: String(delegateCtx.__transportId ?? "").trim(),
+                    serviceOrigin: String(delegateCtx.__transportOrigin ?? "").trim(),
+                    transportProtocols: Array.isArray(
+                      delegateCtx.__transportProtocols,
+                    )
+                      ? delegateCtx.__transportProtocols
+                      : [],
+                    activityAt: new Date().toISOString(),
+                    source: "rest-delegation-success",
+                  });
+                }
+                routeOutcome = "success";
               }
             } catch (e) {
               console.error("Error in delegation", e);
@@ -1156,12 +1425,19 @@ export default class RestController {
               fetchDiagnostics.updatedAt = Date.now();
               this.recordFetchClientError(fetchId, serviceName, URL, e);
               resultContext = {
+                __signalName: "meta.fetch.delegate_failed",
                 __error: `Error: ${e}`,
                 errored: true,
                 ...delegateCtx,
                 ...delegateCtx.__metadata,
               };
+              routeOutcome = "failure";
+              emit("meta.fetch.delegate_failed", resultContext);
             } finally {
+              Cadenza.serviceRegistry.recordBalancedRouteOutcome(
+                (resultContext ?? delegateCtx) as AnyObject,
+                routeOutcome,
+              );
               emit(`meta.fetch.delegated:${deputyExecId}`, resultContext);
             }
 
@@ -1187,10 +1463,28 @@ export default class RestController {
               return;
             }
 
+            if (
+              INQUIRY_TRACE_ENABLED &&
+              serviceName === "CadenzaDB" &&
+              TRACED_INQUIRY_METADATA_SIGNALS.has(String(ctx.__signalName))
+            ) {
+              console.log("[CADENZA_INQUIRY_TRACE] rest_transmit_start", {
+                localServiceName: Cadenza.serviceRegistry.serviceName,
+                targetServiceName: serviceName,
+                signalName: ctx.__signalName,
+                inquiryName:
+                  ctx?.data?.name ??
+                  ctx?.data?.metadata?.inquiryMeta?.inquiry ??
+                  null,
+                inquiryId: ctx?.data?.uuid ?? ctx?.filter?.uuid ?? null,
+              });
+            }
+
             fetchDiagnostics.signalTransmissions++;
             fetchDiagnostics.updatedAt = Date.now();
 
             let response;
+            let routeOutcome: "success" | "failure" | "neutral" = "neutral";
             try {
               response = await this.fetchDataWithTimeout(
                 `${URL}/signal`,
@@ -1201,7 +1495,7 @@ export default class RestController {
                   method: "POST",
                   body: JSON.stringify(ctx),
                 },
-                1000,
+                this.resolveSignalTransmissionTimeoutMs(serviceName, ctx),
               );
 
               if (ctx.__routineExecId) {
@@ -1217,6 +1511,22 @@ export default class RestController {
                   URL,
                   response?.__error ?? response?.error ?? "Signal transmission failed",
                 );
+              } else {
+                routeOutcome = "success";
+              }
+
+              if (
+                INQUIRY_TRACE_ENABLED &&
+                serviceName === "CadenzaDB" &&
+                TRACED_INQUIRY_METADATA_SIGNALS.has(String(ctx.__signalName))
+              ) {
+                console.log("[CADENZA_INQUIRY_TRACE] rest_transmit_result", {
+                  localServiceName: Cadenza.serviceRegistry.serviceName,
+                  targetServiceName: serviceName,
+                  signalName: ctx.__signalName,
+                  errored: response?.errored === true,
+                  error: response?.__error ?? response?.error ?? null,
+                });
               }
             } catch (e) {
               // TODO: Retry on too many requests
@@ -1230,12 +1540,32 @@ export default class RestController {
                 errored: true,
                 ...ctx,
               };
+              routeOutcome = "failure";
+
+              if (
+                INQUIRY_TRACE_ENABLED &&
+                serviceName === "CadenzaDB" &&
+                TRACED_INQUIRY_METADATA_SIGNALS.has(String(ctx.__signalName))
+              ) {
+                console.log("[CADENZA_INQUIRY_TRACE] rest_transmit_error", {
+                  localServiceName: Cadenza.serviceRegistry.serviceName,
+                  targetServiceName: serviceName,
+                  signalName: ctx.__signalName,
+                  error: String(e),
+                });
+              }
             }
+
+            Cadenza.serviceRegistry.recordBalancedRouteOutcome(
+              (response ?? ctx) as AnyObject,
+              routeOutcome,
+            );
 
             return response;
           },
           "Sends signal request",
           {
+            concurrency: this.resolveSignalTransmissionConcurrency(serviceName),
             register: false,
             isHidden: true,
           },
@@ -1300,7 +1630,17 @@ export default class RestController {
 
         Cadenza.createEphemeralMetaTask(
           `Destroy fetch client ${fetchId}`,
-          () => {
+          (ctx) => {
+            if (
+              !Cadenza.serviceRegistry.shouldProcessRemoteRouteEvent({
+                ...ctx,
+                fetchId,
+                routeKey,
+              })
+            ) {
+              return false;
+            }
+
             fetchDiagnostics.connected = false;
             fetchDiagnostics.destroyed = true;
             fetchDiagnostics.updatedAt = Date.now();
@@ -1309,6 +1649,7 @@ export default class RestController {
             delegateTask.destroy();
             transmitTask.destroy();
             statusTask.destroy();
+            return true;
           },
           "",
           {
@@ -1318,7 +1659,6 @@ export default class RestController {
         )
           .doOn(
             `meta.fetch.destroy_requested:${fetchId}`,
-            `meta.socket_client.disconnected:${fetchId}`,
             `meta.fetch.handshake_failed:${fetchId}`,
           )
           .emits("meta.fetch.destroyed");
@@ -1330,7 +1670,7 @@ export default class RestController {
       .then(
         Cadenza.createMetaTask(
           "Prepare handshake",
-          (ctx, emit) => {
+          (ctx) => {
             const {
               serviceName,
               serviceInstanceId,
@@ -1340,21 +1680,37 @@ export default class RestController {
               transportProtocols,
             } = ctx;
 
-            const fetchId = String(serviceTransportId ?? "");
+            const routeKey = String(
+              ctx.routeKey ?? ctx.__routeKey ?? serviceTransportId ?? "",
+            );
+            const fetchId = String(
+              ctx.fetchId ??
+                ctx.__fetchId ??
+                (routeKey
+                  ? buildTransportHandleKey(routeKey, "rest")
+                  : serviceTransportId ?? ""),
+            );
 
-            emit(`meta.fetch.handshake_requested:${fetchId}`, {
+            Cadenza.schedule(`meta.fetch.handshake_requested:${fetchId}`, {
               serviceInstanceId,
               serviceName,
               communicationTypes,
               serviceTransportId,
               serviceOrigin,
+              fetchId,
+              routeKey,
+              socketClientId:
+                ctx.socketClientId ??
+                (routeKey ? buildTransportHandleKey(routeKey, "socket") : undefined),
               transportProtocols,
+              transportProtocol: "rest",
               handshakeData: {
                 instanceId: Cadenza.serviceRegistry.serviceInstanceId,
                 serviceName: Cadenza.serviceRegistry.serviceName,
                 // JWT token...
               },
-            });
+            }, 0);
+            return true;
           },
           "Prepares handshake",
         ).attachSignal("meta.fetch.handshake_requested"),
