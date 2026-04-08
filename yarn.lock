@@ -36,10 +36,10 @@
     "@babel/helper-string-parser" "^7.27.1"
     "@babel/helper-validator-identifier" "^7.28.5"
 
-"@cadenza.io/core@^3.26.0":
-  version "3.26.0"
-  resolved "https://registry.yarnpkg.com/@cadenza.io/core/-/core-3.26.0.tgz#d79fda7dfe5758e7101cf55056533873726077b0"
-  integrity sha512-G4mBEKWh2Ez9VCPf/VO+1gl637Fdr8WOrVXvkfe6/CpRR0NFmOLTnvshnNp4bSu1ed7MuOHHVJ1Co4KE49CZTw==
+"@cadenza.io/core@^3.26.1":
+  version "3.26.1"
+  resolved "https://registry.yarnpkg.com/@cadenza.io/core/-/core-3.26.1.tgz#58ad443f23ab7c4504bb06ace251d253d6eb25c7"
+  integrity sha512-wNwAD3eonWYAoQkQZZEWXjogOvWzr+2OJVyDDldCk4wIsAmj5GVSL4PTbD+9AA4n7TZXH697ErWwJ+R7gOPUFQ==
   dependencies:
     "@types/uuid" "^10.0.0"
     uuid "^10.0.0"
