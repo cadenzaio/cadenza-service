@@ -1,3 +1,10 @@
+# [2.20.0](https://github.com/cadenzaio/cadenza-service/compare/v2.19.1...v2.20.0) (2026-04-09)
+
+
+### Features
+
+* **runtime:** introduce actor session state hydration and enhance routing logic ([40bba7a](https://github.com/cadenzaio/cadenza-service/commit/40bba7a00393ffa8076f1c499706f706f1dfd4cc))
+
 ## [2.19.1](https://github.com/cadenzaio/cadenza-service/compare/v2.19.0...v2.19.1) (2026-04-08)
 
 
