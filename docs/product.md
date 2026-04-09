@@ -29,8 +29,8 @@ It includes core primitives and adds service-to-service execution, remote signal
 - Actor-task associations are emitted with DB-shape field identity.
 - Meta actors are supported for internal runtime components.
 - Actor session durable persistence is per-actor opt-in and strict write-through by default.
+- Opted-in actor sessions lazily hydrate durable state from `actor_session_state` on first key access.
 - Runtime actor state remains non-persistent.
-- No automatic hydration from `actor_session_state` is performed in v1.
 
 ## Configuration Surface
 

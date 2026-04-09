@@ -84,6 +84,20 @@ Two complementary mechanisms are active:
 
 The combined model supports eventual consistency after restart and near-real-time updates during runtime.
 
+## Manifest Catalog vs Dynamic Routing Registry
+
+- `service_manifest` is the structural catalog:
+  - inspectable service snapshot
+  - graph/task/signal/intent/actor/routine structure
+  - suitable for rebuilds, observability, and structural sync
+- runtime routing membership is authority-owned dynamic state:
+  - `service_instance`
+  - `service_instance_transport`
+  - `signal_to_task_map`
+  - `intent_to_task_map`
+- bootstrap full sync now prefers the explicit dynamic routing rows for live signal delivery and inquiry responder membership.
+- manifest-derived routing maps remain a compatibility fallback only when those direct authority rows are absent, so bootstrap-critical flows do not depend on catalog materialization to reach authority.
+
 ## Distributed Inquiry and Readiness
 
 Service inquiry resolution includes responder ranking/filtering, meta-intent safety checks, timeout handling, merged results, and summary metadata.

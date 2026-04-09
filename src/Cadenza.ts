@@ -33,7 +33,10 @@ import SignalController from "./signals/SignalController";
 import RuntimeValidationController from "./runtime/RuntimeValidationController";
 import { DbOperationPayload, DbOperationType } from "./types/queryData";
 import GraphMetadataController from "./graph/controllers/GraphMetadataController";
-import { registerActorSessionPersistenceTasks } from "./graph/controllers/registerActorSessionPersistence";
+import {
+  META_ACTOR_SESSION_STATE_HYDRATE_INTENT,
+  registerActorSessionPersistenceTasks,
+} from "./graph/controllers/registerActorSessionPersistence";
 import { DatabaseSchemaDefinition } from "./types/database";
 import { camelCase, snakeCase } from "lodash-es";
 import DatabaseController from "@service-database-controller";
@@ -151,6 +154,11 @@ function resolveInquiryFailureError(
   }
 
   return `Inquiry '${inquiry}' did not complete successfully`;
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number): number {
+  const normalized = Number(value);
+  return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
 }
 
 export type ServerOptions = {
@@ -2589,7 +2597,13 @@ export default class CadenzaService {
     options: ActorFactoryOptions = {},
   ): Actor<D, R> {
     this.bootstrap();
-    return Cadenza.createActor(spec, options as ActorFactoryOptions<D, R>);
+    return Cadenza.createActor(
+      spec,
+      this.withActorSessionHydration(
+        spec,
+        options as ActorFactoryOptions<D, R>,
+      ),
+    );
   }
 
   static createActorFromDefinition<
@@ -2600,7 +2614,96 @@ export default class CadenzaService {
     options: ActorFactoryOptions<D, R> = {},
   ): Actor<D, R> {
     this.bootstrap();
-    return Cadenza.createActorFromDefinition(definition, options);
+    return Cadenza.createActorFromDefinition(
+      definition,
+      this.withActorSessionHydration(
+        {
+          name: definition.name,
+          description: definition.description,
+          defaultKey: definition.defaultKey,
+          kind: definition.kind,
+          loadPolicy: definition.loadPolicy,
+          writeContract: definition.writeContract,
+          consistencyProfile: definition.consistencyProfile,
+          retry: definition.retry,
+          idempotency: definition.idempotency,
+          session: definition.session,
+          runtimeReadGuard: definition.runtimeReadGuard,
+          key: definition.key,
+          state: definition.state,
+          taskBindings: definition.tasks,
+          initState:
+            definition.state?.durable?.initState ??
+            (
+              definition.state?.durable as
+                | { initialState?: D | (() => D) }
+                | undefined
+            )?.initialState,
+        },
+        options,
+      ),
+    );
+  }
+
+  private static withActorSessionHydration<
+    D extends Record<string, any>,
+    R = AnyObject,
+  >(
+    spec: ActorSpec<D, R>,
+    options: ActorFactoryOptions<D, R>,
+  ): ActorFactoryOptions<D, R> {
+    if (
+      options.hydrateDurableState ||
+      spec.session?.persistDurableState !== true
+    ) {
+      return options;
+    }
+
+    const actorName = String(spec.name ?? "").trim();
+    const actorVersion = 1;
+    const timeoutMs = normalizePositiveInteger(
+      spec.session?.persistenceTimeoutMs,
+      5000,
+    );
+
+    return {
+      ...options,
+      hydrateDurableState: async (actorKey: string) => {
+        registerActorSessionPersistenceTasks();
+
+        const response = await Cadenza.inquire(
+          META_ACTOR_SESSION_STATE_HYDRATE_INTENT,
+          {
+            actor_name: actorName,
+            actor_version: actorVersion,
+            actor_key: actorKey,
+          },
+          {
+            timeout: timeoutMs,
+            requireComplete: true,
+            rejectOnTimeout: true,
+          },
+        );
+
+        if (!response || typeof response !== "object" || response.__success !== true) {
+          throw new Error(
+            resolveInquiryFailureError(
+              META_ACTOR_SESSION_STATE_HYDRATE_INTENT,
+              response,
+            ),
+          );
+        }
+
+        if (response.hydrated !== true) {
+          return null;
+        }
+
+        return {
+          durableState: response.durable_state as D,
+          durableVersion: Number(response.durable_version),
+        };
+      },
+    };
   }
 
   /**

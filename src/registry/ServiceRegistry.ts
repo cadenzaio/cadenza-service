@@ -1702,6 +1702,8 @@ export default class ServiceRegistry {
       }
     }
 
+    const hasExplicitSignalRoutingRows = signalToTaskMaps.length > 0;
+    const hasExplicitIntentRoutingRows = intentToTaskMaps.length > 0;
     const latestManifestSnapshots =
       selectLatestServiceManifestSnapshots(manifestSnapshots);
     const explodedManifest = explodeServiceManifestSnapshots(
@@ -1790,28 +1792,32 @@ export default class ServiceRegistry {
           row.task_version ?? 1,
         ).trim()}`,
     );
-    pushUnique(
-      explodedManifest.signalToTaskMaps as Array<Record<string, unknown>>,
-      signalToTaskMaps,
-      seenSignalMaps,
-      (row) =>
-        `${String(row.signal_name ?? "").trim()}|${String(
-          row.service_name ?? "",
-        ).trim()}|${String(row.task_name ?? "").trim()}|${String(
-          row.task_version ?? 1,
-        ).trim()}`,
-    );
-    pushUnique(
-      explodedManifest.intentToTaskMaps as Array<Record<string, unknown>>,
-      intentToTaskMaps,
-      seenIntentMaps,
-      (row) =>
-        `${String(row.intent_name ?? "").trim()}|${String(
-          row.service_name ?? "",
-        ).trim()}|${String(row.task_name ?? "").trim()}|${String(
-          row.task_version ?? 1,
-        ).trim()}`,
-    );
+    if (!hasExplicitSignalRoutingRows) {
+      pushUnique(
+        explodedManifest.signalToTaskMaps as Array<Record<string, unknown>>,
+        signalToTaskMaps,
+        seenSignalMaps,
+        (row) =>
+          `${String(row.signal_name ?? "").trim()}|${String(
+            row.service_name ?? "",
+          ).trim()}|${String(row.task_name ?? "").trim()}|${String(
+            row.task_version ?? 1,
+          ).trim()}`,
+      );
+    }
+    if (!hasExplicitIntentRoutingRows) {
+      pushUnique(
+        explodedManifest.intentToTaskMaps as Array<Record<string, unknown>>,
+        intentToTaskMaps,
+        seenIntentMaps,
+        (row) =>
+          `${String(row.intent_name ?? "").trim()}|${String(
+            row.service_name ?? "",
+          ).trim()}|${String(row.task_name ?? "").trim()}|${String(
+            row.task_version ?? 1,
+          ).trim()}`,
+      );
+    }
 
     return {
       serviceInstances,
@@ -2663,16 +2669,42 @@ export default class ServiceRegistry {
     const authorityFullSyncResponderTask = Cadenza.createMetaTask(
       BOOTSTRAP_FULL_SYNC_RESPONDER_TASK_NAME,
       async (ctx) => {
+        const queryOptionalAuthorityRoutingRows = async (
+          tableName: "signal_to_task_map" | "intent_to_task_map",
+        ) => {
+          try {
+            return await DatabaseController.instance.queryAuthorityTableRows(
+              tableName,
+            );
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            if (
+              message.includes(
+                `Table '${tableName}' is not registered on the CadenzaDB PostgresActor`,
+              )
+            ) {
+              return [];
+            }
+
+            throw error;
+          }
+        };
+
         const [
           serviceInstances,
           serviceInstanceTransports,
           serviceManifests,
+          signalToTaskMaps,
+          intentToTaskMaps,
         ] = await Promise.all([
           DatabaseController.instance.queryAuthorityTableRows("service_instance"),
           DatabaseController.instance.queryAuthorityTableRows(
             "service_instance_transport",
           ),
           DatabaseController.instance.queryAuthorityTableRows("service_manifest"),
+          queryOptionalAuthorityRoutingRows("signal_to_task_map"),
+          queryOptionalAuthorityRoutingRows("intent_to_task_map"),
         ]);
 
         return {
@@ -2682,6 +2714,8 @@ export default class ServiceRegistry {
             serviceInstances,
             serviceInstanceTransports,
             serviceManifests,
+            signalToTaskMaps,
+            intentToTaskMaps,
           }),
         };
       },

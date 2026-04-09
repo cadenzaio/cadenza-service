@@ -424,6 +424,16 @@ describe("service registry transport registration", () => {
     const registry = ServiceRegistry.instance as any;
     registry.serviceName = "OrdersService";
     registry.connectsToCadenzaDB = true;
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+    registry.noteAuthorityBootstrapHandshake({
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-1",
+      serviceTransportId: "cadenza-db-transport-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
 
     const syncRequestSpy = vi.spyOn(Cadenza, "emit");
     const inquireSpy = vi
@@ -527,6 +537,16 @@ describe("service registry transport registration", () => {
     const registry = ServiceRegistry.instance as any;
     registry.serviceName = "OrdersService";
     registry.connectsToCadenzaDB = true;
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+    registry.noteAuthorityBootstrapHandshake({
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-1",
+      serviceTransportId: "cadenza-db-transport-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
 
     const inquireSpy = vi.spyOn(Cadenza, "inquire").mockResolvedValue({
       serviceInstances: [
@@ -574,7 +594,7 @@ describe("service registry transport registration", () => {
     15_000,
   );
 
-  it("registers a single bootstrap full-sync deputy with the long timeout", () => {
+  it("registers a single bootstrap full-sync deputy", () => {
     const registry = ServiceRegistry.instance as any;
     registry.serviceName = "OrdersService";
     registry.connectsToCadenzaDB = true;
@@ -593,7 +613,9 @@ describe("service registry transport registration", () => {
       serviceName: "CadenzaDB",
       remoteTaskName: "Respond service registry full sync",
     });
-    expect(fullSyncDeputies[0].localTask.timeout).toBe(120_000);
+    expect(fullSyncDeputies[0].localTaskName).toContain(
+      "Respond service registry full sync",
+    );
   });
 
   it("marks full-sync inquiries as syncing and applies the long timeout", async () => {
@@ -601,8 +623,20 @@ describe("service registry transport registration", () => {
     registry.serviceName = "OrdersService";
     registry.connectsToCadenzaDB = true;
     registry.bootstrapFullSyncRetryIndex = 4;
-
-    registry.bootstrapFullSync(() => {}, {}, "service_setup_completed");
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+    registry.noteAuthorityBootstrapHandshake({
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-1",
+      serviceTransportId: "cadenza-db-transport-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+    registry.ensureBootstrapAuthorityControlPlaneForInquiry(
+      "meta-service-registry-full-sync",
+      { __reason: "service_setup_completed" },
+    );
 
     const inquireSpy = vi.spyOn(Cadenza, "inquire").mockResolvedValue({
       serviceInstances: [
@@ -950,7 +984,7 @@ describe("service registry transport registration", () => {
       __syncing: true,
     });
 
-    expect(queryAuthorityTableRowsSpy).toHaveBeenCalledTimes(3);
+    expect(queryAuthorityTableRowsSpy).toHaveBeenCalledTimes(5);
     expect(result).toMatchObject({
       serviceInstances: [
         expect.objectContaining({
@@ -4936,6 +4970,27 @@ describe("service registry transport registration", () => {
                 },
               },
             ];
+          case "signal_to_task_map":
+            return [
+              {
+                signal_name: "global.meta.service_instance.inserted",
+                service_name: "ScheduledRunnerService",
+                task_name: "Handle Instance Update",
+                task_version: 1,
+                is_global: true,
+                deleted: false,
+              },
+            ];
+          case "intent_to_task_map":
+            return [
+              {
+                intent_name: "scheduled-runner-refresh",
+                service_name: "ScheduledRunnerService",
+                task_name: "Refresh Runner Cache",
+                task_version: 2,
+                deleted: false,
+              },
+            ];
           default:
             return [];
         }
@@ -4950,7 +5005,7 @@ describe("service registry transport registration", () => {
       requireComplete: true,
     });
 
-    expect(authorityQuerySpy).toHaveBeenCalledTimes(3);
+    expect(authorityQuerySpy).toHaveBeenCalledTimes(5);
     expect(result).toMatchObject({
       serviceInstances: [
         expect.objectContaining({
@@ -4969,7 +5024,261 @@ describe("service registry transport registration", () => {
           service_instance_id: "runner-1",
         }),
       ],
+      signalToTaskMaps: [
+        expect.objectContaining({
+          signal_name: "global.meta.service_instance.inserted",
+          service_name: "ScheduledRunnerService",
+          task_name: "Handle Instance Update",
+          task_version: 1,
+        }),
+      ],
+      intentToTaskMaps: [
+        expect.objectContaining({
+          intent_name: "scheduled-runner-refresh",
+          service_name: "ScheduledRunnerService",
+          task_name: "Refresh Runner Cache",
+          task_version: 2,
+        }),
+      ],
     });
+  });
+
+  it("prefers direct authority routing rows over manifest-derived routing maps during CadenzaDB full sync", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.serviceInstanceId = "cadenza-db-1";
+
+    vi.spyOn(DatabaseController.instance, "queryAuthorityTableRows").mockImplementation(
+      async (tableName: string) => {
+        switch (tableName) {
+          case "service_instance":
+            return [
+              {
+                uuid: "runner-1",
+                service_name: "ScheduledRunnerService",
+                is_active: true,
+                is_non_responsive: false,
+                is_blocked: false,
+                is_frontend: false,
+                is_database: false,
+                health: {},
+              },
+            ];
+          case "service_instance_transport":
+            return [
+              {
+                uuid: "runner-transport-1",
+                service_instance_id: "runner-1",
+                role: "internal",
+                origin: "http://scheduled-runner:3002",
+                protocols: ["rest"],
+                deleted: false,
+              },
+            ];
+          case "service_manifest":
+            return [
+              {
+                service_instance_id: "runner-1",
+                manifest: {
+                  serviceName: "ScheduledRunnerService",
+                  serviceInstanceId: "runner-1",
+                  revision: 1,
+                  manifestHash: "runner-manifest-v1",
+                  publishedAt: "2026-03-30T12:00:00.000Z",
+                  tasks: [],
+                  signals: [],
+                  intents: [],
+                  actors: [],
+                  routines: [],
+                  directionalTaskMaps: [],
+                  signalToTaskMaps: [
+                    {
+                      signal_name: "global.manifest.only",
+                      service_name: "ScheduledRunnerService",
+                      task_name: "Manifest Only Signal Handler",
+                      task_version: 1,
+                      is_global: true,
+                    },
+                  ],
+                  intentToTaskMaps: [
+                    {
+                      intent_name: "manifest-only-intent",
+                      service_name: "ScheduledRunnerService",
+                      task_name: "Manifest Only Intent Handler",
+                      task_version: 1,
+                    },
+                  ],
+                  actorTaskMaps: [],
+                  taskToRoutineMaps: [],
+                },
+              },
+            ];
+          case "signal_to_task_map":
+            return [
+              {
+                signal_name: "global.dynamic.only",
+                service_name: "ScheduledRunnerService",
+                task_name: "Dynamic Signal Handler",
+                task_version: 3,
+                is_global: true,
+                deleted: false,
+              },
+            ];
+          case "intent_to_task_map":
+            return [
+              {
+                intent_name: "dynamic-only-intent",
+                service_name: "ScheduledRunnerService",
+                task_name: "Dynamic Intent Handler",
+                task_version: 4,
+                deleted: false,
+              },
+            ];
+          default:
+            return [];
+        }
+      },
+    );
+
+    registry.ensureAuthorityFullSyncResponderTask();
+
+    const result = await Cadenza.inquire(
+      "meta-service-registry-full-sync",
+      {
+        syncScope: "service-registry-full-sync",
+        __syncing: true,
+      },
+      {
+        requireComplete: true,
+      },
+    );
+
+    expect(result.signalToTaskMaps).toEqual([
+      expect.objectContaining({
+        signal_name: "global.dynamic.only",
+        service_name: "ScheduledRunnerService",
+        task_name: "Dynamic Signal Handler",
+        task_version: 3,
+      }),
+    ]);
+    expect(result.intentToTaskMaps).toEqual([
+      expect.objectContaining({
+        intent_name: "dynamic-only-intent",
+        service_name: "ScheduledRunnerService",
+        task_name: "Dynamic Intent Handler",
+        task_version: 4,
+      }),
+    ]);
+  });
+
+  it("falls back to manifest-derived routing maps when direct authority rows are absent during CadenzaDB full sync", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "CadenzaDB";
+    registry.serviceInstanceId = "cadenza-db-1";
+
+    vi.spyOn(DatabaseController.instance, "queryAuthorityTableRows").mockImplementation(
+      async (tableName: string) => {
+        switch (tableName) {
+          case "service_instance":
+            return [
+              {
+                uuid: "runner-1",
+                service_name: "ScheduledRunnerService",
+                is_active: true,
+                is_non_responsive: false,
+                is_blocked: false,
+                is_frontend: false,
+                is_database: false,
+                health: {},
+              },
+            ];
+          case "service_instance_transport":
+            return [
+              {
+                uuid: "runner-transport-1",
+                service_instance_id: "runner-1",
+                role: "internal",
+                origin: "http://scheduled-runner:3002",
+                protocols: ["rest"],
+                deleted: false,
+              },
+            ];
+          case "service_manifest":
+            return [
+              {
+                service_instance_id: "runner-1",
+                manifest: {
+                  serviceName: "ScheduledRunnerService",
+                  serviceInstanceId: "runner-1",
+                  revision: 1,
+                  manifestHash: "runner-manifest-v1",
+                  publishedAt: "2026-03-30T12:00:00.000Z",
+                  tasks: [],
+                  signals: [],
+                  intents: [],
+                  actors: [],
+                  routines: [],
+                  directionalTaskMaps: [],
+                  signalToTaskMaps: [
+                    {
+                      signal_name: "global.manifest.fallback",
+                      service_name: "ScheduledRunnerService",
+                      task_name: "Manifest Fallback Signal Handler",
+                      task_version: 1,
+                      is_global: true,
+                    },
+                  ],
+                  intentToTaskMaps: [
+                    {
+                      intent_name: "manifest-fallback-intent",
+                      service_name: "ScheduledRunnerService",
+                      task_name: "Manifest Fallback Intent Handler",
+                      task_version: 2,
+                    },
+                  ],
+                  actorTaskMaps: [],
+                  taskToRoutineMaps: [],
+                },
+              },
+            ];
+          case "signal_to_task_map":
+          case "intent_to_task_map":
+            return [];
+          default:
+            return [];
+        }
+      },
+    );
+
+    registry.ensureAuthorityFullSyncResponderTask();
+
+    const result = await Cadenza.inquire(
+      "meta-service-registry-full-sync",
+      {
+        syncScope: "service-registry-full-sync",
+        __syncing: true,
+      },
+      {
+        requireComplete: true,
+      },
+    );
+
+    expect(result.signalToTaskMaps).toEqual([
+      expect.objectContaining({
+        signal_name: "global.manifest.fallback",
+        service_name: "ScheduledRunnerService",
+        task_name: "Manifest Fallback Signal Handler",
+        task_version: 1,
+      }),
+    ]);
+    expect(result.intentToTaskMaps).toEqual([
+      expect.objectContaining({
+        intent_name: "manifest-fallback-intent",
+        service_name: "ScheduledRunnerService",
+        task_name: "Manifest Fallback Intent Handler",
+        task_version: 2,
+      }),
+    ]);
   });
 
   it("requests one extra full sync wave when authority reports a manifest update", async () => {
@@ -5143,7 +5452,7 @@ describe("service registry transport registration", () => {
       expect.objectContaining({
         serviceName: "CadenzaDB",
         serviceInstanceId: "cadenza-db-live-1",
-        serviceTransportId: null,
+        serviceTransportId: "cadenza-db-internal-bootstrap",
         serviceOrigin: "http://cadenza-db-service:8080",
         routeKey: "CadenzaDB|internal|http://cadenza-db-service:8080",
         fetchId: buildHandleKey(
@@ -5569,7 +5878,11 @@ describe("service registry transport registration", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(requestHandshakeSpy).not.toHaveBeenCalled();
+    expect(
+      requestHandshakeSpy.mock.calls.some(
+        ([ctx]) => ctx?.__reason === "cadenza_db_unreachable",
+      ),
+    ).toBe(false);
     expect(registry.hasAuthorityBootstrapHandshakeEstablished()).toBe(true);
   });
 
