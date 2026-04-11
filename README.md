@@ -103,6 +103,23 @@ await browserRuntime.waitUntilReady();
 
 Use `createCadenzaService(..., { isFrontend: true })` directly when you only need the lower-level frontend transport/bootstrap behavior. Use `createBrowserRuntimeActor(...)` when the frontend also needs actor-owned readiness and projected browser runtime state.
 
+### Layer-scoped tools in distributed manifests
+
+`@cadenza.io/service` treats helpers and globals as structural sync material.
+
+- `service_manifest` now includes `helpers`, `globals`, `taskToHelperMaps`, `helperToHelperMaps`, `taskToGlobalMaps`, and `helperToGlobalMaps`
+- helper/global rows are structural catalog data, not live remote execution membership
+- local `GraphMetadataController` fans out direct helper/global events as:
+  - `global.meta.graph_metadata.helper_created`
+  - `global.meta.graph_metadata.helper_updated`
+  - `global.meta.graph_metadata.global_created`
+  - `global.meta.graph_metadata.global_updated`
+  - `global.meta.graph_metadata.task_helper_associated`
+  - `global.meta.graph_metadata.helper_helper_associated`
+  - `global.meta.graph_metadata.task_global_associated`
+  - `global.meta.graph_metadata.helper_global_associated`
+- bootstrap full sync carries these rows so authority can rebuild persistence, but remote helper/global definitions are not exposed as executable local `tools`
+
 ### Creating a Nuxt runtime wrapper
 If your frontend is Nuxt, use `@cadenza.io/service/nuxt` on top of the shared browser actor. The Nuxt layer keeps the core runtime framework agnostic while hiding `useState`, plugin injection, and subscription wiring.
 

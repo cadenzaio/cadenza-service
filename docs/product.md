@@ -13,6 +13,7 @@ It includes core primitives and adds service-to-service execution, remote signal
 3. Delegate remote execution through `DeputyTask`.
 4. Sync graph and actor metadata to CadenzaDB-compatible storage.
 5. Build DB-backed services using schema-driven database task generation.
+6. Publish helper/global structure and direct tool-dependency metadata through `service_manifest` and global graph-metadata signals.
 
 ## Core User Workflows
 
@@ -31,6 +32,13 @@ It includes core primitives and adds service-to-service execution, remote signal
 - Actor session durable persistence is per-actor opt-in and strict write-through by default.
 - Opted-in actor sessions lazily hydrate durable state from `actor_session_state` on first key access.
 - Runtime actor state remains non-persistent.
+
+## Layer-Scoped Tools Product Behavior
+
+- Helper/global runtime execution semantics come from `@cadenza.io/core`.
+- Service enriches helper/global definitions with `service_name` and publishes them in `service_manifest`.
+- Direct tool associations are emitted incrementally for DB persistence and replay.
+- Remote helper/global rows are structural sync data only and are never treated as remote executable responders or listeners.
 
 ## Configuration Surface
 

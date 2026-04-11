@@ -2311,13 +2311,16 @@ describe("service registry runtime status fallback", () => {
     );
 
     expect(persisted).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
 
     const firstRequestBody = JSON.parse(
       String(fetchMock.mock.calls[0]?.[1]?.body ?? "{}"),
     );
     const secondRequestBody = JSON.parse(
       String(fetchMock.mock.calls[1]?.[1]?.body ?? "{}"),
+    );
+    const thirdRequestBody = JSON.parse(
+      String(fetchMock.mock.calls[2]?.[1]?.body ?? "{}"),
     );
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
@@ -2338,6 +2341,20 @@ describe("service registry runtime status fallback", () => {
       },
     });
     expect(secondRequestBody).toMatchObject({
+      __remoteRoutineName: "Update service_instance_lease",
+      __serviceName: "CadenzaDB",
+      queryData: {
+        filter: {
+          service_instance_id: "99999999-9999-4999-8999-999999999999",
+        },
+      },
+      data: {
+        status: "inactive",
+        is_ready: false,
+        readiness_reason: "graceful_shutdown",
+      },
+    });
+    expect(thirdRequestBody).toMatchObject({
       __remoteRoutineName: "Update service_instance_transport",
       __serviceName: "CadenzaDB",
       queryData: {

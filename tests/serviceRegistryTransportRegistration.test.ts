@@ -1681,6 +1681,18 @@ describe("service registry transport registration", () => {
                 ],
               },
             ];
+          case "service_instance_lease":
+            return [
+              {
+                service_instance_id: "orders-1",
+                status: "active",
+                is_ready: true,
+                readiness_reason: "accepting_work",
+                lease_expires_at: "2026-03-29T18:00:45.000Z",
+                last_lease_renewed_at: "2026-03-29T18:00:00.000Z",
+                last_ready_at: "2026-03-29T18:00:00.000Z",
+              },
+            ];
           default:
             return [];
         }
@@ -1691,12 +1703,14 @@ describe("service registry transport registration", () => {
       __syncing: true,
     });
 
-    expect(queryAuthorityTableRowsSpy).toHaveBeenCalledTimes(5);
+    expect(queryAuthorityTableRowsSpy).toHaveBeenCalledTimes(6);
     expect(result).toMatchObject({
       serviceInstances: [
         expect.objectContaining({
           uuid: "orders-1",
           service_name: "OrdersService",
+          lease_status: "active",
+          is_ready: true,
         }),
       ],
       serviceInstanceTransports: [
@@ -5703,6 +5717,18 @@ describe("service registry transport registration", () => {
                 health: {},
               },
             ];
+          case "service_instance_lease":
+            return [
+              {
+                service_instance_id: "runner-1",
+                status: "active",
+                is_ready: true,
+                readiness_reason: "accepting_work",
+                lease_expires_at: "2026-03-30T12:00:45.000Z",
+                last_lease_renewed_at: "2026-03-30T12:00:00.000Z",
+                last_ready_at: "2026-03-30T12:00:00.000Z",
+              },
+            ];
           case "service_instance_transport":
             return [
               {
@@ -5772,12 +5798,14 @@ describe("service registry transport registration", () => {
       requireComplete: true,
     });
 
-    expect(authorityQuerySpy).toHaveBeenCalledTimes(5);
+    expect(authorityQuerySpy).toHaveBeenCalledTimes(6);
     expect(result).toMatchObject({
       serviceInstances: [
         expect.objectContaining({
           uuid: "runner-1",
           service_name: "ScheduledRunnerService",
+          lease_status: "active",
+          is_ready: true,
         }),
       ],
       serviceInstanceTransports: [

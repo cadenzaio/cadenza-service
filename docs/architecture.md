@@ -10,6 +10,7 @@ It adds:
 - REST/socket transport
 - remote task delegation (`DeputyTask`)
 - graph metadata fan-out for persistence/observability
+- structural manifest publication for helpers/globals and tool dependency edges
 - database task abstractions, schema-driven Postgres actors, and database-service wrappers
 
 ## Layered Architecture
@@ -84,11 +85,21 @@ Two complementary mechanisms are active:
 
 The combined model supports eventual consistency after restart and near-real-time updates during runtime.
 
+## Layer-Scoped Tools Distribution Contract
+
+Service owns the distributed contract for helper/global structure, but not the local runtime execution semantics.
+
+- `service_manifest` publishes helper/global definitions and direct alias bindings.
+- These rows are structural only and belong to the same catalog layer as tasks, routines, actors, and intent/signal maps.
+- `GraphMetadataController` emits direct helper/global creation and association signals so authority can persist incremental changes without waiting for a full manifest replay.
+- `ServiceRegistry` includes helper/global rows in bootstrap full-sync normalization and authority replay.
+- Remote helper/global rows do not become locally executable `tools` entries. Local execution authority remains in `@cadenza.io/core`.
+
 ## Manifest Catalog vs Dynamic Routing Registry
 
 - `service_manifest` is the structural catalog:
   - inspectable service snapshot
-  - graph/task/signal/intent/actor/routine structure
+  - graph/task/signal/intent/actor/routine/helper/global structure
   - suitable for rebuilds, observability, and structural sync
 - runtime routing membership is authority-owned dynamic state:
   - `service_instance`

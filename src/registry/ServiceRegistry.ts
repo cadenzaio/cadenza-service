@@ -163,6 +163,124 @@ function shouldTraceServiceRegistry(serviceName: string | null | undefined): boo
   );
 }
 
+function normalizeLeaseStatus(
+  value: unknown,
+): "active" | "non_responsive" | "inactive" | "deleted" | null {
+  const status = String(value ?? "").trim();
+  if (
+    status === "active" ||
+    status === "non_responsive" ||
+    status === "inactive" ||
+    status === "deleted"
+  ) {
+    return status;
+  }
+
+  return null;
+}
+
+function overlayServiceInstancesWithLeases(
+  serviceInstances: Array<Record<string, unknown>>,
+  serviceInstanceLeases: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  if (serviceInstanceLeases.length === 0) {
+    return serviceInstances;
+  }
+
+  const leasesByInstanceId = new Map<string, Record<string, unknown>>();
+  for (const row of serviceInstanceLeases) {
+    const serviceInstanceId = String(
+      row.service_instance_id ?? row.serviceInstanceId ?? "",
+    ).trim();
+    if (!serviceInstanceId) {
+      continue;
+    }
+
+    leasesByInstanceId.set(serviceInstanceId, row);
+  }
+
+  return serviceInstances.map((row) => {
+    const serviceInstanceId = String(row.uuid ?? "").trim();
+    const lease = serviceInstanceId
+      ? leasesByInstanceId.get(serviceInstanceId)
+      : undefined;
+    if (!lease) {
+      return row;
+    }
+
+    const leaseStatus = normalizeLeaseStatus(
+      lease.status ?? lease.lease_status ?? lease.leaseStatus,
+    );
+
+    return {
+      ...row,
+      lease_status: leaseStatus ?? undefined,
+      is_ready:
+        typeof lease.is_ready === "boolean"
+          ? lease.is_ready
+          : typeof lease.isReady === "boolean"
+            ? lease.isReady
+            : undefined,
+      readiness_reason:
+        typeof lease.readiness_reason === "string"
+          ? lease.readiness_reason
+          : typeof lease.readinessReason === "string"
+            ? lease.readinessReason
+            : null,
+      lease_expires_at:
+        typeof lease.lease_expires_at === "string"
+          ? lease.lease_expires_at
+          : typeof lease.leaseExpiresAt === "string"
+            ? lease.leaseExpiresAt
+            : null,
+      last_lease_renewed_at:
+        typeof lease.last_lease_renewed_at === "string"
+          ? lease.last_lease_renewed_at
+          : typeof lease.lastLeaseRenewedAt === "string"
+            ? lease.lastLeaseRenewedAt
+            : null,
+      last_ready_at:
+        typeof lease.last_ready_at === "string"
+          ? lease.last_ready_at
+          : typeof lease.lastReadyAt === "string"
+            ? lease.lastReadyAt
+            : null,
+      last_observed_transport_at:
+        typeof lease.last_observed_transport_at === "string"
+          ? lease.last_observed_transport_at
+          : typeof lease.lastObservedTransportAt === "string"
+            ? lease.lastObservedTransportAt
+            : null,
+      shutdown_requested_at:
+        typeof lease.shutdown_requested_at === "string"
+          ? lease.shutdown_requested_at
+          : typeof lease.shutdownRequestedAt === "string"
+            ? lease.shutdownRequestedAt
+            : null,
+      is_active:
+        leaseStatus === "active"
+          ? true
+          : leaseStatus === "non_responsive" ||
+              leaseStatus === "inactive" ||
+              leaseStatus === "deleted"
+            ? false
+            : row.is_active,
+      is_non_responsive:
+        leaseStatus === "non_responsive"
+          ? true
+          : leaseStatus === "active" ||
+              leaseStatus === "inactive" ||
+              leaseStatus === "deleted"
+            ? false
+            : row.is_non_responsive,
+      deleted:
+        leaseStatus === "deleted"
+          ? true
+          : Boolean(row.deleted ?? false),
+    };
+  });
+}
+
 function buildServiceRegistryInsertQueryData(
   tableName: string,
   ctx: AnyObject,
@@ -1662,9 +1780,12 @@ export default class ServiceRegistry {
     ctx: AnyObject,
   ): {
     serviceInstances: Array<Record<string, unknown>>;
+    serviceInstanceLeases: Array<Record<string, unknown>>;
     serviceInstanceTransports: Array<Record<string, unknown>>;
     serviceManifests: Array<Record<string, unknown>>;
     tasks: Array<Record<string, unknown>>;
+    helpers: Array<Record<string, unknown>>;
+    globals: Array<Record<string, unknown>>;
     signals: Array<Record<string, unknown>>;
     intents: Array<Record<string, unknown>>;
     actors: Array<Record<string, unknown>>;
@@ -1672,15 +1793,22 @@ export default class ServiceRegistry {
     directionalTaskMaps: Array<Record<string, unknown>>;
     actorTaskMaps: Array<Record<string, unknown>>;
     taskToRoutineMaps: Array<Record<string, unknown>>;
+    taskToHelperMaps: Array<Record<string, unknown>>;
+    helperToHelperMaps: Array<Record<string, unknown>>;
+    taskToGlobalMaps: Array<Record<string, unknown>>;
+    helperToGlobalMaps: Array<Record<string, unknown>>;
     signalToTaskMaps: Array<Record<string, unknown>>;
     intentToTaskMaps: Array<Record<string, unknown>>;
   } {
     const serviceInstances: Array<Record<string, unknown>> = [];
+    const serviceInstanceLeases: Array<Record<string, unknown>> = [];
     const serviceInstanceTransports: Array<Record<string, unknown>> = [];
     const manifestSnapshots: ServiceManifestSnapshot[] = [];
     const signalToTaskMaps: Array<Record<string, unknown>> = [];
     const intentToTaskMaps: Array<Record<string, unknown>> = [];
     const tasks: Array<Record<string, unknown>> = [];
+    const helpers: Array<Record<string, unknown>> = [];
+    const globals: Array<Record<string, unknown>> = [];
     const signals: Array<Record<string, unknown>> = [];
     const intents: Array<Record<string, unknown>> = [];
     const actors: Array<Record<string, unknown>> = [];
@@ -1688,11 +1816,18 @@ export default class ServiceRegistry {
     const directionalTaskMaps: Array<Record<string, unknown>> = [];
     const actorTaskMaps: Array<Record<string, unknown>> = [];
     const taskToRoutineMaps: Array<Record<string, unknown>> = [];
+    const taskToHelperMaps: Array<Record<string, unknown>> = [];
+    const helperToHelperMaps: Array<Record<string, unknown>> = [];
+    const taskToGlobalMaps: Array<Record<string, unknown>> = [];
+    const helperToGlobalMaps: Array<Record<string, unknown>> = [];
     const seenServiceInstances = new Set<string>();
+    const seenServiceInstanceLeases = new Set<string>();
     const seenServiceInstanceTransports = new Set<string>();
     const seenSignalMaps = new Set<string>();
     const seenIntentMaps = new Set<string>();
     const seenTasks = new Set<string>();
+    const seenHelpers = new Set<string>();
+    const seenGlobals = new Set<string>();
     const seenSignals = new Set<string>();
     const seenIntents = new Set<string>();
     const seenActors = new Set<string>();
@@ -1700,6 +1835,10 @@ export default class ServiceRegistry {
     const seenDirectionalTaskMaps = new Set<string>();
     const seenActorTaskMaps = new Set<string>();
     const seenTaskToRoutineMaps = new Set<string>();
+    const seenTaskToHelperMaps = new Set<string>();
+    const seenHelperToHelperMaps = new Set<string>();
+    const seenTaskToGlobalMaps = new Set<string>();
+    const seenHelperToGlobalMaps = new Set<string>();
     const contexts = Array.isArray(ctx.joinedContexts)
       ? [ctx, ...ctx.joinedContexts]
       : [ctx];
@@ -1749,6 +1888,12 @@ export default class ServiceRegistry {
           "serviceInstance",
           "service_instance",
         ]);
+      const serviceInstanceLeaseRows = readDirectArrayPayload(candidate, [
+        "serviceInstanceLeases",
+        "service_instance_leases",
+        "serviceInstanceLease",
+        "service_instance_lease",
+      ]);
       const serviceInstanceTransportRows = readDirectArrayPayload(candidate, [
           "serviceInstanceTransports",
           "service_instance_transports",
@@ -1779,6 +1924,13 @@ export default class ServiceRegistry {
         serviceInstances,
         seenServiceInstances,
         (row) => String(row.uuid ?? "").trim(),
+      );
+      pushUnique(
+        serviceInstanceLeaseRows,
+        serviceInstanceLeases,
+        seenServiceInstanceLeases,
+        (row) =>
+          String(row.service_instance_id ?? row.serviceInstanceId ?? "").trim(),
       );
       pushUnique(
         serviceInstanceTransportRows,
@@ -1850,6 +2002,23 @@ export default class ServiceRegistry {
         }
 
         if (
+          row.status !== undefined &&
+          (row.service_instance_id !== undefined ||
+            row.serviceInstanceId !== undefined)
+        ) {
+          pushUnique(
+            [row],
+            serviceInstanceLeases,
+            seenServiceInstanceLeases,
+            (entry) =>
+              String(
+                entry.service_instance_id ?? entry.serviceInstanceId ?? "",
+              ).trim(),
+          );
+          continue;
+        }
+
+        if (
           row.service_instance_id !== undefined ||
           row.serviceInstanceId !== undefined
         ) {
@@ -1891,18 +2060,22 @@ export default class ServiceRegistry {
       }
     }
 
+    const mergedServiceInstances = overlayServiceInstancesWithLeases(
+      serviceInstances,
+      serviceInstanceLeases,
+    );
     const activeServiceInstanceIds = new Set(
-      serviceInstances
+      mergedServiceInstances
         .filter((row) => row.is_active === true || row.isActive === true)
         .map((row) => String(row.uuid ?? "").trim())
         .filter((uuid) => uuid.length > 0),
     );
     const filteredServiceInstances =
       activeServiceInstanceIds.size > 0
-        ? serviceInstances.filter((row) =>
+        ? mergedServiceInstances.filter((row) =>
             activeServiceInstanceIds.has(String(row.uuid ?? "").trim()),
           )
-        : serviceInstances;
+        : mergedServiceInstances;
     const filteredServiceInstanceTransports =
       activeServiceInstanceIds.size > 0
         ? serviceInstanceTransports.filter((row) =>
@@ -1958,6 +2131,24 @@ export default class ServiceRegistry {
       explodedManifest.tasks as Array<Record<string, unknown>>,
       tasks,
       seenTasks,
+      (row) =>
+        `${String(row.service_name ?? "").trim()}|${String(row.name ?? "").trim()}|${String(
+          row.version ?? 1,
+        ).trim()}`,
+    );
+    pushUnique(
+      explodedManifest.helpers as Array<Record<string, unknown>>,
+      helpers,
+      seenHelpers,
+      (row) =>
+        `${String(row.service_name ?? "").trim()}|${String(row.name ?? "").trim()}|${String(
+          row.version ?? 1,
+        ).trim()}`,
+    );
+    pushUnique(
+      explodedManifest.globals as Array<Record<string, unknown>>,
+      globals,
+      seenGlobals,
       (row) =>
         `${String(row.service_name ?? "").trim()}|${String(row.name ?? "").trim()}|${String(
           row.version ?? 1,
@@ -2028,6 +2219,54 @@ export default class ServiceRegistry {
           row.task_version ?? 1,
         ).trim()}`,
     );
+    pushUnique(
+      explodedManifest.taskToHelperMaps as Array<Record<string, unknown>>,
+      taskToHelperMaps,
+      seenTaskToHelperMaps,
+      (row) =>
+        `${String(row.service_name ?? "").trim()}|${String(row.task_name ?? "").trim()}|${String(
+          row.task_version ?? 1,
+        ).trim()}|${String(row.alias ?? "").trim()}|${String(
+          row.helper_name ?? "",
+        ).trim()}|${String(row.helper_version ?? 1).trim()}`,
+    );
+    pushUnique(
+      explodedManifest.helperToHelperMaps as Array<Record<string, unknown>>,
+      helperToHelperMaps,
+      seenHelperToHelperMaps,
+      (row) =>
+        `${String(row.service_name ?? "").trim()}|${String(
+          row.helper_name ?? "",
+        ).trim()}|${String(row.helper_version ?? 1).trim()}|${String(
+          row.alias ?? "",
+        ).trim()}|${String(row.dependency_helper_name ?? "").trim()}|${String(
+          row.dependency_helper_version ?? 1,
+        ).trim()}`,
+    );
+    pushUnique(
+      explodedManifest.taskToGlobalMaps as Array<Record<string, unknown>>,
+      taskToGlobalMaps,
+      seenTaskToGlobalMaps,
+      (row) =>
+        `${String(row.service_name ?? "").trim()}|${String(row.task_name ?? "").trim()}|${String(
+          row.task_version ?? 1,
+        ).trim()}|${String(row.alias ?? "").trim()}|${String(
+          row.global_name ?? "",
+        ).trim()}|${String(row.global_version ?? 1).trim()}`,
+    );
+    pushUnique(
+      explodedManifest.helperToGlobalMaps as Array<Record<string, unknown>>,
+      helperToGlobalMaps,
+      seenHelperToGlobalMaps,
+      (row) =>
+        `${String(row.service_name ?? "").trim()}|${String(
+          row.helper_name ?? "",
+        ).trim()}|${String(row.helper_version ?? 1).trim()}|${String(
+          row.alias ?? "",
+        ).trim()}|${String(row.global_name ?? "").trim()}|${String(
+          row.global_version ?? 1,
+        ).trim()}`,
+    );
     if (!hasExplicitSignalRoutingRows) {
       pushUnique(
         explodedManifest.signalToTaskMaps as Array<Record<string, unknown>>,
@@ -2057,9 +2296,12 @@ export default class ServiceRegistry {
 
     return {
       serviceInstances: filteredServiceInstances,
+      serviceInstanceLeases,
       serviceInstanceTransports: filteredServiceInstanceTransports,
       serviceManifests,
       tasks,
+      helpers,
+      globals,
       signals,
       intents,
       actors,
@@ -2067,6 +2309,10 @@ export default class ServiceRegistry {
       directionalTaskMaps,
       actorTaskMaps,
       taskToRoutineMaps,
+      taskToHelperMaps,
+      helperToHelperMaps,
+      taskToGlobalMaps,
+      helperToGlobalMaps,
       signalToTaskMaps: filteredSignalToTaskMaps,
       intentToTaskMaps: filteredIntentToTaskMaps,
     };
@@ -2908,7 +3154,10 @@ export default class ServiceRegistry {
       BOOTSTRAP_FULL_SYNC_RESPONDER_TASK_NAME,
       async (ctx) => {
         const queryOptionalAuthorityRoutingRows = async (
-          tableName: "signal_to_task_map" | "intent_to_task_map",
+          tableName:
+            | "signal_to_task_map"
+            | "intent_to_task_map"
+            | "service_instance_lease",
         ) => {
           try {
             return await DatabaseController.instance.queryAuthorityTableRows(
@@ -2931,12 +3180,14 @@ export default class ServiceRegistry {
 
         const [
           serviceInstances,
+          serviceInstanceLeases,
           serviceInstanceTransports,
           serviceManifests,
           signalToTaskMaps,
           intentToTaskMaps,
         ] = await Promise.all([
           DatabaseController.instance.queryAuthorityTableRows("service_instance"),
+          queryOptionalAuthorityRoutingRows("service_instance_lease"),
           DatabaseController.instance.queryAuthorityTableRows(
             "service_instance_transport",
           ),
@@ -2950,6 +3201,7 @@ export default class ServiceRegistry {
           __syncing: true,
           ...this.collectBootstrapFullSyncPayload({
             serviceInstances,
+            serviceInstanceLeases,
             serviceInstanceTransports,
             serviceManifests,
             signalToTaskMaps,
@@ -7003,6 +7255,33 @@ export default class ServiceRegistry {
       return false;
     }
 
+    await this.delegateAuthorityLifecycleUpdate(
+      "Update service_instance_lease",
+      {
+        reason,
+        graceful: true,
+        data: {
+          status: "inactive",
+          is_ready: false,
+          readiness_reason: "graceful_shutdown",
+          lease_expires_at: reportedAt,
+          last_lease_renewed_at: reportedAt,
+          last_ready_at: null,
+          last_observed_transport_at: reportedAt,
+          shutdown_requested_at: reportedAt,
+          deleted: false,
+          modified: reportedAt,
+        },
+        queryData: {
+          filter: {
+            service_instance_id: localInstance.uuid,
+          },
+        },
+        __serviceInstanceId: localInstance.uuid,
+      },
+      Math.max(1_000, timeoutMs),
+    );
+
     for (const transport of localInstance.transports) {
       if (!isPersistedUuid(transport.uuid)) {
         continue;
@@ -8406,6 +8685,12 @@ export default class ServiceRegistry {
         const tasks = this.readArrayPayload(inquiryResult as AnyObject, [
           "tasks",
         ]);
+        const helpers = this.readArrayPayload(inquiryResult as AnyObject, [
+          "helpers",
+        ]);
+        const globals = this.readArrayPayload(inquiryResult as AnyObject, [
+          "globals",
+        ]);
         const signals = this.readArrayPayload(inquiryResult as AnyObject, [
           "signals",
         ]);
@@ -8429,6 +8714,22 @@ export default class ServiceRegistry {
         const taskToRoutineMaps = this.readArrayPayload(
           inquiryResult as AnyObject,
           ["taskToRoutineMaps", "task_to_routine_maps"],
+        );
+        const taskToHelperMaps = this.readArrayPayload(
+          inquiryResult as AnyObject,
+          ["taskToHelperMaps", "task_to_helper_maps"],
+        );
+        const helperToHelperMaps = this.readArrayPayload(
+          inquiryResult as AnyObject,
+          ["helperToHelperMaps", "helper_to_helper_maps"],
+        );
+        const taskToGlobalMaps = this.readArrayPayload(
+          inquiryResult as AnyObject,
+          ["taskToGlobalMaps", "task_to_global_maps"],
+        );
+        const helperToGlobalMaps = this.readArrayPayload(
+          inquiryResult as AnyObject,
+          ["helperToGlobalMaps", "helper_to_global_maps"],
         );
 
         const serviceInstances = this.normalizeServiceInstancesFromSync(
@@ -8465,6 +8766,8 @@ export default class ServiceRegistry {
             serviceInstanceTransports: serviceInstanceTransports.length,
             serviceManifests: serviceManifests.length,
             tasks: tasks.length,
+            helpers: helpers.length,
+            globals: globals.length,
             signals: signals.length,
             intents: intents.length,
             actors: actors.length,
@@ -8494,6 +8797,8 @@ export default class ServiceRegistry {
           serviceInstanceTransports,
           serviceManifests,
           tasks,
+          helpers,
+          globals,
           signals,
           intents,
           actors,
@@ -8501,6 +8806,10 @@ export default class ServiceRegistry {
           directionalTaskMaps,
           actorTaskMaps,
           taskToRoutineMaps,
+          taskToHelperMaps,
+          helperToHelperMaps,
+          taskToGlobalMaps,
+          helperToGlobalMaps,
           __inquiryMeta: inquiryResult.__inquiryMeta,
         };
       },
