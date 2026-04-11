@@ -735,9 +735,9 @@ describe("RestController delegation resolution", () => {
     expect(String(failedCtx?.__error ?? "")).toContain("ECONNREFUSED");
   });
 
-  it("re-schedules a handshake when a same-route fetch client already exists", () => {
-    const scheduleSpy = vi
-      .spyOn(Cadenza, "schedule")
+  it("does not re-schedule a handshake when a same-route fetch client is already healthy", () => {
+    const debounceSpy = vi
+      .spyOn(Cadenza, "debounce")
       .mockImplementation(() => true as any);
 
     const setupFetchClientTask = Cadenza.get("Setup fetch client") as any;
@@ -760,12 +760,58 @@ describe("RestController delegation resolution", () => {
     };
 
     setupFetchClientTask.taskFunction(ctx);
-    scheduleSpy.mockClear();
+    const diagnostics = (RestController.instance as any).fetchClientDiagnostics.get(
+      ctx.fetchId,
+    );
+    diagnostics.connected = true;
+    diagnostics.destroyed = false;
+    diagnostics.lastHandshakeError = null;
+    debounceSpy.mockClear();
 
     const result = setupFetchClientTask.taskFunction(ctx);
 
     expect(result).toBe(true);
-    expect(scheduleSpy).toHaveBeenCalledWith(
+    expect(debounceSpy).not.toHaveBeenCalled();
+  });
+
+  it("re-schedules a handshake when a same-route fetch client already exists but is unhealthy", () => {
+    const debounceSpy = vi
+      .spyOn(Cadenza, "debounce")
+      .mockImplementation(() => true as any);
+
+    const setupFetchClientTask = Cadenza.get("Setup fetch client") as any;
+    expect(setupFetchClientTask).toBeDefined();
+
+    const ctx = {
+      serviceName: "PredictorService",
+      serviceOrigin: "http://predictor-b:3005",
+      serviceTransportId: "predictor-b-transport-1",
+      routeKey: "PredictorService|internal|http://predictor-b:3005",
+      fetchId: buildHandleKey(
+        "PredictorService|internal|http://predictor-b:3005",
+        "rest",
+      ),
+      communicationTypes: ["intent"],
+      handshakeData: {
+        instanceId: "telemetry-1",
+        serviceName: "TelemetryCollectorService",
+      },
+    };
+
+    setupFetchClientTask.taskFunction(ctx);
+    const diagnostics = (RestController.instance as any).fetchClientDiagnostics.get(
+      ctx.fetchId,
+    );
+    diagnostics.connected = false;
+    diagnostics.handshakeInFlight = false;
+    diagnostics.destroyed = false;
+    diagnostics.lastHandshakeError = "ECONNRESET";
+    debounceSpy.mockClear();
+
+    const result = setupFetchClientTask.taskFunction(ctx);
+
+    expect(result).toBe(true);
+    expect(debounceSpy).toHaveBeenCalledWith(
       `meta.fetch.handshake_requested:${ctx.fetchId}`,
       expect.objectContaining({
         serviceName: "PredictorService",
@@ -774,7 +820,47 @@ describe("RestController delegation resolution", () => {
         routeKey: ctx.routeKey,
         transportProtocol: "rest",
       }),
-      0,
+      50,
     );
+  });
+
+  it("does not queue another handshake when one is already in flight for the same route", () => {
+    const debounceSpy = vi
+      .spyOn(Cadenza, "debounce")
+      .mockImplementation(() => true as any);
+
+    const setupFetchClientTask = Cadenza.get("Setup fetch client") as any;
+    expect(setupFetchClientTask).toBeDefined();
+
+    const ctx = {
+      serviceName: "PredictorService",
+      serviceOrigin: "http://predictor-b:3005",
+      serviceTransportId: "predictor-b-transport-1",
+      routeKey: "PredictorService|internal|http://predictor-b:3005",
+      fetchId: buildHandleKey(
+        "PredictorService|internal|http://predictor-b:3005",
+        "rest",
+      ),
+      communicationTypes: ["intent"],
+      handshakeData: {
+        instanceId: "telemetry-1",
+        serviceName: "TelemetryCollectorService",
+      },
+    };
+
+    setupFetchClientTask.taskFunction(ctx);
+    const diagnostics = (RestController.instance as any).fetchClientDiagnostics.get(
+      ctx.fetchId,
+    );
+    diagnostics.connected = false;
+    diagnostics.handshakeInFlight = true;
+    diagnostics.destroyed = false;
+    diagnostics.lastHandshakeError = "ECONNRESET";
+    debounceSpy.mockClear();
+
+    const result = setupFetchClientTask.taskFunction(ctx);
+
+    expect(result).toBe(true);
+    expect(debounceSpy).not.toHaveBeenCalled();
   });
 });

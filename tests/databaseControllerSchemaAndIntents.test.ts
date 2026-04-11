@@ -7,6 +7,7 @@ import {
   getQueryFilterSchemaFromTable,
   isTransientDatabaseError,
   mergeTriggerQueryData,
+  recoverActorSessionInsertPayload,
   resolveExecutionObservabilitySafetyPolicyForTable,
   resolveGeneratedInsertTaskConcurrency,
   resolveGeneratedInsertTaskTag,
@@ -209,6 +210,95 @@ describe("DatabaseController schema and intent helpers", () => {
     expect(Array.isArray(fieldSchema)).toBe(false);
     expect(fieldSchema.value?.type).toBe("string");
     expect(fieldSchema.in?.type).toBe("array");
+  });
+
+  it("serializes Date values to ISO strings in camel-cased query rows", () => {
+    const timestamp = new Date("2026-04-10T17:16:58.974Z");
+    const predictedEta = new Date("2026-04-20T12:10:07.035Z");
+
+    const [row] = DatabaseController.instance.toCamelCase([
+      {
+        device_id: "device-44",
+        timestamp,
+        nested_payload: {
+          predicted_eta: predictedEta,
+        },
+      },
+    ]);
+
+    expect(row).toEqual({
+      deviceId: "device-44",
+      timestamp: "2026-04-10T17:16:58.974Z",
+      nestedPayload: {
+        predicted_eta: "2026-04-20T12:10:07.035Z",
+      },
+    });
+  });
+
+  it("recovers actor_session_state insert payloads from the saved delegation snapshot", () => {
+    const row = {
+      actor_name: "TelemetrySessionActor",
+      actor_version: 1,
+      actor_key: "device-8",
+      service_name: "TelemetryCollectorService",
+      durable_state: { count: 3 },
+      durable_version: 4,
+    };
+
+    expect(
+      recoverActorSessionInsertPayload(
+        {
+          __delegationRequestContext: {
+            data: row,
+            queryData: {
+              data: row,
+              onConflict: {
+                target: [
+                  "actor_name",
+                  "actor_version",
+                  "actor_key",
+                  "service_name",
+                ],
+              },
+            },
+          },
+          queryData: {},
+        } as AnyObject,
+        { data: {} },
+      ),
+    ).toMatchObject({
+      data: row,
+      onConflict: {
+        target: [
+          "actor_name",
+          "actor_version",
+          "actor_key",
+          "service_name",
+        ],
+      },
+    });
+  });
+
+  it("keeps existing actor_session_state insert payloads when data is already present", () => {
+    const payload = {
+      data: {
+        actor_name: "TelemetrySessionActor",
+        actor_key: "device-8",
+      },
+    };
+
+    expect(
+      recoverActorSessionInsertPayload(
+        {
+          __delegationRequestContext: {
+            data: {
+              actor_name: "OtherActor",
+            },
+          },
+        } as AnyObject,
+        payload,
+      ),
+    ).toEqual(payload);
   });
 
   it("keeps explicit SQL jsonb literals unquoted in initial data", () => {
@@ -441,6 +531,41 @@ describe("DatabaseController schema and intent helpers", () => {
         "update",
       ),
     ).toBe("trace-non-observability");
+
+    expect(
+      resolveGeneratedTaskTag(
+        "service_instance",
+        "cadenza-db",
+        {
+          __metadata: {
+            __deputyExecId: "deputy-query-1",
+          },
+          queryData: {
+            filter: {
+              service_name: "TelemetryCollectorService",
+            },
+          },
+        } as AnyObject,
+        "query",
+      ),
+    ).toBe("deputy-query-1");
+
+    expect(
+      resolveGeneratedTaskTag(
+        "service_instance_transport",
+        "cadenza-db",
+        {
+          queryData: {
+            filter: {
+              deleted: false,
+            },
+          },
+        } as AnyObject,
+        "query",
+      ),
+    ).toBe(
+      'read:cadenza-db:service_instance_transport:{"aggregates":undefined,"fields":undefined,"filter":undefined,"groupBy":undefined,"joins":undefined,"limit":undefined,"offset":undefined,"queryData":{"filter":{"deleted":false}},"queryMode":undefined,"sort":undefined}',
+    );
   });
 
   it("merges trigger queryData without dropping the existing operation payload", () => {

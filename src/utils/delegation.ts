@@ -11,16 +11,60 @@ const ROOT_METADATA_PASSTHROUGH_KEYS = [
   "__inquirySourceRoutineExecutionId",
 ] as const;
 const DELEGATION_REQUEST_SNAPSHOT_KEY = "__delegationRequestContext";
+const DELEGATION_FAILURE_CONTEXT_KEYS = [
+  "__remoteRoutineName",
+  "__serviceName",
+  "__timeout",
+  "__localTaskName",
+  "__localTaskVersion",
+  "__localServiceName",
+  "__localRoutineExecId",
+  "__previousTaskExecutionId",
+  "__fetchId",
+  "fetchId",
+  "__routeKey",
+  "routeKey",
+  "__instance",
+  "__transportId",
+  "__transportOrigin",
+  "__transportProtocols",
+  "__transportProtocol",
+  "__retries",
+  "__triedInstances",
+  "__delegationRequestContext",
+  "__metadata",
+  "serviceName",
+  "serviceInstanceId",
+  "serviceTransportId",
+  "serviceOrigin",
+  "transportProtocols",
+  "transportProtocol",
+] as const;
 
-function cloneDelegationValue<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return value.map((item) =>
-      item && typeof item === "object" ? ({ ...(item as AnyObject) } as T) : item,
-    ) as T;
+function isPlainObject(value: unknown): value is AnyObject {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
   }
 
-  if (value && typeof value === "object") {
-    return { ...(value as AnyObject) } as T;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function cloneDelegationValue<T>(value: T): T {
+  if (value instanceof Date) {
+    return new Date(value.getTime()) as T;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneDelegationValue(item)) as T;
+  }
+
+  if (isPlainObject(value)) {
+    const clone: AnyObject = {};
+    for (const [key, nestedValue] of Object.entries(value)) {
+      clone[key] = cloneDelegationValue(nestedValue);
+    }
+    return clone as T;
   }
 
   return value;
@@ -92,7 +136,12 @@ export function restoreDelegationRequestSnapshot<T extends AnyObject>(
   const context =
     input && typeof input === "object" ? ({ ...input } as T) : ({} as T);
   const mutableContext = context as AnyObject;
-  const snapshotCandidate = mutableContext[DELEGATION_REQUEST_SNAPSHOT_KEY];
+  const snapshotCandidate =
+    mutableContext[DELEGATION_REQUEST_SNAPSHOT_KEY] ??
+    (mutableContext.__metadata &&
+    typeof mutableContext.__metadata === "object"
+      ? (mutableContext.__metadata as AnyObject)[DELEGATION_REQUEST_SNAPSHOT_KEY]
+      : undefined);
   const snapshot =
     snapshotCandidate && typeof snapshotCandidate === "object"
       ? (snapshotCandidate as AnyObject)
@@ -103,7 +152,13 @@ export function restoreDelegationRequestSnapshot<T extends AnyObject>(
     mutableContext.__success !== undefined ||
     mutableContext.rowCount !== undefined ||
     mutableContext.__nextNodes !== undefined ||
-    mutableContext.__isDeputy === true;
+    mutableContext.__isDeputy === true ||
+    mutableContext.errored === true ||
+    mutableContext.failed === true ||
+    mutableContext.timedOut === true ||
+    mutableContext.__error !== undefined ||
+    mutableContext.error !== undefined ||
+    mutableContext.__inquiryMeta !== undefined;
 
   if (!snapshot || !looksLikeDelegationResult) {
     return context;
@@ -134,6 +189,49 @@ export function stripDelegationRequestSnapshot<T extends AnyObject>(
     input && typeof input === "object" ? ({ ...input } as T) : ({} as T);
   delete (context as AnyObject)[DELEGATION_REQUEST_SNAPSHOT_KEY];
   return context;
+}
+
+export function buildDelegationFailureContext<T extends AnyObject>(
+  signalName: string,
+  input: T | undefined,
+  error: unknown,
+): T & {
+  __signalName: string;
+  __error: string;
+  errored: true;
+} {
+  const source =
+    input && typeof input === "object" ? ({ ...input } as AnyObject) : {};
+  const slimContext: AnyObject = {};
+
+  for (const key of DELEGATION_FAILURE_CONTEXT_KEYS) {
+    if (source[key] !== undefined) {
+      slimContext[key] = cloneDelegationValue(source[key]);
+    }
+  }
+
+  if (
+    slimContext[DELEGATION_REQUEST_SNAPSHOT_KEY] === undefined &&
+    source.__metadata &&
+    typeof source.__metadata === "object" &&
+    (source.__metadata as AnyObject)[DELEGATION_REQUEST_SNAPSHOT_KEY] !== undefined
+  ) {
+    slimContext[DELEGATION_REQUEST_SNAPSHOT_KEY] = cloneDelegationValue(
+      (source.__metadata as AnyObject)[DELEGATION_REQUEST_SNAPSHOT_KEY],
+    );
+  }
+
+  return {
+    __signalName: signalName,
+    __error:
+      error instanceof Error ? error.message : String(error ?? "Unknown error"),
+    errored: true,
+    ...slimContext,
+  } as T & {
+    __signalName: string;
+    __error: string;
+    errored: true;
+  };
 }
 
 export function stripTransportSelectionRoutingContext<T extends AnyObject>(

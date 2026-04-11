@@ -389,6 +389,218 @@ describe("Actor session state persistence responder", () => {
     expect(persistenceVersions).toEqual([5, 6]);
   });
 
+  it("hydrates persisted actor_session_state rows returned inside joined contexts", async () => {
+    let hydrationQueryCount = 0;
+    const persistenceVersions: number[] = [];
+
+    const queryStub = (ctx: any) => {
+      hydrationQueryCount += 1;
+      return {
+        ...ctx,
+        __success: true,
+        rowCount: 1,
+        joinedContexts: [
+          {
+            actorSessionState: {
+              actorName: "JoinedContextHydrationActor",
+              actorVersion: 1,
+              actorKey: "device-1",
+              serviceName: "ActorSessionPersistenceService",
+              durableState: { count: 7 },
+              durableVersion: 7,
+              expiresAt: null,
+            },
+          },
+        ],
+      };
+    };
+    const insertStub = (ctx: any) => {
+      persistenceVersions.push(Number(ctx.durable_version));
+      return {
+        ...ctx,
+        __success: true,
+        rowCount: 1,
+      };
+    };
+
+    Cadenza.createMetaTask("dbQueryActorSessionState", queryStub);
+    Cadenza.createMetaTask("Query actor_session_state in CadenzaDB", queryStub);
+    Cadenza.createMetaTask("dbInsertActorSessionState", insertStub);
+    Cadenza.createMetaTask("Insert actor_session_state in CadenzaDB", insertStub);
+
+    GraphMetadataController.instance;
+
+    const sessionActor = Cadenza.createActor<{ count: number }>({
+      name: "JoinedContextHydrationActor",
+      defaultKey: "device:unknown",
+      keyResolver: (input: any) =>
+        typeof input?.deviceId === "string" ? input.deviceId : undefined,
+      initState: {
+        count: 0,
+      },
+      session: {
+        persistDurableState: true,
+        persistenceTimeoutMs: 30_000,
+      },
+    });
+
+    const writeTask = sessionActor.task(
+      ({ state, setState }) => {
+        setState({
+          count: state.count + 1,
+        });
+      },
+      { mode: "write" },
+    );
+
+    await invokeActorTask(writeTask, { deviceId: "device-1" });
+
+    expect(hydrationQueryCount).toBe(1);
+    expect(sessionActor.getState("device-1")).toEqual({ count: 8 });
+    expect(sessionActor.getDurableVersion("device-1")).toBe(8);
+    expect(persistenceVersions).toEqual([8]);
+  });
+
+  it("hydrates persisted actor_session_state rows returned as plural arrays", async () => {
+    let hydrationQueryCount = 0;
+    const persistenceVersions: number[] = [];
+
+    const queryStub = (ctx: any) => {
+      hydrationQueryCount += 1;
+      return {
+        ...ctx,
+        __success: true,
+        rowCount: 1,
+        actorSessionStates: [
+          {
+            actorName: "PluralHydrationActor",
+            actorVersion: 1,
+            actorKey: "device-1",
+            serviceName: "ActorSessionPersistenceService",
+            durableState: { count: 9 },
+            durableVersion: 9,
+            expiresAt: null,
+          },
+        ],
+      };
+    };
+    const insertStub = (ctx: any) => {
+      persistenceVersions.push(Number(ctx.durable_version));
+      return {
+        ...ctx,
+        __success: true,
+        rowCount: 1,
+      };
+    };
+
+    Cadenza.createMetaTask("dbQueryActorSessionState", queryStub);
+    Cadenza.createMetaTask("Query actor_session_state in CadenzaDB", queryStub);
+    Cadenza.createMetaTask("dbInsertActorSessionState", insertStub);
+    Cadenza.createMetaTask("Insert actor_session_state in CadenzaDB", insertStub);
+
+    GraphMetadataController.instance;
+
+    const sessionActor = Cadenza.createActor<{ count: number }>({
+      name: "PluralHydrationActor",
+      defaultKey: "device:unknown",
+      keyResolver: (input: any) =>
+        typeof input?.deviceId === "string" ? input.deviceId : undefined,
+      initState: {
+        count: 0,
+      },
+      session: {
+        persistDurableState: true,
+        persistenceTimeoutMs: 30_000,
+      },
+    });
+
+    const writeTask = sessionActor.task(
+      ({ state, setState }) => {
+        setState({
+          count: state.count + 1,
+        });
+      },
+      { mode: "write" },
+    );
+
+    await invokeActorTask(writeTask, { deviceId: "device-1" });
+
+    expect(hydrationQueryCount).toBe(1);
+    expect(sessionActor.getState("device-1")).toEqual({ count: 10 });
+    expect(sessionActor.getDurableVersion("device-1")).toBe(10);
+    expect(persistenceVersions).toEqual([10]);
+  });
+
+  it("hydrates persisted actor_session_state rows returned as raw rows arrays", async () => {
+    let hydrationQueryCount = 0;
+    const persistenceVersions: number[] = [];
+
+    const queryStub = (ctx: any) => {
+      hydrationQueryCount += 1;
+      return {
+        ...ctx,
+        __success: true,
+        rowCount: 1,
+        rows: [
+          {
+            actorName: "RowsHydrationActor",
+            actorVersion: 1,
+            actorKey: "device-1",
+            serviceName: "ActorSessionPersistenceService",
+            durableState: { count: 11 },
+            durableVersion: 11,
+            expiresAt: null,
+          },
+        ],
+      };
+    };
+    const insertStub = (ctx: any) => {
+      persistenceVersions.push(Number(ctx.durable_version));
+      return {
+        ...ctx,
+        __success: true,
+        rowCount: 1,
+      };
+    };
+
+    Cadenza.createMetaTask("dbQueryActorSessionState", queryStub);
+    Cadenza.createMetaTask("Query actor_session_state in CadenzaDB", queryStub);
+    Cadenza.createMetaTask("dbInsertActorSessionState", insertStub);
+    Cadenza.createMetaTask("Insert actor_session_state in CadenzaDB", insertStub);
+
+    GraphMetadataController.instance;
+
+    const sessionActor = Cadenza.createActor<{ count: number }>({
+      name: "RowsHydrationActor",
+      defaultKey: "device:unknown",
+      keyResolver: (input: any) =>
+        typeof input?.deviceId === "string" ? input.deviceId : undefined,
+      initState: {
+        count: 0,
+      },
+      session: {
+        persistDurableState: true,
+        persistenceTimeoutMs: 30_000,
+      },
+    });
+
+    const writeTask = sessionActor.task(
+      ({ state, setState }) => {
+        setState({
+          count: state.count + 1,
+        });
+      },
+      { mode: "write" },
+    );
+
+    await invokeActorTask(writeTask, { deviceId: "device-1" });
+
+    expect(hydrationQueryCount).toBe(1);
+    expect(sessionActor.getState("device-1")).toEqual({ count: 12 });
+    expect(sessionActor.getDurableVersion("device-1")).toBe(12);
+    expect(persistenceVersions).toEqual([12]);
+  });
+
   it("ignores expired persisted actor_session_state rows during hydration", async () => {
     let hydrationQueryCount = 0;
     const persistenceVersions: number[] = [];

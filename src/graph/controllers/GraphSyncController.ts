@@ -457,25 +457,41 @@ function resolveSyncInsertTask(
         queryData,
       );
 
-      if (
-        (tableName === "signal_registry" ||
-          tableName === "directional_task_graph_map") &&
+      const hasEmptyObjectData =
         originalQueryData.data &&
         typeof originalQueryData.data === "object" &&
         !Array.isArray(originalQueryData.data) &&
-        Object.keys(originalQueryData.data as Record<string, unknown>).length === 0
+        Object.keys(originalQueryData.data as Record<string, unknown>).length === 0;
+      const hasMissingData = originalQueryData.data === undefined;
+
+      if (
+        (tableName === "task" ||
+          tableName === "signal_registry" ||
+          tableName === "directional_task_graph_map") &&
+        (hasEmptyObjectData || hasMissingData)
       ) {
-        console.warn(
-          "[CADENZA_SYNC_EMPTY_INSERT]",
-          {
-            tableName,
-            queryData: originalQueryData,
-            ctx,
-            joinedContexts: Array.isArray((ctx as Record<string, any>).joinedContexts)
-              ? (ctx as Record<string, any>).joinedContexts
-              : [],
-          },
-        );
+        console.warn("[CADENZA_SYNC_EMPTY_INSERT]", {
+          tableName,
+          hasMissingData,
+          hasEmptyObjectData,
+          taskName:
+            typeof (ctx as Record<string, any>).__taskName === "string"
+              ? (ctx as Record<string, any>).__taskName
+              : undefined,
+          reason:
+            typeof (ctx as Record<string, any>).__reason === "string"
+              ? (ctx as Record<string, any>).__reason
+              : undefined,
+          syncSourceServiceName:
+            typeof (ctx as Record<string, any>).__syncSourceServiceName === "string"
+              ? (ctx as Record<string, any>).__syncSourceServiceName
+              : undefined,
+          queryData: originalQueryData,
+          ctx,
+          joinedContexts: Array.isArray((ctx as Record<string, any>).joinedContexts)
+            ? (ctx as Record<string, any>).joinedContexts
+            : [],
+        });
       }
 
       return buildSyncExecutionEnvelope(
@@ -598,6 +614,7 @@ export function isBootstrapLocalOnlyActorName(actorName: string): boolean {
 function isBootstrapLocalOnlySignal(signalName: string): boolean {
   return (
     signalName.startsWith("meta.") ||
+    signalName.startsWith("global.meta.") ||
     signalName === "meta.service_registry.insert_execution_requested" ||
     signalName === "meta.service_registry.routeable_transport_missing" ||
     signalName === "meta.signal_broker.added" ||
@@ -983,6 +1000,22 @@ function resolveLocalRoutineFromSyncContext(
   );
 
   return routineName ? Cadenza.getRoutine(routineName) : undefined;
+}
+
+function shouldTrackDirectionalTaskMapForBootstrap(
+  predecessorTask: Task | undefined,
+  nextTask: Task | undefined,
+): boolean {
+  if (!predecessorTask || !nextTask) {
+    return false;
+  }
+
+  return (
+    predecessorTask.isMeta !== true &&
+    predecessorTask.isSubMeta !== true &&
+    nextTask.isMeta !== true &&
+    nextTask.isSubMeta !== true
+  );
 }
 
 function resolveSignalNameFromSyncContext(ctx: Record<string, any>): string | undefined {
@@ -2291,7 +2324,8 @@ export default class GraphSyncController {
             task.taskMapRegistration.has(t.name) ||
             t.hidden ||
             !t.register ||
-            !t.registered
+            !t.registered ||
+            !shouldTrackDirectionalTaskMapForBootstrap(task, t as Task)
           ) {
             continue;
           }
@@ -2372,7 +2406,8 @@ export default class GraphSyncController {
             task.taskMapRegistration.has(nextTask.name) ||
             nextTask.isHidden ||
             !nextTask.register ||
-            !nextTask.registered
+            !nextTask.registered ||
+            !shouldTrackDirectionalTaskMapForBootstrap(task, nextTask as Task)
           ) {
             continue;
           }

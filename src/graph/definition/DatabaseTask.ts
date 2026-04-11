@@ -18,6 +18,8 @@ import {
 const ACTOR_SESSION_TRACE_ENABLED =
   process.env.CADENZA_ACTOR_SESSION_TRACE === "1" ||
   process.env.CADENZA_ACTOR_SESSION_TRACE === "true";
+let actorSessionEmptyDelegationLogCount = 0;
+const ACTOR_SESSION_EMPTY_DELEGATION_LOG_LIMIT = 40;
 const INSTANCE_TRACE_ENABLED =
   process.env.CADENZA_INSTANCE_DEBUG === "1" ||
   process.env.CADENZA_INSTANCE_DEBUG === "true";
@@ -191,20 +193,29 @@ export default class DatabaseTask extends DeputyTask {
     const isResolverExecution =
       typeof ctx.__resolverRequestId === "string" &&
       ctx.__resolverRequestId.length > 0;
+    const resolverQueryData =
+      ctx.__resolverQueryData && typeof ctx.__resolverQueryData === "object"
+        ? (ctx.__resolverQueryData as DbOperationPayload)
+        : null;
     const dynamicQueryData =
-      isResolverExecution
-        ? {}
-        : ctx.__resolverQueryData && typeof ctx.__resolverQueryData === "object"
-        ? ctx.__resolverQueryData
-        : ctx.queryData ?? {};
+      resolverQueryData ??
+      (ctx.queryData && typeof ctx.queryData === "object"
+        ? (ctx.queryData as DbOperationPayload)
+        : {});
     delete ctx.queryData;
     const nextQueryData: DbOperationPayload = {
       ...this.queryData,
-      data: {
-        ...ctx.data,
-      },
       ...dynamicQueryData,
     };
+
+    if (dynamicQueryData.data === undefined && ctx.data !== undefined) {
+      nextQueryData.data =
+        ctx.data &&
+        typeof ctx.data === "object" &&
+        !Array.isArray(ctx.data)
+          ? { ...(ctx.data as AnyObject) }
+          : ctx.data;
+    }
 
     const deputyContext = attachDelegationRequestSnapshot(
       stripDelegationRequestSnapshot(
@@ -294,6 +305,39 @@ export default class DatabaseTask extends DeputyTask {
         outgoingHasData: deputyContext.data !== undefined,
         outgoingHasQueryData: deputyContext.queryData !== undefined,
         rootKeys: Object.keys(rawContext),
+      });
+    }
+
+    if (
+      this.remoteRoutineName === "Insert actor_session_state" &&
+      deputyContext.data === undefined &&
+      deputyContext.queryData === undefined &&
+      actorSessionEmptyDelegationLogCount < ACTOR_SESSION_EMPTY_DELEGATION_LOG_LIMIT
+    ) {
+      actorSessionEmptyDelegationLogCount += 1;
+      console.warn("[CADENZA_ACTOR_SESSION_EMPTY_DELEGATION]", {
+        localServiceName: Cadenza.serviceRegistry.serviceName,
+        localTaskName: this.name,
+        remoteRoutineName: this.remoteRoutineName,
+        hadSnapshotBeforeRestore:
+          initialFullContext.__delegationRequestContext !== undefined ||
+          initialFullContext.__metadata?.__delegationRequestContext !== undefined,
+        restoredRootKeys: Object.keys(rawContext),
+        deputyRootKeys: Object.keys(deputyContext),
+        signalName:
+          rawContext.__signalName ?? rawContext.__metadata?.__signalName ?? null,
+        inquiryName:
+          rawContext.__inquiryName ?? rawContext.__metadata?.__inquiryName ?? null,
+        sourceServiceName:
+          rawContext.__localServiceName ??
+          rawContext.__metadata?.__localServiceName ??
+          null,
+        sourceRoutineName:
+          rawContext.__routineName ?? rawContext.__metadata?.__routineName ?? null,
+        sourceTaskName:
+          rawContext.__localTaskName ??
+          rawContext.__metadata?.__localTaskName ??
+          null,
       });
     }
 

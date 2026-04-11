@@ -119,6 +119,30 @@ const AUTHORITY_SYNC_DEBUG_ROUTINE_NAMES = new Set<string>(["Sync services"]);
 const INTENT_MAP_DEBUG_ENABLED =
   process.env.CADENZA_INTENT_MAP_DEBUG === "1" ||
   process.env.CADENZA_INTENT_MAP_DEBUG === "true";
+
+function normalizeQueryResultValue(value: unknown): unknown {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeQueryResultValue(entry));
+  }
+
+  if (value && typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype === Object.prototype || prototype === null) {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, nestedValue]) => [
+          key,
+          normalizeQueryResultValue(nestedValue),
+        ]),
+      );
+    }
+  }
+
+  return value;
+}
 const POSTGRES_SETUP_DEBUG_ENABLED =
   process.env.CADENZA_POSTGRES_SETUP_DEBUG === "1" ||
   process.env.CADENZA_POSTGRES_SETUP_DEBUG === "true";
@@ -835,10 +859,37 @@ export function resolveGeneratedTaskTag(
     return `insert:${actorToken}:${tableName}`;
   }
 
-  return (
+  const traceScopedTag =
     context?.__metadata?.__executionTraceId ??
     context?.__executionTraceId ??
-    "default"
+    context?.__metadata?.__deputyExecId ??
+    context?.__deputyExecId ??
+    context?.__metadata?.__inquiryId ??
+    context?.__inquiryId ??
+    context?.__metadata?.__routineExecId ??
+    context?.__routineExecId ??
+    context?.__metadata?.__localRoutineExecId ??
+    context?.__localRoutineExecId;
+
+  if (typeof traceScopedTag === "string" && traceScopedTag.length > 0) {
+    return traceScopedTag;
+  }
+
+  const queryScope = {
+    queryData: context?.queryData,
+    filter: context?.filter,
+    fields: context?.fields,
+    joins: context?.joins,
+    sort: context?.sort,
+    limit: context?.limit,
+    offset: context?.offset,
+    queryMode: context?.queryMode,
+    aggregates: context?.aggregates,
+    groupBy: context?.groupBy,
+  };
+
+  return (
+    `read:${actorToken}:${tableName}:${stableStringify(queryScope)}`
   );
 }
 
@@ -946,6 +997,91 @@ export function mergeTriggerQueryData(
     ...existingQueryData,
     ...triggerQueryData,
   };
+}
+
+function isNonEmptyPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value as Record<string, unknown>).length > 0
+  );
+}
+
+function isMissingInsertData(data: unknown): boolean {
+  return (
+    !data ||
+    (Array.isArray(data) && data.length === 0) ||
+    (typeof data === "object" &&
+      !Array.isArray(data) &&
+      Object.keys(data as Record<string, unknown>).length === 0)
+  );
+}
+
+function resolveActorSessionDelegationSnapshot(
+  context: AnyObject,
+): AnyObject | null {
+  const direct =
+    context.__delegationRequestContext &&
+    typeof context.__delegationRequestContext === "object"
+      ? (context.__delegationRequestContext as AnyObject)
+      : null;
+  if (direct) {
+    return direct;
+  }
+
+  const metadata =
+    context.__metadata && typeof context.__metadata === "object"
+      ? (context.__metadata as AnyObject)
+      : null;
+  const nested =
+    metadata?.__delegationRequestContext &&
+    typeof metadata.__delegationRequestContext === "object"
+      ? (metadata.__delegationRequestContext as AnyObject)
+      : null;
+  return nested;
+}
+
+export function recoverActorSessionInsertPayload(
+  context: AnyObject,
+  payload: DbOperationPayload,
+): DbOperationPayload {
+  if (!isMissingInsertData(payload.data)) {
+    return payload;
+  }
+
+  const snapshot = resolveActorSessionDelegationSnapshot(context);
+  if (!snapshot) {
+    return payload;
+  }
+
+  const snapshotQueryData =
+    snapshot.queryData && typeof snapshot.queryData === "object"
+      ? ({ ...(snapshot.queryData as AnyObject) } as DbOperationPayload)
+      : ({} as DbOperationPayload);
+  const snapshotData = isNonEmptyPlainObject(snapshotQueryData.data)
+    ? (snapshotQueryData.data as Record<string, unknown>)
+    : isNonEmptyPlainObject(snapshot.data)
+      ? (snapshot.data as Record<string, unknown>)
+      : null;
+
+  if (!snapshotData) {
+    return payload;
+  }
+
+  const recoveredPayload: DbOperationPayload = {
+    ...snapshotQueryData,
+    ...payload,
+    data: snapshotData,
+  };
+
+  if (recoveredPayload.onConflict === undefined && snapshotQueryData.onConflict) {
+    recoveredPayload.onConflict = snapshotQueryData.onConflict;
+  }
+
+  return recoveredPayload;
 }
 
 export function resolveOperationPayload(context: AnyObject): DbOperationPayload {
@@ -1911,6 +2047,44 @@ export default class DatabaseController {
     const { data, transaction = true, fields = [], onConflict } = context;
 
     if (!data || (Array.isArray(data) && data.length === 0)) {
+      if (tableName === "actor_session_state") {
+        const rawContext = context as Record<string, unknown>;
+        const rawMetadata =
+          rawContext.__metadata && typeof rawContext.__metadata === "object"
+            ? (rawContext.__metadata as Record<string, unknown>)
+            : undefined;
+        console.warn("[CADENZA_ACTOR_SESSION_EMPTY_INSERT]", {
+          tableName,
+          contextKeys: Object.keys(context ?? {}),
+          queryDataKeys: [],
+          hasDelegationSnapshot:
+            rawContext.__delegationRequestContext !== undefined ||
+            rawMetadata?.__delegationRequestContext !== undefined,
+          localTaskName:
+            typeof rawContext.__localTaskName === "string"
+              ? rawContext.__localTaskName
+              : undefined,
+          remoteRoutineName:
+            typeof rawContext.__remoteRoutineName === "string"
+              ? rawContext.__remoteRoutineName
+              : undefined,
+          serviceName:
+            typeof rawContext.__serviceName === "string"
+              ? rawContext.__serviceName
+              : undefined,
+          actorName:
+            typeof rawContext.actor_name === "string"
+              ? rawContext.actor_name
+              : undefined,
+          actorKey:
+            typeof rawContext.actor_key === "string"
+              ? rawContext.actor_key
+              : undefined,
+          durableVersion: rawContext.durable_version,
+          metadata: rawMetadata,
+        });
+      }
+
       return {
         rowCount: 0,
         errored: true,
@@ -3283,16 +3457,18 @@ export default class DatabaseController {
           }
         }
 
-        const operationPayload = resolveOperationPayload(context);
+        const initialOperationPayload = resolveOperationPayload(context);
+        let operationPayload = initialOperationPayload;
+        if (tableName === "actor_session_state" && op === "insert") {
+          operationPayload = recoverActorSessionInsertPayload(
+            context,
+            operationPayload,
+          );
+        }
         const actorSessionInsertData = operationPayload.data;
-        const actorSessionInsertMissingData =
-          !actorSessionInsertData ||
-          (Array.isArray(actorSessionInsertData) &&
-            actorSessionInsertData.length === 0) ||
-          (typeof actorSessionInsertData === "object" &&
-            !Array.isArray(actorSessionInsertData) &&
-            Object.keys(actorSessionInsertData as Record<string, unknown>).length ===
-              0);
+        const actorSessionInsertMissingData = isMissingInsertData(
+          actorSessionInsertData,
+        );
 
         if (
           tableName === "actor_session_state" &&
@@ -3355,6 +3531,9 @@ export default class DatabaseController {
                 ? Object.keys(context.queryData as Record<string, unknown>)
                 : [],
             rootKeys: Object.keys(context ?? {}).slice(0, 24),
+            initialPayloadMissingData: isMissingInsertData(
+              initialOperationPayload.data,
+            ),
           });
         }
         const shouldDebugAuthoritySync = shouldDebugAuthoritySyncPayload(
@@ -3719,7 +3898,7 @@ export default class DatabaseController {
     return rows.map((row: any) => {
       const camelCasedRow: any = {};
       for (const [key, value] of Object.entries(row)) {
-        camelCasedRow[camelCase(key)] = value;
+        camelCasedRow[camelCase(key)] = normalizeQueryResultValue(value);
       }
       return camelCasedRow;
     });

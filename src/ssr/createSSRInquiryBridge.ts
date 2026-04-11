@@ -67,6 +67,21 @@ function normalizeArrayResponse(
     return (value as any).data;
   }
 
+  const joinedContexts = Array.isArray((value as any)?.joinedContexts)
+    ? ((value as any).joinedContexts as AnyObject[])
+    : [];
+  for (let index = joinedContexts.length - 1; index >= 0; index -= 1) {
+    const nested = joinedContexts[index];
+    if (!nested || typeof nested !== "object") {
+      continue;
+    }
+
+    const rows = normalizeArrayResponse(nested as AnyObject, keys);
+    if (rows.length > 0) {
+      return rows;
+    }
+  }
+
   return [];
 }
 

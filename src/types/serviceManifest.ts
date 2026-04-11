@@ -1,3 +1,8 @@
+export type ServiceManifestPublicationLayer =
+  | "routing_capability"
+  | "business_structural"
+  | "local_meta_structural";
+
 export type ServiceManifestTaskDefinition = {
   name: string;
   version: number;
@@ -123,6 +128,7 @@ export type ServiceManifestSnapshot = {
   revision: number;
   manifestHash: string;
   publishedAt: string;
+  publicationLayer: ServiceManifestPublicationLayer;
   tasks: ServiceManifestTaskDefinition[];
   signals: ServiceManifestSignalDefinition[];
   intents: ServiceManifestIntentDefinition[];

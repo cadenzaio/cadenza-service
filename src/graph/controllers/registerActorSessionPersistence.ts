@@ -8,6 +8,69 @@ const ACTOR_SESSION_TRACE_ENABLED =
   process.env.CADENZA_ACTOR_SESSION_TRACE === "1" ||
   process.env.CADENZA_ACTOR_SESSION_TRACE === "true";
 
+function findNestedContextValue(
+  ctx: Record<string, any> | null | undefined,
+  key: string,
+): unknown {
+  if (!ctx || typeof ctx !== "object") {
+    return undefined;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(ctx, key) || ctx[key] !== undefined) {
+    return ctx[key];
+  }
+
+  const joinedContexts = Array.isArray(ctx.joinedContexts) ? ctx.joinedContexts : [];
+  for (let index = joinedContexts.length - 1; index >= 0; index -= 1) {
+    const nested = joinedContexts[index];
+    if (!nested || typeof nested !== "object") {
+      continue;
+    }
+
+    const nestedValue = findNestedContextValue(nested as Record<string, any>, key);
+    if (nestedValue !== undefined) {
+      return nestedValue;
+    }
+  }
+
+  return undefined;
+}
+
+function resolveActorSessionStateRow(
+  ctx: Record<string, any> | null | undefined,
+): Record<string, any> | null {
+  const singular = findNestedContextValue(ctx, "actorSessionState");
+  if (
+    singular &&
+    typeof singular === "object" &&
+    !Array.isArray(singular)
+  ) {
+    return singular as Record<string, any>;
+  }
+
+  const plural = findNestedContextValue(ctx, "actorSessionStates");
+  if (Array.isArray(plural)) {
+    const first = plural.find(
+      (entry) => entry && typeof entry === "object" && !Array.isArray(entry),
+    );
+    if (first) {
+      return first as Record<string, any>;
+    }
+  }
+
+  const rows = findNestedContextValue(ctx, "rows");
+  if (Array.isArray(rows)) {
+    const first = rows.find(
+      (entry) => entry && typeof entry === "object" && !Array.isArray(entry),
+    );
+    if (first) {
+      return first as Record<string, any>;
+    }
+  }
+
+  return null;
+}
+
 function shouldAssumeSuccessfulActorSessionRowCount(ctx: Record<string, any>): boolean {
   return (
     ctx.__success === true &&
@@ -110,12 +173,7 @@ export function registerActorSessionPersistenceTasks(): void {
         );
       }
 
-      const row =
-        ctx.actorSessionState &&
-        typeof ctx.actorSessionState === "object" &&
-        !Array.isArray(ctx.actorSessionState)
-          ? (ctx.actorSessionState as Record<string, any>)
-          : null;
+      const row = resolveActorSessionStateRow(ctx);
 
       if (!row) {
         return {

@@ -217,6 +217,58 @@ describe("PostgresActor and database service separation", () => {
     });
   });
 
+  it("requests connected service creation only once from the authority bootstrap handshake", async () => {
+    const createServiceRequests: Array<Record<string, unknown>> = [];
+
+    Cadenza.createMetaTask("Capture create service request", (ctx) => {
+      createServiceRequests.push(ctx);
+      return true;
+    }).doOn("meta.create_service_requested");
+
+    Cadenza.createCadenzaService("RunnerService", "Runner service", {
+      cadenzaDB: {
+        connect: true,
+        address: "cadenza-db-service",
+        port: 8080,
+      },
+    });
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceName: "PredictorService",
+      serviceInstanceId: "predictor-1",
+      serviceOrigin: "http://predictor:3005",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(createServiceRequests).toHaveLength(0);
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-live-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+
+    await waitForCondition(() => createServiceRequests.length === 1);
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-live-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(createServiceRequests).toHaveLength(1);
+    expect(createServiceRequests[0]).toMatchObject({
+      __serviceName: "RunnerService",
+      __cadenzaDBConnect: true,
+      data: {
+        name: "RunnerService",
+      },
+    });
+  });
+
   it("disables generated db task input validation by default for meta actors", () => {
     const controller = DatabaseController.instance;
 
@@ -888,6 +940,89 @@ describe("PostgresActor and database service separation", () => {
       display_name: "Orders",
       is_meta: false,
     });
+  });
+
+  it("preserves resolver queryData for insert tasks even when top-level data is absent", async () => {
+    const delegatedContexts: Array<Record<string, unknown>> = [];
+
+    const insertTask = Cadenza.createDatabaseInsertTask("task", "CadenzaDB", {
+      onConflict: {
+        target: ["name", "service_name", "version"],
+        action: {
+          do: "update",
+        },
+      },
+    }) as any;
+
+    const resolverRows = [
+      {
+        name: "Sync services",
+        service_name: "CadenzaDB",
+        version: 1,
+        description: "Syncs persisted registry state.",
+        function_string: "function syncServices() {}",
+        is_meta: true,
+      },
+    ];
+
+    const graphContext = new GraphContext({
+      __resolverRequestId: "resolver-task-batch-1",
+      __resolverQueryData: {
+        data: resolverRows,
+        onConflict: {
+          target: ["name", "service_name", "version"],
+          action: {
+            do: "update",
+          },
+        },
+      },
+      __remoteRoutineName: "Insert task",
+      __serviceName: "CadenzaDB",
+      __localTaskName: "Insert task in CadenzaDB",
+    });
+
+    await insertTask.execute(
+      graphContext,
+      (signal: string, ctx: Record<string, unknown>) => {
+        if (signal !== "meta.deputy.delegation_requested") {
+          return;
+        }
+
+        delegatedContexts.push({
+          data: ctx.data,
+          queryData: ctx.queryData,
+          onConflict: ctx.onConflict,
+        });
+
+        queueMicrotask(() => {
+          Cadenza.emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+            ...ctx,
+            __success: true,
+          });
+        });
+      },
+      async () => ({}),
+      () => undefined,
+      {
+        nodeId: "node-resolver-batch-1",
+        routineExecId: "routine-resolver-batch-1",
+      },
+    );
+
+    expect(delegatedContexts).toEqual([
+      expect.objectContaining({
+        data: resolverRows,
+        queryData: expect.objectContaining({
+          data: resolverRows,
+          onConflict: expect.objectContaining({
+            target: ["name", "service_name", "version"],
+          }),
+        }),
+        onConflict: expect.objectContaining({
+          target: ["name", "service_name", "version"],
+        }),
+      }),
+    ]);
   });
 
   it("preserves child database payloads when a parent delegation snapshot is stale", async () => {

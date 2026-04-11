@@ -157,6 +157,63 @@ describe("graph sync authority rows", () => {
     expect(directionalRows).toHaveLength(0);
   });
 
+  it("ignores deferred local meta directional maps during convergence", async () => {
+    const businessPredecessor = Cadenza.createTask(
+      "Business predecessor task",
+      () => true,
+    );
+    const businessSuccessor = Cadenza.createTask(
+      "Business successor task",
+      () => true,
+    );
+    const deferredMetaSuccessor = Cadenza.createMetaTask(
+      "Deferred local meta successor task",
+      () => true,
+    );
+
+    businessPredecessor.then(businessSuccessor);
+    businessPredecessor.then(deferredMetaSuccessor);
+
+    businessPredecessor.registered = true;
+    businessSuccessor.registered = true;
+    deferredMetaSuccessor.registered = true;
+
+    ServiceRegistry.instance.serviceName = "OrdersApi";
+    GraphSyncController.instance.isCadenzaDBReady = false;
+    GraphSyncController.instance.init();
+
+    Cadenza.emit("meta.service_registry.initial_sync_complete", {
+      directionalTaskMaps: [
+        {
+          predecessorTaskName: "Business predecessor task",
+          predecessorTaskVersion: 1,
+          predecessorServiceName: "OrdersApi",
+          taskName: "Business successor task",
+          taskVersion: 1,
+          serviceName: "OrdersApi",
+        },
+      ],
+    });
+
+    await waitForCondition(() =>
+      businessPredecessor.taskMapRegistration.has("Business successor task"),
+    );
+
+    GraphSyncController.instance.directionalTaskMapsSynced = false;
+    Cadenza.run(Cadenza.get("Gather directional task map registration")!, {
+      __syncing: true,
+    });
+
+    await waitForCondition(() => GraphSyncController.instance.directionalTaskMapsSynced);
+
+    expect(GraphSyncController.instance.directionalTaskMapsSynced).toBe(true);
+    expect(
+      businessPredecessor.taskMapRegistration.has(
+        "Deferred local meta successor task",
+      ),
+    ).toBe(false);
+  });
+
   it("uses UUID transport ids for local routeable transports", async () => {
     const declaredTransports = (Cadenza as any).normalizeDeclaredTransports(
       [
@@ -941,6 +998,14 @@ describe("graph sync authority rows", () => {
         },
         {
           signal: "global.orders.updated",
+          data: { registered: false },
+        },
+        {
+          signal: "global.meta.service_instance.updated",
+          data: { registered: false },
+        },
+        {
+          signal: "global.meta.signal_controller.signal_added",
           data: { registered: false },
         },
       ],

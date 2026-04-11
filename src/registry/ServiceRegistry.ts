@@ -164,6 +164,7 @@ function shouldTraceServiceRegistry(serviceName: string | null | undefined): boo
 }
 
 function buildServiceRegistryInsertQueryData(
+  tableName: string,
   ctx: AnyObject,
   queryData: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -196,10 +197,19 @@ function buildServiceRegistryInsertQueryData(
   if (!Object.prototype.hasOwnProperty.call(queryData, "onConflict")) {
     delete nextQueryData.onConflict;
   }
+  const preferRegistrationData =
+    tableName === "service" ||
+    tableName === "service_instance" ||
+    tableName === "service_instance_transport";
   const resolvedData =
-    Object.prototype.hasOwnProperty.call(ctx, "data") || ctx.data !== undefined
-      ? ctx.data
-      : getJoinedValue("data");
+    preferRegistrationData
+      ? registrationData ??
+        (Object.prototype.hasOwnProperty.call(ctx, "data") || ctx.data !== undefined
+          ? ctx.data
+          : getJoinedValue("data"))
+      : Object.prototype.hasOwnProperty.call(ctx, "data") || ctx.data !== undefined
+        ? ctx.data
+        : getJoinedValue("data");
   const resolvedBatch =
     Object.prototype.hasOwnProperty.call(ctx, "batch") || ctx.batch !== undefined
       ? ctx.batch
@@ -245,8 +255,148 @@ function sanitizeServiceRegistryInsertExecutionContext(ctx: AnyObject): AnyObjec
   delete sanitized.returnedValue;
   delete sanitized.queryData;
   delete sanitized.onConflict;
+  delete sanitized.task;
+  delete sanitized.routine;
+  delete sanitized.httpServer;
+  delete sanitized.service;
+  delete sanitized.serviceInstance;
+  delete sanitized.joinedContexts;
+  delete sanitized.__declaredTransports;
+  delete sanitized.__resolverOriginalContext;
+  delete sanitized.__resolverQueryData;
 
   return sanitized;
+}
+
+function sanitizeAuthorityBootstrapDelegationContext(ctx: AnyObject): AnyObject {
+  const sanitized = stripDelegationRequestSnapshot({
+    ...ctx,
+  });
+
+  delete sanitized.__resolverOriginalContext;
+  delete sanitized.__resolverQueryData;
+  delete sanitized.joinedContexts;
+  delete sanitized.httpServer;
+  delete sanitized.service;
+  delete sanitized.serviceInstance;
+  delete sanitized.task;
+  delete sanitized.routine;
+  delete sanitized.__declaredTransports;
+
+  const queryData =
+    sanitized.queryData && typeof sanitized.queryData === "object"
+      ? ({ ...(sanitized.queryData as AnyObject) } as AnyObject)
+      : null;
+  if (queryData) {
+    delete queryData.joinedContexts;
+    sanitized.queryData = queryData;
+  }
+
+  return sanitized;
+}
+
+function cloneServiceRegistryContextValue<T>(value: T): T {
+  if (value instanceof Date) {
+    return new Date(value.getTime()) as T;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) =>
+      cloneServiceRegistryContextValue(entry),
+    ) as T;
+  }
+
+  if (value && typeof value === "object") {
+    const clone: AnyObject = {};
+    for (const [key, nestedValue] of Object.entries(value as AnyObject)) {
+      clone[key] = cloneServiceRegistryContextValue(nestedValue);
+    }
+    return clone as T;
+  }
+
+  return value;
+}
+
+function buildServiceRegistryResolverOriginalContext(
+  tableName: string,
+  ctx: AnyObject,
+  queryData: Record<string, unknown>,
+): AnyObject {
+  const originalContext: AnyObject = {};
+
+  for (const key of [
+    "__serviceName",
+    "serviceName",
+    "__serviceInstanceId",
+    "serviceInstanceId",
+    "__registrationData",
+    "__reason",
+    "__syncing",
+    "__syncSourceServiceName",
+    "__preferredTransportProtocol",
+    "__networkMode",
+    "__securityProfile",
+    "__loadBalance",
+    "__cadenzaDBConnect",
+    "__isFrontend",
+    "__isDatabase",
+    "__retryCount",
+    "__retries",
+    "__triedInstances",
+  ] as const) {
+    if (ctx[key] !== undefined) {
+      originalContext[key] = cloneServiceRegistryContextValue(ctx[key]);
+    }
+  }
+
+  if (queryData.data !== undefined) {
+    originalContext.data = cloneServiceRegistryContextValue(queryData.data);
+  }
+
+  if (queryData.batch !== undefined) {
+    originalContext.batch = cloneServiceRegistryContextValue(queryData.batch);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(queryData, "onConflict")) {
+    originalContext.queryData = {
+      data:
+        queryData.data !== undefined
+          ? cloneServiceRegistryContextValue(queryData.data)
+          : undefined,
+      batch:
+        queryData.batch !== undefined
+          ? cloneServiceRegistryContextValue(queryData.batch)
+          : undefined,
+      onConflict: cloneServiceRegistryContextValue(queryData.onConflict),
+    };
+  } else if (queryData.data !== undefined || queryData.batch !== undefined) {
+    originalContext.queryData = {
+      data:
+        queryData.data !== undefined
+          ? cloneServiceRegistryContextValue(queryData.data)
+          : undefined,
+      batch:
+        queryData.batch !== undefined
+          ? cloneServiceRegistryContextValue(queryData.batch)
+          : undefined,
+    };
+  }
+
+  if (tableName === "service_instance") {
+    for (const key of [
+      "__transportData",
+      "transportData",
+      "__useSocket",
+      "__retryCount",
+      "__isFrontend",
+    ] as const) {
+      if (ctx[key] !== undefined) {
+        originalContext[key] = cloneServiceRegistryContextValue(ctx[key]);
+      }
+    }
+  }
+
+  return originalContext;
 }
 
 function clearTransientRoutingErrorState(context: AnyObject): void {
@@ -349,12 +499,22 @@ function normalizeServiceRegistryInsertResult(
     result.queryData && typeof result.queryData === "object"
       ? { ...(result.queryData as AnyObject) }
       : { ...queryData };
+  const preferRequestedData =
+    tableName === "service" ||
+    tableName === "service_instance" ||
+    tableName === "service_instance_transport";
   const resolvedData =
-    result.data ??
-    normalizedQueryData.data ??
-    queryData.data ??
-    ctx.data ??
-    ctx.__registrationData;
+    (preferRequestedData
+      ? normalizedQueryData.data ??
+        queryData.data ??
+        ctx.data ??
+        ctx.__registrationData ??
+        result.data
+      : result.data ??
+        normalizedQueryData.data ??
+        queryData.data ??
+        ctx.data ??
+        ctx.__registrationData);
 
   if (resolvedData !== undefined && result.data === undefined) {
     result.data = resolvedData;
@@ -402,6 +562,7 @@ function normalizeServiceRegistryInsertResult(
 
     if (resolvedServiceName) {
       result.__serviceName = resolvedServiceName;
+      result.serviceName = resolvedServiceName;
     }
   }
 
@@ -414,6 +575,25 @@ function normalizeServiceRegistryInsertResult(
 
   if (resolvedLocalServiceInstanceId) {
     result.__serviceInstanceId = resolvedLocalServiceInstanceId;
+  }
+
+  if (tableName === "service_instance") {
+    const resolvedServiceName = String(
+      ctx.__serviceName ??
+        resolveServiceNameFromContext(ctx) ??
+        (resolvedData as AnyObject | undefined)?.service_name ??
+        (resolvedData as AnyObject | undefined)?.serviceName ??
+        "",
+    ).trim();
+
+    if (resolvedServiceName) {
+      result.__serviceName = resolvedServiceName;
+      result.serviceName = resolvedServiceName;
+    }
+
+    if (resolvedLocalServiceInstanceId) {
+      result.serviceInstanceId = resolvedLocalServiceInstanceId;
+    }
   }
 
   if (
@@ -602,8 +782,14 @@ function resolveServiceRegistryInsertTask(
           ctx,
         );
         const nextQueryData = buildServiceRegistryInsertQueryData(
+          tableName,
           sanitizedContext,
           queryData,
+        );
+        const resolverOriginalContext = buildServiceRegistryResolverOriginalContext(
+          tableName,
+          sanitizedContext,
+          nextQueryData,
         );
 
         const delegationContext = ensureDelegationContextMetadata({
@@ -640,9 +826,7 @@ function resolveServiceRegistryInsertTask(
 
         const nextContext = {
           ...delegationContext,
-          __resolverOriginalContext: {
-            ...sanitizedContext,
-          },
+          __resolverOriginalContext: resolverOriginalContext,
           __resolverQueryData: nextQueryData,
         };
 
@@ -941,6 +1125,7 @@ function resolveServiceRegistryInsertTask(
         if (bootstrapAuthorityInsertSpec) {
           const sanitizedContext = sanitizeServiceRegistryInsertExecutionContext(ctx);
           const nextQueryData = buildServiceRegistryInsertQueryData(
+            tableName,
             sanitizedContext,
             queryData,
           );
@@ -1616,6 +1801,8 @@ export default class ServiceRegistry {
         (row) =>
           `${String(row.service_name ?? row.serviceName ?? "").trim()}|${String(
             row.signal_name ?? row.signalName ?? "",
+          ).trim()}|${String(row.task_name ?? row.taskName ?? "").trim()}|${String(
+            row.task_version ?? row.taskVersion ?? 1,
           ).trim()}`,
       );
       pushUnique(
@@ -1655,6 +1842,8 @@ export default class ServiceRegistry {
             (entry) =>
               `${String(entry.service_name ?? entry.serviceName ?? "").trim()}|${String(
                 entry.signal_name ?? entry.signalName ?? "",
+              ).trim()}|${String(entry.task_name ?? entry.taskName ?? "").trim()}|${String(
+                entry.task_version ?? entry.taskVersion ?? 1,
               ).trim()}`,
           );
           continue;
@@ -1702,10 +1891,57 @@ export default class ServiceRegistry {
       }
     }
 
-    const hasExplicitSignalRoutingRows = signalToTaskMaps.length > 0;
-    const hasExplicitIntentRoutingRows = intentToTaskMaps.length > 0;
+    const activeServiceInstanceIds = new Set(
+      serviceInstances
+        .filter((row) => row.is_active === true || row.isActive === true)
+        .map((row) => String(row.uuid ?? "").trim())
+        .filter((uuid) => uuid.length > 0),
+    );
+    const filteredServiceInstances =
+      activeServiceInstanceIds.size > 0
+        ? serviceInstances.filter((row) =>
+            activeServiceInstanceIds.has(String(row.uuid ?? "").trim()),
+          )
+        : serviceInstances;
+    const filteredServiceInstanceTransports =
+      activeServiceInstanceIds.size > 0
+        ? serviceInstanceTransports.filter((row) =>
+            activeServiceInstanceIds.has(
+              String(row.service_instance_id ?? row.serviceInstanceId ?? "").trim(),
+            ),
+          )
+        : serviceInstanceTransports;
+    const filteredManifestSnapshots =
+      activeServiceInstanceIds.size > 0
+        ? manifestSnapshots.filter((snapshot) =>
+            activeServiceInstanceIds.has(snapshot.serviceInstanceId),
+          )
+        : manifestSnapshots;
+    const activeServiceNames = new Set(
+      filteredServiceInstances
+        .map((row) => String(row.service_name ?? row.serviceName ?? "").trim())
+        .filter((serviceName) => serviceName.length > 0),
+    );
+    const filteredSignalToTaskMaps =
+      activeServiceNames.size > 0
+        ? signalToTaskMaps.filter((row) =>
+            activeServiceNames.has(
+              String(row.service_name ?? row.serviceName ?? "").trim(),
+            ),
+          )
+        : signalToTaskMaps;
+    const filteredIntentToTaskMaps =
+      activeServiceNames.size > 0
+        ? intentToTaskMaps.filter((row) =>
+            activeServiceNames.has(
+              String(row.service_name ?? row.serviceName ?? "").trim(),
+            ),
+          )
+        : intentToTaskMaps;
+    const hasExplicitSignalRoutingRows = filteredSignalToTaskMaps.length > 0;
+    const hasExplicitIntentRoutingRows = filteredIntentToTaskMaps.length > 0;
     const latestManifestSnapshots =
-      selectLatestServiceManifestSnapshots(manifestSnapshots);
+      selectLatestServiceManifestSnapshots(filteredManifestSnapshots);
     const explodedManifest = explodeServiceManifestSnapshots(
       latestManifestSnapshots,
     );
@@ -1795,7 +2031,7 @@ export default class ServiceRegistry {
     if (!hasExplicitSignalRoutingRows) {
       pushUnique(
         explodedManifest.signalToTaskMaps as Array<Record<string, unknown>>,
-        signalToTaskMaps,
+        filteredSignalToTaskMaps,
         seenSignalMaps,
         (row) =>
           `${String(row.signal_name ?? "").trim()}|${String(
@@ -1808,7 +2044,7 @@ export default class ServiceRegistry {
     if (!hasExplicitIntentRoutingRows) {
       pushUnique(
         explodedManifest.intentToTaskMaps as Array<Record<string, unknown>>,
-        intentToTaskMaps,
+        filteredIntentToTaskMaps,
         seenIntentMaps,
         (row) =>
           `${String(row.intent_name ?? "").trim()}|${String(
@@ -1820,8 +2056,8 @@ export default class ServiceRegistry {
     }
 
     return {
-      serviceInstances,
-      serviceInstanceTransports,
+      serviceInstances: filteredServiceInstances,
+      serviceInstanceTransports: filteredServiceInstanceTransports,
       serviceManifests,
       tasks,
       signals,
@@ -1831,8 +2067,8 @@ export default class ServiceRegistry {
       directionalTaskMaps,
       actorTaskMaps,
       taskToRoutineMaps,
-      signalToTaskMaps,
-      intentToTaskMaps,
+      signalToTaskMaps: filteredSignalToTaskMaps,
+      intentToTaskMaps: filteredIntentToTaskMaps,
     };
   }
 
@@ -2466,10 +2702,11 @@ export default class ServiceRegistry {
       : null;
 
     try {
+      const sanitizedContext = sanitizeAuthorityBootstrapDelegationContext(context);
       const requestBody = stripDelegationRequestSnapshot(
         ensureDelegationContextMetadata(
           attachDelegationRequestSnapshot({
-            ...context,
+            ...sanitizedContext,
             __remoteRoutineName: remoteRoutineName,
             __serviceName: "CadenzaDB",
             __localServiceName: this.serviceName,
@@ -2483,8 +2720,9 @@ export default class ServiceRegistry {
             __fetchId: target.fetchId,
             fetchId: target.fetchId,
             __metadata: {
-              ...(context.__metadata && typeof context.__metadata === "object"
-                ? context.__metadata
+              ...(sanitizedContext.__metadata &&
+              typeof sanitizedContext.__metadata === "object"
+                ? sanitizedContext.__metadata
                 : {}),
               __timeout: timeoutMs,
               __syncing: true,
@@ -2505,7 +2743,7 @@ export default class ServiceRegistry {
 
       if ("ok" in response && response.ok === false) {
         return {
-          ...context,
+          ...sanitizedContext,
           __error: `Bootstrap authority delegation failed with HTTP ${response.status}`,
           errored: true,
         };
@@ -2515,16 +2753,16 @@ export default class ServiceRegistry {
         typeof response.json === "function" ? await response.json() : response;
       return payload && typeof payload === "object"
         ? ({
-            ...context,
+            ...sanitizedContext,
             ...(payload as AnyObject),
           } as AnyObject)
         : ({
-            ...context,
+            ...sanitizedContext,
             returnedValue: payload,
           } as AnyObject);
     } catch (error) {
       return {
-        ...context,
+        ...sanitizeAuthorityBootstrapDelegationContext(context),
         __error: error instanceof Error ? error.message : String(error),
         errored: true,
       };
@@ -7203,6 +7441,9 @@ export default class ServiceRegistry {
           ctx.deleted ?? ctx.serviceInstance?.deleted ?? ctx.data?.deleted,
         );
         if (uuid === this.serviceInstanceId) return;
+        if (serviceName === this.serviceName) {
+          return false;
+        }
 
         if (deleted) {
           const existingInstance = this.instances
@@ -7327,10 +7568,6 @@ export default class ServiceRegistry {
           );
         }
 
-        if (this.serviceName === serviceName) {
-          return false;
-        }
-
         if (trackedInstance?.isFrontend) {
           return true;
         }
@@ -7399,6 +7636,13 @@ export default class ServiceRegistry {
         }
 
         if (!ownerInstance) {
+          return false;
+        }
+
+        if (
+          ownerInstance.serviceName === this.serviceName &&
+          ownerInstance.uuid !== this.serviceInstanceId
+        ) {
           return false;
         }
 

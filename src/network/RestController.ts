@@ -13,7 +13,9 @@ import { isBrowser } from "../utils/environment";
 import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
 import {
   attachDelegationRequestSnapshot,
+  buildDelegationFailureContext,
   ensureDelegationContextMetadata,
+  restoreDelegationRequestSnapshot,
   stripTransportSelectionRoutingContext,
   stripDelegationRequestSnapshot,
 } from "../utils/delegation";
@@ -33,6 +35,7 @@ interface FetchClientDiagnosticsState {
   serviceName: string;
   url: string;
   connected: boolean;
+  handshakeInFlight: boolean;
   destroyed: boolean;
   lastHandshakeAt: string | null;
   lastHandshakeError: string | null;
@@ -70,6 +73,61 @@ const TRACED_INQUIRY_METADATA_SIGNALS = new Set([
 const ACTOR_SESSION_TRACE_ENABLED =
   process.env.CADENZA_ACTOR_SESSION_TRACE === "1" ||
   process.env.CADENZA_ACTOR_SESSION_TRACE === "true";
+
+function summarizeRequestBodyForLogging(body: unknown): unknown {
+  if (typeof body !== "string") {
+    return body;
+  }
+
+  const summary: AnyObject = {
+    bodyLength: body.length,
+  };
+
+  try {
+    const parsed = JSON.parse(body) as AnyObject;
+    const queryData =
+      parsed.queryData && typeof parsed.queryData === "object"
+        ? (parsed.queryData as AnyObject)
+        : null;
+    const queryDataData =
+      queryData?.data && typeof queryData.data === "object"
+        ? (queryData.data as AnyObject)
+        : null;
+    const data =
+      parsed.data && typeof parsed.data === "object" ? (parsed.data as AnyObject) : null;
+
+    summary.rootKeys = Object.keys(parsed).slice(0, 24);
+    summary.remoteRoutineName =
+      typeof parsed.__remoteRoutineName === "string" ? parsed.__remoteRoutineName : null;
+    summary.serviceName =
+      typeof parsed.__serviceName === "string" ? parsed.__serviceName : null;
+    summary.authorityBootstrapChannel =
+      parsed.__authorityBootstrapChannel === true ||
+      parsed.__metadata?.__authorityBootstrapChannel === true;
+    summary.hasData = data !== null;
+    summary.dataKeys = data ? Object.keys(data).slice(0, 24) : [];
+    summary.hasQueryData = queryData !== null;
+    summary.queryDataKeys = queryData ? Object.keys(queryData).slice(0, 24) : [];
+    summary.queryDataDataKeys = queryDataData
+      ? Object.keys(queryDataData).slice(0, 24)
+      : [];
+  } catch {
+    summary.preview = body.slice(0, 240);
+  }
+
+  return summary;
+}
+
+function summarizeRequestInitForLogging(requestInit: any): AnyObject {
+  if (!requestInit || typeof requestInit !== "object") {
+    return requestInit;
+  }
+
+  return {
+    ...requestInit,
+    body: summarizeRequestBodyForLogging(requestInit.body),
+  };
+}
 
 /**
  * RestController class is responsible for managing RESTful interactions, including defining
@@ -155,6 +213,7 @@ export default class RestController {
         serviceName,
         url,
         connected: false,
+        handshakeInFlight: false,
         destroyed: false,
         lastHandshakeAt: null,
         lastHandshakeError: null,
@@ -425,17 +484,18 @@ export default class RestController {
       const parsedResponse = await this.parseFetchResponse(response);
       return parsedResponse.data;
     } catch (error: any) {
+      const loggedRequestInit = summarizeRequestInitForLogging(requestInit);
       if (error?.name === "AbortError") {
         Cadenza.log(
           "Fetch request timed out.",
-          { error, URL: url, requestInit },
+          { error, URL: url, requestInit: loggedRequestInit },
           "warning",
         );
         // Handle timeout specifically
       } else {
         Cadenza.log(
           "Fetch request error.",
-          { error, URL: url, requestInit },
+          { error, URL: url, requestInit: loggedRequestInit },
           "error",
         );
         // Handle other errors
@@ -622,7 +682,6 @@ export default class RestController {
           },
           "Sets up the Express server according to the security profile",
         )
-          .attachSignal("meta.service_registry.instance_registration_requested")
           .then(
             Cadenza.createMetaTask(
               "Define RestServer",
@@ -1216,36 +1275,53 @@ export default class RestController {
           serviceName,
           URL,
         );
-        fetchDiagnostics.destroyed = false;
-        fetchDiagnostics.updatedAt = Date.now();
 
         if (Cadenza.get(`Send Handshake to ${clientTaskSuffix}`)) {
-          console.error("Fetch client already exists", { URL, fetchId });
-          Cadenza.schedule(
-            `meta.fetch.handshake_requested:${fetchId}`,
-            {
-              serviceInstanceId: ctx.serviceInstanceId,
-              serviceName,
-              communicationTypes: ctx.communicationTypes,
-              serviceTransportId: ctx.serviceTransportId,
-              serviceOrigin: URL,
-              fetchId,
-              routeKey,
-              socketClientId:
-                ctx.socketClientId ??
-                (routeKey ? buildTransportHandleKey(routeKey, "socket") : undefined),
-              transportProtocols: ctx.transportProtocols,
-              transportProtocol: "rest",
-              handshakeData: ctx.handshakeData,
-            },
-            0,
-          );
+          const shouldRetryHandshake =
+            ctx.__forceHandshakeRecovery === true ||
+            fetchDiagnostics.destroyed === true ||
+            ((fetchDiagnostics.connected !== true ||
+              typeof fetchDiagnostics.lastHandshakeError === "string") &&
+              fetchDiagnostics.handshakeInFlight !== true);
+
+          if (shouldRetryHandshake) {
+            fetchDiagnostics.destroyed = false;
+            fetchDiagnostics.handshakeInFlight = true;
+            fetchDiagnostics.updatedAt = Date.now();
+            console.error("Fetch client already exists", { URL, fetchId });
+            Cadenza.debounce(
+              `meta.fetch.handshake_requested:${fetchId}`,
+              {
+                serviceInstanceId: ctx.serviceInstanceId,
+                serviceName,
+                communicationTypes: ctx.communicationTypes,
+                serviceTransportId: ctx.serviceTransportId,
+                serviceOrigin: URL,
+                fetchId,
+                routeKey,
+                socketClientId:
+                  ctx.socketClientId ??
+                  (routeKey
+                    ? buildTransportHandleKey(routeKey, "socket")
+                    : undefined),
+                transportProtocols: ctx.transportProtocols,
+                transportProtocol: "rest",
+                handshakeData: ctx.handshakeData,
+              },
+              50,
+            );
+          }
           return true;
         }
+
+        fetchDiagnostics.destroyed = false;
+        fetchDiagnostics.handshakeInFlight = false;
+        fetchDiagnostics.updatedAt = Date.now();
 
         const handshakeTask = Cadenza.createMetaTask(
           `Send Handshake to ${clientTaskSuffix}`,
           async (ctx, emit) => {
+            fetchDiagnostics.handshakeInFlight = true;
             try {
               const response = await this.fetchDataWithTimeout(
                 `${URL}/handshake`,
@@ -1263,6 +1339,7 @@ export default class RestController {
                   response.__error ??
                   `Failed to connect to service ${serviceName} ${ctx.serviceInstanceId}`;
                 fetchDiagnostics.connected = false;
+                fetchDiagnostics.handshakeInFlight = false;
                 fetchDiagnostics.lastHandshakeError = error;
                 fetchDiagnostics.updatedAt = Date.now();
                 this.recordFetchClientError(fetchId, serviceName, URL, error);
@@ -1283,6 +1360,7 @@ export default class RestController {
               ctx.serviceInstanceId = response.__serviceInstanceId;
               fetchDiagnostics.connected = true;
               fetchDiagnostics.destroyed = false;
+              fetchDiagnostics.handshakeInFlight = false;
               fetchDiagnostics.lastHandshakeAt = new Date().toISOString();
               fetchDiagnostics.lastHandshakeError = null;
               fetchDiagnostics.updatedAt = Date.now();
@@ -1315,6 +1393,7 @@ export default class RestController {
               }
             } catch (e) {
               fetchDiagnostics.connected = false;
+              fetchDiagnostics.handshakeInFlight = false;
               fetchDiagnostics.lastHandshakeError = this.getErrorMessage(e);
               fetchDiagnostics.updatedAt = Date.now();
               this.recordFetchClientError(fetchId, serviceName, URL, e);
@@ -1353,8 +1432,8 @@ export default class RestController {
 
             const routedDelegateCtx = stripTransportSelectionRoutingContext(ctx);
             const delegateCtx = ensureDelegationContextMetadata(
-              attachDelegationRequestSnapshot(
-                stripDelegationRequestSnapshot(routedDelegateCtx),
+              restoreDelegationRequestSnapshot(
+                attachDelegationRequestSnapshot(routedDelegateCtx),
               ),
             );
             const deputyExecId = delegateCtx.__metadata.__deputyExecId;
@@ -1424,13 +1503,11 @@ export default class RestController {
               fetchDiagnostics.delegationFailures++;
               fetchDiagnostics.updatedAt = Date.now();
               this.recordFetchClientError(fetchId, serviceName, URL, e);
-              resultContext = {
-                __signalName: "meta.fetch.delegate_failed",
-                __error: `Error: ${e}`,
-                errored: true,
-                ...delegateCtx,
-                ...delegateCtx.__metadata,
-              };
+              resultContext = buildDelegationFailureContext(
+                "meta.fetch.delegate_failed",
+                delegateCtx,
+                e,
+              );
               routeOutcome = "failure";
               emit("meta.fetch.delegate_failed", resultContext);
             } finally {
@@ -1642,6 +1719,7 @@ export default class RestController {
             }
 
             fetchDiagnostics.connected = false;
+            fetchDiagnostics.handshakeInFlight = false;
             fetchDiagnostics.destroyed = true;
             fetchDiagnostics.updatedAt = Date.now();
             Cadenza.log("Destroying fetch client", { URL, serviceName });
@@ -1691,7 +1769,16 @@ export default class RestController {
                   : serviceTransportId ?? ""),
             );
 
-            Cadenza.schedule(`meta.fetch.handshake_requested:${fetchId}`, {
+            const fetchDiagnostics = this.ensureFetchClientDiagnostics(
+              fetchId,
+              String(serviceName ?? ""),
+              String(serviceOrigin ?? ""),
+            );
+            if (fetchDiagnostics.handshakeInFlight !== true) {
+              fetchDiagnostics.handshakeInFlight = true;
+            }
+
+            Cadenza.debounce(`meta.fetch.handshake_requested:${fetchId}`, {
               serviceInstanceId,
               serviceName,
               communicationTypes,
@@ -1709,7 +1796,7 @@ export default class RestController {
                 serviceName: Cadenza.serviceRegistry.serviceName,
                 // JWT token...
               },
-            }, 0);
+            }, 50);
             return true;
           },
           "Prepares handshake",

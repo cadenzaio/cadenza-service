@@ -40,6 +40,12 @@ export function normalizeServiceManifestSnapshot(
     revision,
     manifestHash,
     publishedAt,
+    publicationLayer:
+      record.publicationLayer === "routing_capability" ||
+      record.publicationLayer === "business_structural" ||
+      record.publicationLayer === "local_meta_structural"
+        ? record.publicationLayer
+        : "business_structural",
     tasks: normalizeArray(record.tasks),
     signals: normalizeArray(record.signals),
     intents: normalizeArray(record.intents),

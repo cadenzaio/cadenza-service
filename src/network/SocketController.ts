@@ -7,7 +7,9 @@ import { waitForSocketConnection } from "./socketClientUtils";
 import { META_RUNTIME_TRANSPORT_DIAGNOSTICS_INTENT } from "../utils/inquiry";
 import {
   attachDelegationRequestSnapshot,
+  buildDelegationFailureContext,
   ensureDelegationContextMetadata,
+  restoreDelegationRequestSnapshot,
   stripTransportSelectionRoutingContext,
   stripDelegationRequestSnapshot,
 } from "../utils/delegation";
@@ -1588,8 +1590,8 @@ export default class SocketController {
               const routedDelegateCtx =
                 stripTransportSelectionRoutingContext(delegateCtx);
               const normalizedDelegateCtx = ensureDelegationContextMetadata(
-                attachDelegationRequestSnapshot(
-                  stripDelegationRequestSnapshot(routedDelegateCtx),
+                restoreDelegationRequestSnapshot(
+                  attachDelegationRequestSnapshot(routedDelegateCtx),
                 ),
               );
               delete normalizedDelegateCtx.__isSubMeta;
@@ -1684,13 +1686,11 @@ export default class SocketController {
                 return resolvedResultContext;
               } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
-                const failedContext = {
-                  __signalName: "meta.socket_client.delegate_failed",
-                  errored: true,
-                  __error: message,
-                  ...normalizedDelegateCtx,
-                  ...normalizedDelegateCtx.__metadata,
-                };
+                const failedContext = buildDelegationFailureContext(
+                  "meta.socket_client.delegate_failed",
+                  normalizedDelegateCtx,
+                  error,
+                );
 
                 if (deputyExecId) {
                   emitter(`meta.socket_client.delegated:${deputyExecId}`, {
