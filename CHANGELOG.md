@@ -1,3 +1,10 @@
+## [2.20.1](https://github.com/cadenzaio/cadenza-service/compare/v2.20.0...v2.20.1) (2026-04-11)
+
+
+### Bug Fixes
+
+* stabilize service authority recovery and delegation ([4317902](https://github.com/cadenzaio/cadenza-service/commit/4317902b0c8c46007a30ce20dc142ffba72ed63b))
+
 # [2.20.0](https://github.com/cadenzaio/cadenza-service/compare/v2.19.1...v2.20.0) (2026-04-09)
 
 
