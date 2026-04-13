@@ -1,3 +1,16 @@
+# [2.21.0](https://github.com/cadenzaio/cadenza-service/compare/v2.20.1...v2.21.0) (2026-04-13)
+
+
+### Bug Fixes
+
+* harden service registry sync and delegation ([b1b271a](https://github.com/cadenzaio/cadenza-service/commit/b1b271ab906c7a76dc65bf07eae3fee5019e392c))
+
+
+### Features
+
+* add service manifest runtime support ([481cb51](https://github.com/cadenzaio/cadenza-service/commit/481cb512624eed773ff359c929b97829727c12b5))
+* overlay authority service instance leases ([a41511c](https://github.com/cadenzaio/cadenza-service/commit/a41511c9b1e6fa67ad24f15724cbb2fc378c935d))
+
 ## [2.20.1](https://github.com/cadenzaio/cadenza-service/compare/v2.20.0...v2.20.1) (2026-04-11)
 
 
