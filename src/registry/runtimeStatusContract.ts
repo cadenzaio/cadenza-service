@@ -97,6 +97,118 @@ function resolveHealthMetric(
   return undefined;
 }
 
+function sanitizeRuntimeMetricsHealthDetail(
+  value: unknown,
+): RuntimeMetricsHealthDetail | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const input = value as Record<string, unknown>;
+  const sampledAt =
+    typeof input.sampledAt === "string" && input.sampledAt.trim().length > 0
+      ? input.sampledAt
+      : undefined;
+  const cpuUsage = normalizeOptionalMetric(input.cpuUsage ?? input.cpu ?? input.cpuLoad);
+  const memoryUsage = normalizeOptionalMetric(
+    input.memoryUsage ?? input.memory ?? input.memoryPressure,
+  );
+  const eventLoopLag = normalizeOptionalMetric(
+    input.eventLoopLag ?? input.eventLoopLagMs,
+  );
+  const rssBytes = normalizeOptionalMetric(input.rssBytes);
+  const heapUsedBytes = normalizeOptionalMetric(input.heapUsedBytes);
+  const heapTotalBytes = normalizeOptionalMetric(input.heapTotalBytes);
+  const memoryLimitBytes = normalizeOptionalMetric(input.memoryLimitBytes);
+
+  if (
+    sampledAt === undefined &&
+    cpuUsage === undefined &&
+    memoryUsage === undefined &&
+    eventLoopLag === undefined &&
+    rssBytes === undefined &&
+    heapUsedBytes === undefined &&
+    heapTotalBytes === undefined &&
+    memoryLimitBytes === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(sampledAt !== undefined ? { sampledAt } : {}),
+    ...(cpuUsage !== undefined ? { cpuUsage } : {}),
+    ...(memoryUsage !== undefined ? { memoryUsage } : {}),
+    ...(eventLoopLag !== undefined ? { eventLoopLag } : {}),
+    ...(rssBytes !== undefined ? { rssBytes } : {}),
+    ...(heapUsedBytes !== undefined ? { heapUsedBytes } : {}),
+    ...(heapTotalBytes !== undefined ? { heapTotalBytes } : {}),
+    ...(memoryLimitBytes !== undefined ? { memoryLimitBytes } : {}),
+  };
+}
+
+export function sanitizeAuthorityRuntimeStatusHealth(
+  health: unknown,
+  options?: {
+    state?: RuntimeStatusState;
+    acceptingWork?: boolean;
+    reportedAt?: string;
+    cpuUsage?: number | null | undefined;
+    memoryUsage?: number | null | undefined;
+    eventLoopLag?: number | null | undefined;
+  },
+): AnyObject | undefined {
+  const input =
+    health && typeof health === "object"
+      ? (health as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+
+  const cpuUsage =
+    options?.cpuUsage !== undefined
+      ? options.cpuUsage
+      : normalizeOptionalMetric(input.cpuUsage ?? input.cpu ?? input.cpuLoad);
+  const memoryUsage =
+    options?.memoryUsage !== undefined
+      ? options.memoryUsage
+      : normalizeOptionalMetric(
+          input.memoryUsage ?? input.memory ?? input.memoryPressure,
+        );
+  const eventLoopLag =
+    options?.eventLoopLag !== undefined
+      ? options.eventLoopLag
+      : normalizeOptionalMetric(input.eventLoopLag ?? input.eventLoopLagMs);
+  const runtimeMetrics = sanitizeRuntimeMetricsHealthDetail(input.runtimeMetrics);
+  const runtimeStatus =
+    options?.state ||
+    options?.reportedAt ||
+    typeof options?.acceptingWork === "boolean"
+      ? {
+          ...(options?.state ? { state: options.state } : {}),
+          ...(typeof options?.acceptingWork === "boolean"
+            ? { acceptingWork: options.acceptingWork }
+            : {}),
+          ...(options?.reportedAt ? { reportedAt: options.reportedAt } : {}),
+        }
+      : undefined;
+
+  if (
+    cpuUsage === undefined &&
+    memoryUsage === undefined &&
+    eventLoopLag === undefined &&
+    !runtimeMetrics &&
+    !runtimeStatus
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(cpuUsage !== undefined ? { cpuUsage } : {}),
+    ...(memoryUsage !== undefined ? { memoryUsage } : {}),
+    ...(eventLoopLag !== undefined ? { eventLoopLag } : {}),
+    ...(runtimeMetrics ? { runtimeMetrics } : {}),
+    ...(runtimeStatus ? { runtimeStatus } : {}),
+  };
+}
+
 export function normalizeAuthorityRuntimeStatusReport(
   input: Record<string, any> | null | undefined,
 ): AuthorityRuntimeStatusReport | null {
@@ -144,6 +256,17 @@ export function normalizeAuthorityRuntimeStatusReport(
     transportProtocolList.length > 0
       ? (Array.from(new Set(transportProtocolList)) as ServiceTransportProtocol[])
       : undefined;
+  const acceptingWork = Boolean(input.acceptingWork ?? input.accepting_work);
+  const cpuUsage = resolveHealthMetric(input, ["cpuUsage", "cpu", "cpuLoad"]);
+  const memoryUsage = resolveHealthMetric(input, [
+    "memoryUsage",
+    "memory",
+    "memoryPressure",
+  ]);
+  const eventLoopLag = resolveHealthMetric(input, [
+    "eventLoopLag",
+    "eventLoopLagMs",
+  ]);
 
   return {
     serviceName,
@@ -166,7 +289,7 @@ export function normalizeAuthorityRuntimeStatusReport(
           : undefined,
     reportedAt,
     state: state as RuntimeStatusState,
-    acceptingWork: Boolean(input.acceptingWork ?? input.accepting_work),
+    acceptingWork,
     numberOfRunningGraphs: Math.max(
       0,
       Math.trunc(
@@ -178,25 +301,22 @@ export function normalizeAuthorityRuntimeStatusReport(
         ) || 0,
       ),
     ),
-    cpuUsage: resolveHealthMetric(input, ["cpuUsage", "cpu", "cpuLoad"]),
-    memoryUsage: resolveHealthMetric(input, [
-      "memoryUsage",
-      "memory",
-      "memoryPressure",
-    ]),
-    eventLoopLag: resolveHealthMetric(input, [
-      "eventLoopLag",
-      "eventLoopLagMs",
-    ]),
+    cpuUsage,
+    memoryUsage,
+    eventLoopLag,
     isActive: Boolean(input.isActive ?? input.is_active ?? true),
     isNonResponsive: Boolean(
       input.isNonResponsive ?? input.is_non_responsive ?? false,
     ),
     isBlocked: Boolean(input.isBlocked ?? input.is_blocked ?? false),
-    health:
-      input.health && typeof input.health === "object"
-        ? (input.health as AnyObject)
-        : undefined,
+    health: sanitizeAuthorityRuntimeStatusHealth(input.health, {
+      state: state as RuntimeStatusState,
+      acceptingWork,
+      reportedAt,
+      cpuUsage,
+      memoryUsage,
+      eventLoopLag,
+    }),
   };
 }
 
@@ -212,14 +332,9 @@ export function buildAuthorityRuntimeStatusSignature(
     transportProtocols: report.transportProtocols ?? [],
     state: report.state,
     acceptingWork: report.acceptingWork,
-    numberOfRunningGraphs: report.numberOfRunningGraphs,
-    cpuUsage: report.cpuUsage ?? null,
-    memoryUsage: report.memoryUsage ?? null,
-    eventLoopLag: report.eventLoopLag ?? null,
     isActive: report.isActive,
     isNonResponsive: report.isNonResponsive,
     isBlocked: report.isBlocked,
     isFrontend: report.isFrontend ?? null,
-    health: report.health ?? {},
   });
 }

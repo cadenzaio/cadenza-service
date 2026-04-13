@@ -174,6 +174,15 @@ describe("RestController delegation resolution", () => {
     expect(resultContext.__status).toBe("success");
     expect(resultContext.ok).toBe(true);
     expect(resultContext.echoed).toEqual({ deviceId: "device-7" });
+    expect(
+      Cadenza.signalBroker
+        .listObservedSignals()
+        .filter(
+          (signal) =>
+            signal ===
+            "meta.rest.delegation_target_not_found:rest-direct-task-delegation",
+        ),
+    ).toEqual([]);
   }, 10_000);
 
   it("synthesizes delegation metadata for direct REST requests", async () => {

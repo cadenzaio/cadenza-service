@@ -10,8 +10,9 @@ import { formatTimestamp } from "../../utils/tools";
 import { isMetaIntentName } from "../../utils/inquiry";
 import {
   resolveRoutinePersistenceMetadata,
+  sanitizeExecutionPersistenceContext,
+  sanitizeExecutionPersistenceResultPayload,
   splitRoutinePersistenceContext,
-  stripLocalRoutinePersistenceHints,
 } from "../../utils/routinePersistence";
 import { registerActorSessionPersistenceTasks } from "./registerActorSessionPersistence";
 import type { Task } from "@cadenza.io/core";
@@ -87,6 +88,42 @@ function resolveTaskByName(name: unknown): Task | undefined {
   return taskName ? Cadenza.get(taskName) : undefined;
 }
 
+function resolveHelperFromMetadataContext(
+  ctx: Record<string, any>,
+): any {
+  const toolRuntime = Cadenza as typeof Cadenza & {
+    getHelper?: (name: string) => unknown;
+  };
+  const helperName = String(
+    ctx?.helperName ??
+      ctx?.data?.helperName ??
+      ctx?.data?.helper_name ??
+      ctx?.filter?.helperName ??
+      ctx?.filter?.helper_name ??
+      "",
+  );
+
+  return helperName ? toolRuntime.getHelper?.(helperName) : undefined;
+}
+
+function resolveGlobalFromMetadataContext(
+  ctx: Record<string, any>,
+): any {
+  const toolRuntime = Cadenza as typeof Cadenza & {
+    getGlobal?: (name: string) => unknown;
+  };
+  const globalName = String(
+    ctx?.globalName ??
+      ctx?.data?.globalName ??
+      ctx?.data?.global_name ??
+      ctx?.filter?.globalName ??
+      ctx?.filter?.global_name ??
+      "",
+  );
+
+  return globalName ? toolRuntime.getGlobal?.(globalName) : undefined;
+}
+
 function resolvePredecessorTaskFromMetadataContext(
   ctx: Record<string, any>,
 ): Task | undefined {
@@ -97,6 +134,23 @@ function resolvePredecessorTaskFromMetadataContext(
       ctx?.filter?.predecessorTaskName ??
       ctx?.filter?.predecessor_task_name,
   );
+}
+
+function sanitizePersistedTaskSourceFields(
+  task: Task | undefined,
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!task?.isMeta && !task?.isDeputy) {
+    return data;
+  }
+
+  return {
+    ...data,
+    functionString: "",
+    function_string: "",
+    tagIdGetter: null,
+    tag_id_getter: null,
+  };
 }
 
 function shouldSkipDirectTaskMetadata(task?: Task): boolean {
@@ -223,6 +277,10 @@ function shouldPersistBusinessInquiryCompletion(ctx: Record<string, any>): boole
   return inquiryName.length > 0 && !isMetaIntentName(inquiryName);
 }
 
+function shouldPersistExecutionTrace(ctx: Record<string, any>): boolean {
+  return ctx?.data?.isMeta !== true && ctx?.data?.is_meta !== true;
+}
+
 function shouldPersistRoutineExecution(ctx: Record<string, any>): boolean {
   if (ctx?.data?.isMeta === true || ctx?.data?.is_meta === true) {
     return false;
@@ -322,10 +380,10 @@ export default class GraphMetadataController {
       }
 
       return buildDatabaseTriggerContext(
-        {
+        sanitizePersistedTaskSourceFields(task, {
           ...ctx.data,
           serviceName: Cadenza.serviceRegistry.serviceName,
-        },
+        }),
         undefined,
         { onConflict },
         { onConflict },
@@ -476,6 +534,126 @@ export default class GraphMetadataController {
       .doOn("meta.task.intent_associated")
       .emits("global.meta.graph_metadata.task_intent_associated");
 
+    const buildHelperMetadataContext = (ctx: Record<string, any>) => {
+      if (!shouldEmitDirectPrimitiveMetadata()) {
+        return false;
+      }
+
+      const helper = resolveHelperFromMetadataContext(ctx);
+      if (!helper) {
+        return false;
+      }
+
+      return buildDatabaseTriggerContext({
+        ...(ctx.data as Record<string, unknown> | undefined),
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
+    };
+
+    createLocalGraphMetadataTask("Handle helper creation", buildHelperMetadataContext)
+      .doOn("meta.helper.created")
+      .emits("global.meta.graph_metadata.helper_created");
+
+    createLocalGraphMetadataTask("Handle helper update", buildHelperMetadataContext)
+      .doOn("meta.helper.updated")
+      .emits("global.meta.graph_metadata.helper_updated");
+
+    const buildGlobalMetadataContext = (ctx: Record<string, any>) => {
+      if (!shouldEmitDirectPrimitiveMetadata()) {
+        return false;
+      }
+
+      const globalDefinition = resolveGlobalFromMetadataContext(ctx);
+      if (!globalDefinition) {
+        return false;
+      }
+
+      return buildDatabaseTriggerContext({
+        ...(ctx.data as Record<string, unknown> | undefined),
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
+    };
+
+    createLocalGraphMetadataTask("Handle global creation", buildGlobalMetadataContext)
+      .doOn("meta.global.created")
+      .emits("global.meta.graph_metadata.global_created");
+
+    createLocalGraphMetadataTask("Handle global update", buildGlobalMetadataContext)
+      .doOn("meta.global.updated")
+      .emits("global.meta.graph_metadata.global_updated");
+
+    createLocalGraphMetadataTask("Handle task helper association", (ctx) => {
+      if (!shouldEmitDirectPrimitiveMetadata()) {
+        return false;
+      }
+
+      const task = resolveTaskFromMetadataContext(ctx as Record<string, any>);
+      if (shouldSkipDirectTaskMetadata(task)) {
+        return false;
+      }
+
+      return buildDatabaseTriggerContext({
+        ...(ctx.data as Record<string, unknown> | undefined),
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
+    })
+      .doOn("meta.task.helper_associated")
+      .emits("global.meta.graph_metadata.task_helper_associated");
+
+    createLocalGraphMetadataTask("Handle helper helper association", (ctx) => {
+      if (!shouldEmitDirectPrimitiveMetadata()) {
+        return false;
+      }
+
+      const helper = resolveHelperFromMetadataContext(ctx as Record<string, any>);
+      if (!helper) {
+        return false;
+      }
+
+      return buildDatabaseTriggerContext({
+        ...(ctx.data as Record<string, unknown> | undefined),
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
+    })
+      .doOn("meta.helper.helper_associated")
+      .emits("global.meta.graph_metadata.helper_helper_associated");
+
+    createLocalGraphMetadataTask("Handle task global association", (ctx) => {
+      if (!shouldEmitDirectPrimitiveMetadata()) {
+        return false;
+      }
+
+      const task = resolveTaskFromMetadataContext(ctx as Record<string, any>);
+      if (shouldSkipDirectTaskMetadata(task)) {
+        return false;
+      }
+
+      return buildDatabaseTriggerContext({
+        ...(ctx.data as Record<string, unknown> | undefined),
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
+    })
+      .doOn("meta.task.global_associated")
+      .emits("global.meta.graph_metadata.task_global_associated");
+
+    createLocalGraphMetadataTask("Handle helper global association", (ctx) => {
+      if (!shouldEmitDirectPrimitiveMetadata()) {
+        return false;
+      }
+
+      const helper = resolveHelperFromMetadataContext(ctx as Record<string, any>);
+      if (!helper) {
+        return false;
+      }
+
+      return buildDatabaseTriggerContext({
+        ...(ctx.data as Record<string, unknown> | undefined),
+        serviceName: Cadenza.serviceRegistry.serviceName,
+      });
+    })
+      .doOn("meta.helper.global_associated")
+      .emits("global.meta.graph_metadata.helper_global_associated");
+
     createLocalGraphMetadataTask("Handle task unsubscribing signal", (ctx) => {
       if (!shouldEmitDirectPrimitiveMetadata()) {
         return false;
@@ -567,6 +745,10 @@ export default class GraphMetadataController {
       .emits("global.meta.graph_metadata.task_added_to_routine");
 
     createLocalGraphMetadataTask("Handle new trace", (ctx) => {
+      if (!shouldPersistExecutionTrace(ctx as Record<string, any>)) {
+        return false;
+      }
+
       return buildDatabaseTriggerContext({
         ...ctx.data,
         service_name: Cadenza.serviceRegistry.serviceName,
@@ -584,10 +766,10 @@ export default class GraphMetadataController {
         }
 
         const routineData = (ctx.data as Record<string, any> | undefined) ?? {};
-        const sanitizedRoutineContext = stripLocalRoutinePersistenceHints(
+        const sanitizedRoutineContext = sanitizeExecutionPersistenceContext(
           (routineData.context as Record<string, any> | undefined) ?? {},
         );
-        const sanitizedRoutineMetaContext = stripLocalRoutinePersistenceHints(
+        const sanitizedRoutineMetaContext = sanitizeExecutionPersistenceContext(
           (routineData.metaContext as Record<string, any> | undefined) ?? {},
         );
 
@@ -763,12 +945,14 @@ export default class GraphMetadataController {
     createLocalGraphMetadataTask(
       "Handle routine execution ended",
       (ctx) => {
+        const sanitizedData = sanitizeExecutionPersistenceResultPayload({
+          ...ctx.data,
+          serviceName: Cadenza.serviceRegistry.serviceName,
+          serviceInstanceId: resolveExecutionObservabilityServiceInstanceId(),
+        });
+
         return buildDatabaseTriggerContext(
-          {
-            ...ctx.data,
-            serviceName: Cadenza.serviceRegistry.serviceName,
-            serviceInstanceId: resolveExecutionObservabilityServiceInstanceId(),
-          },
+          sanitizedData,
           (ctx.filter as Record<string, unknown> | undefined) ?? undefined,
         );
       },
@@ -786,10 +970,10 @@ export default class GraphMetadataController {
         }
 
         const taskExecutionData = (ctx.data as Record<string, any> | undefined) ?? {};
-        const sanitizedTaskContext = stripLocalRoutinePersistenceHints(
+        const sanitizedTaskContext = sanitizeExecutionPersistenceContext(
           (taskExecutionData.context as Record<string, any> | undefined) ?? {},
         );
-        const sanitizedTaskMetaContext = stripLocalRoutinePersistenceHints(
+        const sanitizedTaskMetaContext = sanitizeExecutionPersistenceContext(
           (taskExecutionData.metaContext as Record<string, any> | undefined) ?? {},
         );
         const routineMetadata = resolveRoutinePersistenceMetadata(
@@ -1103,12 +1287,14 @@ export default class GraphMetadataController {
           return false;
         }
 
+        const sanitizedData = sanitizeExecutionPersistenceResultPayload({
+          ...ctx.data,
+          serviceName: Cadenza.serviceRegistry.serviceName,
+          serviceInstanceId: resolveExecutionObservabilityServiceInstanceId(),
+        });
+
         return buildDatabaseTriggerContext(
-          {
-            ...ctx.data,
-            serviceName: Cadenza.serviceRegistry.serviceName,
-            serviceInstanceId: resolveExecutionObservabilityServiceInstanceId(),
-          },
+          sanitizedData,
           (ctx.filter as Record<string, unknown> | undefined) ?? undefined,
         );
       },

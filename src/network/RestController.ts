@@ -833,19 +833,19 @@ export default class RestController {
 
                   Cadenza.createEphemeralMetaTask(
                     "Resolve delegation",
-                    (endCtx) => resolveDelegation(endCtx, "success"),
+                    (endCtx) =>
+                      resolveDelegation(
+                        endCtx,
+                        endCtx?.errored || endCtx?.failed ? "error" : "success",
+                      ),
                     "Resolves a delegation request",
                     { register: false },
                   )
-                    .doOn(`meta.node.graph_completed:${deputyExecId}`)
+                    .doOn(
+                      `meta.node.graph_completed:${deputyExecId}`,
+                      targetNotFoundSignal,
+                    )
                     .emits(`meta.rest.delegation_resolved:${deputyExecId}`);
-
-                  Cadenza.createEphemeralMetaTask(
-                    "Resolve delegation target lookup failure",
-                    (endCtx) => resolveDelegation(endCtx, "error"),
-                    "Resolves delegation requests that cannot find a local task or routine",
-                    { register: false },
-                  ).doOn(targetNotFoundSignal);
 
                   if (
                     !Cadenza.get(remoteRoutineName) &&

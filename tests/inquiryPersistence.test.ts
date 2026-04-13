@@ -450,4 +450,40 @@ describe("inquiry persistence", () => {
     expect(inquiryCreatedPayloads).toEqual([]);
     expect(inquiryUpdatedPayloads).toEqual([]);
   });
+
+  it("does not emit execution-trace persistence for meta traces", async () => {
+    const executionTracePayloads: AnyObject[] = [];
+
+    Cadenza.createMetaTask("Capture execution trace metadata", (ctx) => {
+      executionTracePayloads.push(ctx);
+      return true;
+    }).doOn("global.meta.graph_metadata.execution_trace_created");
+
+    Cadenza.emit("meta.service_registry.registered_global_signals", {
+      serviceName: "InquiryService",
+    });
+    Cadenza.emit("meta.service_registry.registered_global_intents", {
+      serviceName: "InquiryService",
+    });
+    await waitForCondition(() => Cadenza.hasCompletedBootstrapSync());
+
+    const metaTask = Cadenza.createMetaTask("Run meta trace only", () => true, "", {
+      register: false,
+      isHidden: true,
+    });
+
+    Cadenza.run(metaTask, {});
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(executionTracePayloads).toHaveLength(0);
+
+    const businessTask = Cadenza.createTask("Run business trace", () => true);
+    Cadenza.run(businessTask, {});
+
+    await waitForCondition(() => executionTracePayloads.length === 1);
+    expect(executionTracePayloads[0].data).toMatchObject({
+      service_name: "InquiryService",
+      is_meta: false,
+    });
+  });
 });

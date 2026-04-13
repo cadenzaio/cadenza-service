@@ -66,6 +66,7 @@ function resetRuntimeState() {
   (ServiceRegistry as any)._instance = undefined;
   (SignalController as any)._instance = undefined;
   (SocketController as any)._instance = undefined;
+  delete (globalThis as any).__CADENZA_RUNTIME__;
 }
 
 describe("service registry transport registration", () => {
@@ -693,14 +694,18 @@ describe("service registry transport registration", () => {
         ],
         signalToTaskMaps: [],
       } as any);
+    const bootstrapFullSyncInquiryCount = () =>
+      inquireSpy.mock.calls.filter(
+        ([inquiry]) => inquiry === "meta-service-registry-full-sync",
+      ).length;
 
     registry.bootstrapFullSync(() => {}, {}, "service_setup_completed");
 
     expect(registry.bootstrapFullSyncRetryTimer).not.toBeNull();
 
-    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(120);
 
-    expect(inquireSpy).toHaveBeenCalledTimes(1);
+    expect(bootstrapFullSyncInquiryCount()).toBe(1);
     expect(
       syncRequestSpy.mock.calls.filter(
         ([signal]) => signal === "meta.sync_requested",
@@ -708,12 +713,9 @@ describe("service registry transport registration", () => {
     ).toHaveLength(1);
     expect(registry.bootstrapFullSyncRetryTimer).not.toBeNull();
 
-    await vi.advanceTimersByTimeAsync(1499);
-    expect(inquireSpy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_800);
 
-    await vi.advanceTimersByTimeAsync(1);
-
-    expect(inquireSpy).toHaveBeenCalledTimes(2);
+    expect(bootstrapFullSyncInquiryCount()).toBe(2);
     expect(
       syncRequestSpy.mock.calls.filter(
         ([signal]) => signal === "meta.sync_requested",
@@ -722,9 +724,9 @@ describe("service registry transport registration", () => {
     expect(registry.bootstrapFullSyncSatisfied).toBe(false);
     expect(registry.bootstrapFullSyncRetryTimer).not.toBeNull();
 
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(6_000);
 
-    expect(inquireSpy).toHaveBeenCalledTimes(3);
+    expect(bootstrapFullSyncInquiryCount()).toBe(3);
     expect(
       syncRequestSpy.mock.calls.filter(
         ([signal]) => signal === "meta.sync_requested",
@@ -733,9 +735,9 @@ describe("service registry transport registration", () => {
     expect(registry.bootstrapFullSyncSatisfied).toBe(false);
     expect(registry.bootstrapFullSyncRetryTimer).not.toBeNull();
 
-    await vi.advanceTimersByTimeAsync(12000);
+    await vi.advanceTimersByTimeAsync(14_400);
 
-    expect(inquireSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(bootstrapFullSyncInquiryCount()).toBeGreaterThanOrEqual(4);
     expect(
       syncRequestSpy.mock.calls.filter(
         ([signal]) => signal === "meta.sync_requested",
@@ -800,10 +802,10 @@ describe("service registry transport registration", () => {
     } as any);
 
     registry.bootstrapFullSync(() => {}, {}, "service_setup_completed");
-    await vi.advanceTimersByTimeAsync(100);
-    await vi.advanceTimersByTimeAsync(1500);
-    await vi.advanceTimersByTimeAsync(5000);
-    await vi.advanceTimersByTimeAsync(12000);
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(1_680);
+    await vi.advanceTimersByTimeAsync(6_000);
+    await vi.advanceTimersByTimeAsync(14_400);
 
       expect(inquireSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
       expect(registry.bootstrapFullSyncSatisfied).toBe(true);
@@ -814,7 +816,7 @@ describe("service registry transport registration", () => {
       expect(registry.bootstrapFullSyncSatisfied).toBe(false);
       expect(registry.bootstrapFullSyncRetryTimer).not.toBeNull();
 
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(120);
 
       expect(inquireSpy.mock.calls.length).toBeGreaterThanOrEqual(5);
       expect(registry.bootstrapFullSyncSatisfied).toBe(false);
@@ -1794,8 +1796,10 @@ describe("service registry transport registration", () => {
         }),
         __serviceCommunicationRetryAttempt: 1,
       }),
-      250,
+      expect.any(Number),
     );
+    expect((scheduleSpy.mock.calls[0] ?? [])[2]).toBeGreaterThanOrEqual(250);
+    expect((scheduleSpy.mock.calls[0] ?? [])[2]).toBeLessThanOrEqual(300);
   });
 
   it("persists authority service communication edges once both parents exist", async () => {
@@ -2735,7 +2739,13 @@ describe("service registry transport registration", () => {
         runtimeState: "healthy",
         acceptingWork: true,
         reportedAt: "2026-03-24T10:00:00.000Z",
-        health: {},
+        health: {
+          oversizedNestedBlob: {
+            diagnostics: {
+              shouldNot: "leave the local service",
+            },
+          },
+        },
         isFrontend: false,
         isDatabase: false,
         transports: [
@@ -2817,6 +2827,7 @@ describe("service registry transport registration", () => {
         },
       },
     });
+    expect(authorityReport?.health).not.toHaveProperty("oversizedNestedBlob");
     expect(durableUpdate).toBeNull();
     expect(peerRuntimeStatus).toMatchObject({
       serviceName: "OrdersService",
@@ -3427,6 +3438,105 @@ describe("service registry transport registration", () => {
     });
     expect(insertPayloads[0].onConflict).not.toMatchObject({
       target: ["name"],
+    });
+  });
+
+  it("keeps transport insert resolvers alive until the matching resolver signal arrives", async () => {
+    const resolveInsertTask = Cadenza.get(
+      "Resolve service registry insert for service_instance_transport",
+    );
+    expect(resolveInsertTask).toBeDefined();
+
+    const insertedContexts: Array<Record<string, unknown>> = [];
+    const resolvedContexts: Array<Record<string, unknown>> = [];
+    let releaseInsert: (() => void) | null = null;
+
+    const localInsertTask = Cadenza.createMetaTask(
+      "Test local service_instance_transport insert",
+      async (ctx) => {
+        insertedContexts.push({ ...(ctx as Record<string, unknown>) });
+        await new Promise<void>((resolve) => {
+          releaseInsert = resolve;
+        });
+
+        return {
+          ...ctx,
+          uuid:
+            (ctx as any).queryData?.data?.uuid ??
+            (ctx as any).data?.uuid ??
+            "transport-1",
+        };
+      },
+      "",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+
+    const getLocalInsertTaskSpy = vi.spyOn(Cadenza, "getLocalCadenzaDBInsertTask");
+    getLocalInsertTaskSpy.mockImplementation((tableName: string) => {
+      if (tableName === "service_instance_transport") {
+        return localInsertTask;
+      }
+
+      return undefined;
+    });
+
+    const probeTask = Cadenza.createMetaTask(
+      "Capture resolved transport insert",
+      (ctx) => {
+        resolvedContexts.push({ ...(ctx as Record<string, unknown>) });
+        return true;
+      },
+      "",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
+
+    resolveInsertTask!.then(probeTask);
+
+    Cadenza.run(resolveInsertTask!, {
+      data: {
+        uuid: "transport-1",
+        service_instance_id: "orders-instance-1",
+        origin: "http://orders.localhost",
+        role: "public",
+      },
+      queryData: {
+        data: {
+          uuid: "transport-1",
+          service_instance_id: "orders-instance-1",
+          origin: "http://orders.localhost",
+          role: "public",
+        },
+      },
+    });
+
+    await waitForCondition(() => insertedContexts.length === 1, 1_500);
+
+    Cadenza.signalBroker.emit(
+      "meta.service_registry.insert_execution_resolved:service_instance_transport",
+      {
+        __resolverRequestId: "resolver-other-1",
+        queryData: {
+          data: {
+            uuid: "transport-other",
+          },
+        },
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(resolvedContexts).toHaveLength(0);
+
+    releaseInsert?.();
+
+    await waitForCondition(() => resolvedContexts.length === 1, 1_500);
+    expect(resolvedContexts[0]).toMatchObject({
+      uuid: "transport-1",
     });
   });
 
@@ -6825,6 +6935,83 @@ describe("service registry transport registration", () => {
     expect(body.__declaredTransports).toBeUndefined();
     expect(body.httpServer).toBeUndefined();
     expect(body.joinedContexts).toBeUndefined();
+  });
+
+  it("strips duplicate db operation payload keys from bootstrap delegation bodies", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+    registry.noteAuthorityBootstrapHandshake({
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-live-1",
+      serviceTransportId: "cadenza-db-transport-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        __status: "success",
+        applied: true,
+      }),
+    } as any);
+
+    await registry.invokeAuthorityBootstrapRoutine(
+      "Insert task",
+      {
+        data: {
+          name: "Insert service_instance",
+          function_string: "function () { return true; }",
+        },
+        transaction: true,
+        onConflict: {
+          target: ["name"],
+          action: {
+            do: "update",
+            set: {
+              function_string: "excluded",
+            },
+          },
+        },
+        queryData: {
+          data: {
+            name: "Insert service_instance",
+            function_string: "function () { return true; }",
+          },
+          transaction: true,
+          onConflict: {
+            target: ["name"],
+            action: {
+              do: "update",
+              set: {
+                function_string: "excluded",
+              },
+            },
+          },
+        },
+      },
+      5_000,
+    );
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body ?? "{}"));
+    expect(body.queryData).toMatchObject({
+      data: {
+        name: "Insert service_instance",
+        function_string: "function () { return true; }",
+      },
+      transaction: true,
+      onConflict: {
+        target: ["name"],
+      },
+    });
+    expect(body.data).toBeUndefined();
+    expect(body.transaction).toBeUndefined();
+    expect(body.onConflict).toBeUndefined();
   });
 
   it("re-requests the authority bootstrap handshake when CadenzaDB is reported not responding", async () => {

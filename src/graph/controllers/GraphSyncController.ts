@@ -1,5 +1,6 @@
 import Cadenza from "../../Cadenza";
 import {
+  AnyObject,
   META_ACTOR_SESSION_STATE_PERSIST_INTENT,
   Task,
 } from "@cadenza.io/core";
@@ -91,6 +92,21 @@ function buildActorRegistrationData(actor: any): Record<string, unknown> {
     session_policy: definition?.session ?? {},
     is_meta: actorKind === "meta",
     version: 1,
+  };
+}
+
+function sanitizePersistedTaskSourceFields(
+  task: Task,
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!task.isMeta && !task.isDeputy) {
+    return data;
+  }
+
+  return {
+    ...data,
+    function_string: "",
+    tag_id_getter: null,
   };
 }
 
@@ -1754,40 +1770,42 @@ export default class GraphSyncController {
           const { __functionString, __getTagCallback } = task.export();
           this.tasksSynced = false;
 
+          const taskRegistrationData = sanitizePersistedTaskSourceFields(task, {
+            name: task.name,
+            version: task.version,
+            description: task.description,
+            function_string: __functionString,
+            tag_id_getter: __getTagCallback,
+            layer_index: task.layerIndex,
+            concurrency: task.concurrency,
+            timeout: task.timeout,
+            is_unique: task.isUnique,
+            is_signal: task.isSignal,
+            is_throttled: task.isThrottled,
+            is_debounce: task.isDebounce,
+            is_ephemeral: task.isEphemeral,
+            is_meta: task.isMeta,
+            is_sub_meta: task.isSubMeta,
+            is_hidden: task.isHidden,
+            validate_input_context: task.validateInputContext,
+            validate_output_context: task.validateOutputContext,
+            retry_count: task.retryCount,
+            retry_delay: task.retryDelay,
+            retry_delay_max: task.retryDelayMax,
+            retry_delay_factor: task.retryDelayFactor,
+            service_name: serviceName,
+            signals: {
+              emits: Array.from(task.emitsSignals),
+              signalsToEmitAfter: Array.from(task.signalsToEmitAfter),
+              signalsToEmitOnFail: Array.from(task.signalsToEmitOnFail),
+              observed: Array.from(task.observedSignals),
+            },
+            intents: Array.from(task.handlesIntents),
+          });
+
           yield {
             __syncing: ctx.__syncing,
-            data: {
-              name: task.name,
-              version: task.version,
-              description: task.description,
-              function_string: __functionString,
-              tag_id_getter: __getTagCallback,
-              layer_index: task.layerIndex,
-              concurrency: task.concurrency,
-              timeout: task.timeout,
-              is_unique: task.isUnique,
-              is_signal: task.isSignal,
-              is_throttled: task.isThrottled,
-              is_debounce: task.isDebounce,
-              is_ephemeral: task.isEphemeral,
-              is_meta: task.isMeta,
-              is_sub_meta: task.isSubMeta,
-              is_hidden: task.isHidden,
-              validate_input_context: task.validateInputContext,
-              validate_output_context: task.validateOutputContext,
-              retry_count: task.retryCount,
-              retry_delay: task.retryDelay,
-              retry_delay_max: task.retryDelayMax,
-              retry_delay_factor: task.retryDelayFactor,
-              service_name: serviceName,
-              signals: {
-                emits: Array.from(task.emitsSignals),
-                signalsToEmitAfter: Array.from(task.signalsToEmitAfter),
-                signalsToEmitOnFail: Array.from(task.signalsToEmitOnFail),
-                observed: Array.from(task.observedSignals),
-              },
-              intents: Array.from(task.handlesIntents),
-            },
+            data: taskRegistrationData,
             __taskName: task.name,
           };
         }
@@ -3217,14 +3235,55 @@ export default class GraphSyncController {
       startRoutinePrimitiveSyncTask,
     );
 
-    const getAllTasksForSyncTask = Cadenza.registry.getAllTasks!.clone();
+    const getAllTasksForSyncTask = Cadenza.createMetaTask(
+      "Get all tasks for sync",
+      (ctx) => ({
+        ...ctx,
+        tasks: Array.from(Cadenza.registry.tasks.values()),
+      }),
+      "Collects local tasks for the primitive sync phase.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
     startTaskPrimitiveSyncTask.then(
       getAllTasksForSyncTask,
       gatherTaskRegistrationTask,
     );
     getAllTasksForSyncTask.then(this.splitTasksForRegistration);
 
-    const getSignalsForSyncTask = Cadenza.signalBroker.getSignalsTask!.clone();
+    const getSignalsForSyncTask = Cadenza.createMetaTask(
+      "Get signals for sync",
+      (ctx) => {
+        const uniqueSignals = Array.from(
+          new Set([
+            ...Cadenza.signalBroker.signalObservers.keys(),
+            ...Cadenza.signalBroker.emittedSignalsRegistry,
+          ]),
+        ).filter((signal) => !signal.includes(":"));
+
+        const processedSignals = uniqueSignals.map((signal) => ({
+          signal,
+          data: {
+            registered:
+              Cadenza.signalBroker.signalObservers.get(signal)?.registered ??
+              false,
+            metadata: Cadenza.signalBroker.getSignalMetadata(signal) ?? null,
+          },
+        }));
+
+        return {
+          ...ctx,
+          signals: processedSignals,
+        };
+      },
+      "Collects local signals for the primitive sync phase.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
     startSignalPrimitiveSyncTask.then(
       getSignalsForSyncTask,
       gatherSignalRegistrationTask,
@@ -3269,7 +3328,18 @@ export default class GraphSyncController {
     );
     getAllActorsForSyncTask.then(this.splitActorsForRegistration);
 
-    const getAllRoutinesForSyncTask = Cadenza.registry.getAllRoutines!.clone();
+    const getAllRoutinesForSyncTask = Cadenza.createMetaTask(
+      "Get all routines for sync",
+      (ctx) => ({
+        ...ctx,
+        routines: Array.from(Cadenza.registry.routines.values()),
+      }),
+      "Collects local routines for the primitive sync phase.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
     startRoutinePrimitiveSyncTask.then(
       getAllRoutinesForSyncTask,
       gatherRoutineRegistrationTask,
@@ -3277,7 +3347,19 @@ export default class GraphSyncController {
     getAllRoutinesForSyncTask.then(this.splitRoutinesTask);
 
     const iterateTasksForDirectionalTaskMapSyncTask =
-      Cadenza.registry.doForEachTask!.clone();
+      Cadenza.createMetaTask(
+        "Iterate tasks for directional task map sync",
+        function* (ctx: AnyObject) {
+          for (const task of Cadenza.registry.tasks.values()) {
+            yield { ...ctx, task };
+          }
+        },
+        "Iterates local tasks for directional task-map sync.",
+        {
+          register: false,
+          isHidden: true,
+        },
+      );
     startDirectionalTaskMapSyncTask.then(
       iterateTasksForDirectionalTaskMapSyncTask,
       gatherDirectionalTaskMapRegistrationTask,
@@ -3286,7 +3368,19 @@ export default class GraphSyncController {
     recordTaskMapRegistrationTask.then(gatherDirectionalTaskMapRegistrationTask);
 
     const iterateTasksForSignalTaskMapSyncTask =
-      Cadenza.registry.doForEachTask!.clone();
+      Cadenza.createMetaTask(
+        "Iterate tasks for signal task map sync",
+        function* (ctx: AnyObject) {
+          for (const task of Cadenza.registry.tasks.values()) {
+            yield { ...ctx, task };
+          }
+        },
+        "Iterates local tasks for signal-to-task map sync.",
+        {
+          register: false,
+          isHidden: true,
+        },
+      );
     startSignalTaskMapSyncTask.then(
       iterateTasksForSignalTaskMapSyncTask,
       gatherSignalTaskMapRegistrationTask,
@@ -3295,7 +3389,19 @@ export default class GraphSyncController {
     this.registerSignalToTaskMapTask.then(gatherSignalTaskMapRegistrationTask);
 
     const iterateTasksForIntentTaskMapSyncTask =
-      Cadenza.registry.doForEachTask!.clone();
+      Cadenza.createMetaTask(
+        "Iterate tasks for intent task map sync",
+        function* (ctx: AnyObject) {
+          for (const task of Cadenza.registry.tasks.values()) {
+            yield { ...ctx, task };
+          }
+        },
+        "Iterates local tasks for intent-to-task map sync.",
+        {
+          register: false,
+          isHidden: true,
+        },
+      );
     startIntentTaskMapSyncTask.then(
       iterateTasksForIntentTaskMapSyncTask,
       gatherIntentTaskMapRegistrationTask,
@@ -3304,14 +3410,37 @@ export default class GraphSyncController {
     this.registerIntentToTaskMapTask.then(gatherIntentTaskMapRegistrationTask);
 
     const iterateTasksForActorTaskMapSyncTask =
-      Cadenza.registry.doForEachTask!.clone();
+      Cadenza.createMetaTask(
+        "Iterate tasks for actor task map sync",
+        function* (ctx: AnyObject) {
+          for (const task of Cadenza.registry.tasks.values()) {
+            yield { ...ctx, task };
+          }
+        },
+        "Iterates local tasks for actor-to-task map sync.",
+        {
+          register: false,
+          isHidden: true,
+        },
+      );
     startActorTaskMapSyncTask.then(
       iterateTasksForActorTaskMapSyncTask,
       gatherActorTaskMapRegistrationTask,
     );
     iterateTasksForActorTaskMapSyncTask.then(this.registerActorTaskMapTask);
 
-    const getAllRoutinesForTaskMapSyncTask = Cadenza.registry.getAllRoutines!.clone();
+    const getAllRoutinesForTaskMapSyncTask = Cadenza.createMetaTask(
+      "Get all routines for task map sync",
+      (ctx) => ({
+        ...ctx,
+        routines: Array.from(Cadenza.registry.routines.values()),
+      }),
+      "Collects local routines for routine-to-task map sync.",
+      {
+        register: false,
+        isHidden: true,
+      },
+    );
     startRoutineTaskMapSyncTask.then(
       getAllRoutinesForTaskMapSyncTask,
       gatherRoutineTaskMapRegistrationTask,

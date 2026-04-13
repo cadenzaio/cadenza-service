@@ -113,6 +113,12 @@ export default class DatabaseTask extends DeputyTask {
     this.queryData = queryData;
   }
 
+  clone(): never {
+    throw new Error(
+      `DatabaseTask '${this.name}' does not support clone(). Create a new named database task or use a flow-specific meta task that performs the default database inquiry instead.`,
+    );
+  }
+
   /**
    * Executes the specified task within the given context.
    *
@@ -341,6 +347,28 @@ export default class DatabaseTask extends DeputyTask {
       });
     }
 
-    return this.taskFunction(deputyContext, emit, inquire, progressCallback);
+    const resolvedTools =
+      typeof (Cadenza as any).resolveToolsForOwner === "function"
+        ? (Cadenza as any).resolveToolsForOwner(
+            this,
+            deputyContext,
+            emit,
+            inquire,
+            progressCallback,
+          )
+        : {
+            helpers: {},
+            globals: {},
+          };
+    const resolvedProgressCallback =
+      typeof progressCallback === "function" ? progressCallback : () => {};
+
+    return (this.taskFunction as any)(
+      deputyContext,
+      emit,
+      inquire,
+      resolvedTools,
+      resolvedProgressCallback,
+    );
   }
 }

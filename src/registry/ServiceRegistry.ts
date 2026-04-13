@@ -66,8 +66,14 @@ import {
   RUNTIME_STATUS_AUTHORITY_SYNC_REQUESTED_SIGNAL,
   buildAuthorityRuntimeStatusSignature,
   normalizeAuthorityRuntimeStatusReport,
+  sanitizeAuthorityRuntimeStatusHealth,
   type AuthorityRuntimeStatusReport,
 } from "./runtimeStatusContract";
+import {
+  buildDeterministicJitteredDelayMs,
+  buildDeterministicJitterOffsetMs,
+  normalizeJitterRatio,
+} from "./runtimeJitter";
 import {
   AUTHORITY_BOOTSTRAP_INTENT_SPECS,
   AUTHORITY_BOOTSTRAP_FULL_SYNC_INTENT,
@@ -411,6 +417,53 @@ function sanitizeAuthorityBootstrapDelegationContext(ctx: AnyObject): AnyObject 
   }
 
   return sanitized;
+}
+
+const BOOTSTRAP_DB_OPERATION_CONTEXT_KEYS = [
+  "data",
+  "batch",
+  "transaction",
+  "onConflict",
+  "filter",
+  "fields",
+  "joins",
+  "sort",
+  "limit",
+  "offset",
+  "queryMode",
+  "aggregates",
+  "groupBy",
+] as const;
+
+function isBootstrapDbOperationRoutineName(value: unknown): boolean {
+  return /^(Insert|Update|Query|Delete)\s+/.test(String(value ?? "").trim());
+}
+
+function compactAuthorityBootstrapRequestBody(ctx: AnyObject): AnyObject {
+  if (!isBootstrapDbOperationRoutineName(ctx.__remoteRoutineName)) {
+    return ctx;
+  }
+
+  const queryData =
+    ctx.queryData && typeof ctx.queryData === "object"
+      ? ({ ...(ctx.queryData as AnyObject) } as AnyObject)
+      : null;
+  if (!queryData) {
+    return ctx;
+  }
+
+  const compacted: AnyObject = {
+    ...ctx,
+    queryData,
+  };
+
+  for (const key of BOOTSTRAP_DB_OPERATION_CONTEXT_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(queryData, key)) {
+      delete compacted[key];
+    }
+  }
+
+  return compacted;
 }
 
 function cloneServiceRegistryContextValue<T>(value: T): T {
@@ -1025,6 +1078,145 @@ function resolveServiceRegistryInsertTask(
       new Promise((resolve) => {
         const resolverRequestId = uuid();
 
+        const localInsertTask = Cadenza.getLocalCadenzaDBInsertTask(tableName);
+        const bootstrapAuthorityInsertSpec =
+          !localInsertTask && Cadenza.serviceRegistry.connectsToCadenzaDB
+            ? getAuthorityBootstrapInsertIntentSpecForTable(tableName)
+            : null;
+        const resolvedTargetServiceName = resolveServiceNameFromContext(ctx);
+        const selfBootstrapRetrySignal =
+          Cadenza.serviceRegistry.serviceName === "CadenzaDB" &&
+          resolvedTargetServiceName === "CadenzaDB" &&
+          !localInsertTask
+            ? getSelfBootstrapRegistrationRetrySignal(tableName)
+            : null;
+
+        if (selfBootstrapRetrySignal) {
+          Cadenza.schedule(
+            selfBootstrapRetrySignal,
+            {
+              ...ctx,
+            },
+            250,
+          );
+          resolve(false);
+          return;
+        }
+
+        if (bootstrapAuthorityInsertSpec) {
+          const sanitizedContext = sanitizeServiceRegistryInsertExecutionContext(ctx);
+          const nextQueryData = buildServiceRegistryInsertQueryData(
+            tableName,
+            sanitizedContext,
+            queryData,
+          );
+          const inquiryContext = ensureDelegationContextMetadata({
+            ...sanitizedContext,
+            data:
+              nextQueryData.data !== undefined
+                ? nextQueryData.data
+                : sanitizedContext.data,
+            batch:
+              nextQueryData.batch !== undefined
+                ? nextQueryData.batch
+                : sanitizedContext.batch,
+            onConflict:
+              Object.prototype.hasOwnProperty.call(nextQueryData, "onConflict")
+                ? nextQueryData.onConflict
+                : undefined,
+            transaction:
+              nextQueryData.transaction !== undefined
+                ? nextQueryData.transaction
+                : sanitizedContext.transaction,
+            queryData: nextQueryData,
+          }) as AnyObject;
+
+          inquiryContext.__metadata = {
+            ...(inquiryContext.__metadata ?? {}),
+            __skipRemoteExecution:
+              inquiryContext.__metadata?.__skipRemoteExecution ??
+              inquiryContext.__skipRemoteExecution ??
+              false,
+            __blockRemoteExecution:
+              inquiryContext.__metadata?.__blockRemoteExecution ??
+              inquiryContext.__blockRemoteExecution ??
+              false,
+          };
+
+          Cadenza.serviceRegistry.ensureBootstrapAuthorityControlPlaneForInquiry(
+            bootstrapAuthorityInsertSpec.intentName,
+            inquiryContext,
+          );
+
+          void Cadenza.inquire(
+            bootstrapAuthorityInsertSpec.intentName,
+            inquiryContext,
+            {
+              requireComplete: true,
+              timeout: bootstrapAuthorityInsertSpec.defaultTimeoutMs,
+            },
+          )
+            .then((result) =>
+              resolve(
+                resolveBootstrapAuthorityInsertResult(
+                  tableName,
+                  sanitizedContext,
+                  nextQueryData,
+                  result,
+                  emit,
+                ) as any,
+              ),
+            )
+            .catch((error) =>
+              resolve(
+                resolveBootstrapAuthorityInsertResult(
+                  tableName,
+                  sanitizedContext,
+                  nextQueryData,
+                  error,
+                  emit,
+                ) as any,
+              ),
+            );
+          return;
+        }
+
+        const executionSignal = localInsertTask
+          ? localExecutionRequestedSignal
+          : remoteExecutionRequestedSignal;
+
+        if (
+          (tableName === "service_instance" || tableName === "service") &&
+          (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+            process.env.CADENZA_INSTANCE_DEBUG === "true")
+        ) {
+          console.log("[CADENZA_INSTANCE_DEBUG] resolve_service_registry_insert", {
+            tableName,
+            executionSignal,
+            hasLocalInsertTask: !!localInsertTask,
+            serviceName: ctx.__serviceName ?? ctx.data?.service_name ?? null,
+            serviceInstanceId: ctx.__serviceInstanceId ?? ctx.data?.uuid ?? null,
+            hasData: !!ctx.data,
+            dataKeys:
+              ctx.data && typeof ctx.data === "object"
+                ? Object.keys(ctx.data)
+                : [],
+            registrationKeys:
+              ctx.__registrationData &&
+              typeof ctx.__registrationData === "object"
+                ? Object.keys(ctx.__registrationData)
+                : [],
+          });
+        }
+
+        if (
+          localInsertTask &&
+          !wiredLocalTaskNames.has(localInsertTask.name)
+        ) {
+          wireExecutionTarget(localInsertTask, prepareLocalExecutionTask);
+          wiredLocalTaskNames.add(localInsertTask.name);
+        }
+
         Cadenza.createEphemeralMetaTask(
           `Resolve service registry insert execution for ${tableName} (${resolverRequestId})`,
           (resultCtx) => {
@@ -1212,147 +1404,10 @@ function resolveServiceRegistryInsertTask(
           `Resolves signal-driven ${tableName} service-registry insert execution.`,
           {
             register: false,
+            once: false,
+            destroyCondition: (result) => result !== false,
           },
         ).doOn(executionResolvedSignal, executionFailedSignal);
-
-        const localInsertTask = Cadenza.getLocalCadenzaDBInsertTask(tableName);
-        const bootstrapAuthorityInsertSpec =
-          !localInsertTask && Cadenza.serviceRegistry.connectsToCadenzaDB
-            ? getAuthorityBootstrapInsertIntentSpecForTable(tableName)
-            : null;
-        const resolvedTargetServiceName = resolveServiceNameFromContext(ctx);
-        const selfBootstrapRetrySignal =
-          Cadenza.serviceRegistry.serviceName === "CadenzaDB" &&
-          resolvedTargetServiceName === "CadenzaDB" &&
-          !localInsertTask
-            ? getSelfBootstrapRegistrationRetrySignal(tableName)
-            : null;
-
-        if (selfBootstrapRetrySignal) {
-          Cadenza.schedule(
-            selfBootstrapRetrySignal,
-            {
-              ...ctx,
-            },
-            250,
-          );
-          resolve(false);
-          return;
-        }
-
-        if (bootstrapAuthorityInsertSpec) {
-          const sanitizedContext = sanitizeServiceRegistryInsertExecutionContext(ctx);
-          const nextQueryData = buildServiceRegistryInsertQueryData(
-            tableName,
-            sanitizedContext,
-            queryData,
-          );
-          const inquiryContext = ensureDelegationContextMetadata({
-            ...sanitizedContext,
-            data:
-              nextQueryData.data !== undefined
-                ? nextQueryData.data
-                : sanitizedContext.data,
-            batch:
-              nextQueryData.batch !== undefined
-                ? nextQueryData.batch
-                : sanitizedContext.batch,
-            onConflict:
-              Object.prototype.hasOwnProperty.call(nextQueryData, "onConflict")
-                ? nextQueryData.onConflict
-                : undefined,
-            transaction:
-              nextQueryData.transaction !== undefined
-                ? nextQueryData.transaction
-                : sanitizedContext.transaction,
-            queryData: nextQueryData,
-          }) as AnyObject;
-
-          inquiryContext.__metadata = {
-            ...(inquiryContext.__metadata ?? {}),
-            __skipRemoteExecution:
-              inquiryContext.__metadata?.__skipRemoteExecution ??
-              inquiryContext.__skipRemoteExecution ??
-              false,
-            __blockRemoteExecution:
-              inquiryContext.__metadata?.__blockRemoteExecution ??
-              inquiryContext.__blockRemoteExecution ??
-              false,
-          };
-
-          Cadenza.serviceRegistry.ensureBootstrapAuthorityControlPlaneForInquiry(
-            bootstrapAuthorityInsertSpec.intentName,
-            inquiryContext,
-          );
-
-          void Cadenza.inquire(
-            bootstrapAuthorityInsertSpec.intentName,
-            inquiryContext,
-            {
-              requireComplete: true,
-              timeout: bootstrapAuthorityInsertSpec.defaultTimeoutMs,
-            },
-          )
-            .then((result) =>
-              resolve(
-                resolveBootstrapAuthorityInsertResult(
-                  tableName,
-                  sanitizedContext,
-                  nextQueryData,
-                  result,
-                  emit,
-                ) as any,
-              ),
-            )
-            .catch((error) =>
-              resolve(
-                resolveBootstrapAuthorityInsertResult(
-                  tableName,
-                  sanitizedContext,
-                  nextQueryData,
-                  error,
-                  emit,
-                ) as any,
-              ),
-            );
-          return;
-        }
-
-        const executionSignal = localInsertTask
-          ? localExecutionRequestedSignal
-          : remoteExecutionRequestedSignal;
-
-        if (
-          (tableName === "service_instance" || tableName === "service") &&
-          (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
-            process.env.CADENZA_INSTANCE_DEBUG === "true")
-        ) {
-          console.log("[CADENZA_INSTANCE_DEBUG] resolve_service_registry_insert", {
-            tableName,
-            executionSignal,
-            hasLocalInsertTask: !!localInsertTask,
-            serviceName: ctx.__serviceName ?? ctx.data?.service_name ?? null,
-            serviceInstanceId: ctx.__serviceInstanceId ?? ctx.data?.uuid ?? null,
-            hasData: !!ctx.data,
-            dataKeys:
-              ctx.data && typeof ctx.data === "object"
-                ? Object.keys(ctx.data)
-                : [],
-            registrationKeys:
-              ctx.__registrationData &&
-              typeof ctx.__registrationData === "object"
-                ? Object.keys(ctx.__registrationData)
-                : [],
-          });
-        }
-
-        if (
-          localInsertTask &&
-          !wiredLocalTaskNames.has(localInsertTask.name)
-        ) {
-          wireExecutionTarget(localInsertTask, prepareLocalExecutionTask);
-          wiredLocalTaskNames.add(localInsertTask.name);
-        }
 
         emit(executionSignal, {
           ...ctx,
@@ -1381,6 +1436,20 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
   }
 
   return normalized;
+}
+
+function readNonNegativeFloatEnv(name: string, fallback: number): number {
+  if (typeof process === "undefined") {
+    return fallback;
+  }
+
+  const raw = process.env?.[name];
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+
+  return parsed;
 }
 
 export interface DeputyDescriptor {
@@ -1649,6 +1718,9 @@ export default class ServiceRegistry {
     "CADENZA_RUNTIME_STATUS_REST_REFRESH_MS",
     this.runtimeMetricsSampleIntervalMs,
   );
+  private readonly runtimeStatusLoopJitterRatio = normalizeJitterRatio(
+    readNonNegativeFloatEnv("CADENZA_RUNTIME_STATUS_JITTER_RATIO", 0.2),
+  );
   private readonly runtimeStatusMissThreshold = readPositiveIntegerEnv(
     "CADENZA_RUNTIME_STATUS_MISSED_HEARTBEATS",
     3,
@@ -1696,6 +1768,18 @@ export default class ServiceRegistry {
   private readonly overloadedGraphThreshold = readPositiveIntegerEnv(
     "CADENZA_RUNTIME_STATUS_OVERLOADED_GRAPH_THRESHOLD",
     20,
+  );
+  private readonly bootstrapFullSyncRetryJitterRatio = normalizeJitterRatio(
+    readNonNegativeFloatEnv(
+      "CADENZA_BOOTSTRAP_FULL_SYNC_RETRY_JITTER_RATIO",
+      0.2,
+    ),
+  );
+  private readonly serviceCommunicationRetryJitterRatio = normalizeJitterRatio(
+    readNonNegativeFloatEnv(
+      "CADENZA_SERVICE_COMMUNICATION_RETRY_JITTER_RATIO",
+      0.2,
+    ),
   );
   serviceName: string | null = null;
   serviceInstanceId: string | null = null;
@@ -2949,32 +3033,34 @@ export default class ServiceRegistry {
 
     try {
       const sanitizedContext = sanitizeAuthorityBootstrapDelegationContext(context);
-      const requestBody = stripDelegationRequestSnapshot(
-        ensureDelegationContextMetadata(
-          attachDelegationRequestSnapshot({
-            ...sanitizedContext,
-            __remoteRoutineName: remoteRoutineName,
-            __serviceName: "CadenzaDB",
-            __localServiceName: this.serviceName,
-            __timeout: timeoutMs,
-            __syncing: true,
-            __transportOrigin: target.origin,
-            __transportProtocol: "rest",
-            __transportProtocols: ["rest"],
-            __routeKey: target.routeKey,
-            routeKey: target.routeKey,
-            __fetchId: target.fetchId,
-            fetchId: target.fetchId,
-            __metadata: {
-              ...(sanitizedContext.__metadata &&
-              typeof sanitizedContext.__metadata === "object"
-                ? sanitizedContext.__metadata
-                : {}),
+      const requestBody = compactAuthorityBootstrapRequestBody(
+        stripDelegationRequestSnapshot(
+          ensureDelegationContextMetadata(
+            attachDelegationRequestSnapshot({
+              ...sanitizedContext,
+              __remoteRoutineName: remoteRoutineName,
+              __serviceName: "CadenzaDB",
+              __localServiceName: this.serviceName,
               __timeout: timeoutMs,
               __syncing: true,
-              __authorityBootstrapChannel: true,
-            },
-          }),
+              __transportOrigin: target.origin,
+              __transportProtocol: "rest",
+              __transportProtocols: ["rest"],
+              __routeKey: target.routeKey,
+              routeKey: target.routeKey,
+              __fetchId: target.fetchId,
+              fetchId: target.fetchId,
+              __metadata: {
+                ...(sanitizedContext.__metadata &&
+                typeof sanitizedContext.__metadata === "object"
+                  ? sanitizedContext.__metadata
+                  : {}),
+                __timeout: timeoutMs,
+                __syncing: true,
+                __authorityBootstrapChannel: true,
+              },
+            }),
+          ),
         ),
       );
 
@@ -3239,10 +3325,15 @@ export default class ServiceRegistry {
         }
 
         const scheduleRetry = (reason: string, error?: unknown) => {
-          const delayMs =
+          const baseDelayMs =
             SERVICE_COMMUNICATION_PERSIST_RETRY_DELAYS_MS[descriptor.retryAttempt];
           const nextAttempt = descriptor.retryAttempt + 1;
-          if (delayMs !== undefined) {
+          if (baseDelayMs !== undefined) {
+            const delayMs = buildDeterministicJitteredDelayMs(
+              baseDelayMs,
+              this.serviceCommunicationRetryJitterRatio,
+              `${descriptor.serviceInstanceId}:${descriptor.communicationType}:${descriptor.retryAttempt}`,
+            );
             Cadenza.schedule(
               retrySignal,
               buildServiceCommunicationRetryContext({
@@ -3441,6 +3532,44 @@ export default class ServiceRegistry {
     );
   }
 
+  private buildDeterministicInstanceJitterKey(scope: string): string {
+    const serviceName = String(this.serviceName ?? "").trim() || "unknown-service";
+    const serviceInstanceId =
+      String(this.serviceInstanceId ?? "").trim() || "pending-instance";
+
+    return `${serviceName}:${serviceInstanceId}:${scope}`;
+  }
+
+  private buildJitteredIntervalStartDate(
+    intervalMs: number,
+    scope: string,
+  ): Date | undefined {
+    const jitterOffsetMs = buildDeterministicJitterOffsetMs(
+      intervalMs,
+      this.runtimeStatusLoopJitterRatio,
+      this.buildDeterministicInstanceJitterKey(scope),
+    );
+
+    if (jitterOffsetMs <= 0) {
+      return undefined;
+    }
+
+    return new Date(Date.now() + intervalMs + jitterOffsetMs);
+  }
+
+  private buildJitteredBootstrapRetryDelayMs(
+    baseDelayMs: number,
+    attempt: number,
+  ): number {
+    return buildDeterministicJitteredDelayMs(
+      baseDelayMs,
+      this.bootstrapFullSyncRetryJitterRatio,
+      this.buildDeterministicInstanceJitterKey(
+        `bootstrap-full-sync-retry-${attempt}`,
+      ),
+    );
+  }
+
   private ensureAuthorityBootstrapSignalTransmissions(): boolean {
     if (this.serviceName !== "CadenzaDB") {
       return false;
@@ -3555,8 +3684,11 @@ export default class ServiceRegistry {
     const retryGeneration = this.bootstrapFullSyncRetryGeneration;
     const retryReason =
       this.bootstrapFullSyncRetryReason ?? "service_registry_bootstrap_retry";
-    const delayMs = EARLY_FULL_SYNC_DELAYS_MS[this.bootstrapFullSyncRetryIndex];
     const attempt = this.bootstrapFullSyncRetryIndex + 1;
+    const delayMs = this.buildJitteredBootstrapRetryDelayMs(
+      EARLY_FULL_SYNC_DELAYS_MS[this.bootstrapFullSyncRetryIndex],
+      attempt,
+    );
     this.bootstrapFullSyncRetryIndex += 1;
 
     this.bootstrapFullSyncRetryTimer = setTimeout(() => {
@@ -6391,6 +6523,18 @@ export default class ServiceRegistry {
       isNonResponsive,
       isBlocked,
     );
+    const cpuUsage = this.readRuntimeStatusMetric(ctx, "cpuUsage", "cpu", "cpuLoad");
+    const memoryUsage = this.readRuntimeStatusMetric(
+      ctx,
+      "memoryUsage",
+      "memory",
+      "memoryPressure",
+    );
+    const eventLoopLag = this.readRuntimeStatusMetric(
+      ctx,
+      "eventLoopLag",
+      "eventLoopLagMs",
+    );
 
     return {
       serviceName,
@@ -6433,22 +6577,32 @@ export default class ServiceRegistry {
           ? ctx.acceptingWork
           : resolved.acceptingWork,
       numberOfRunningGraphs,
-      cpuUsage: this.readRuntimeStatusMetric(ctx, "cpuUsage", "cpu", "cpuLoad"),
-      memoryUsage: this.readRuntimeStatusMetric(
-        ctx,
-        "memoryUsage",
-        "memory",
-        "memoryPressure",
-      ),
-      eventLoopLag: this.readRuntimeStatusMetric(
-        ctx,
-        "eventLoopLag",
-        "eventLoopLagMs",
-      ),
+      cpuUsage,
+      memoryUsage,
+      eventLoopLag,
       isActive,
       isNonResponsive,
       isBlocked,
-      health: (ctx.health ?? ctx.__health ?? {}) as AnyObject,
+      health: sanitizeAuthorityRuntimeStatusHealth(ctx.health ?? ctx.__health, {
+        state:
+          ctx.state === "healthy" ||
+          ctx.state === "degraded" ||
+          ctx.state === "overloaded" ||
+          ctx.state === "unavailable"
+            ? ctx.state
+            : resolved.state,
+        acceptingWork:
+          typeof ctx.acceptingWork === "boolean"
+            ? ctx.acceptingWork
+            : resolved.acceptingWork,
+        reportedAt:
+          ctx.reportedAt ??
+          (typeof ctx.__reportedAt === "string" ? ctx.__reportedAt : undefined) ??
+          new Date().toISOString(),
+        cpuUsage,
+        memoryUsage,
+        eventLoopLag,
+      }),
     };
   }
 
@@ -6497,16 +6651,14 @@ export default class ServiceRegistry {
     }
 
     instance.numberOfRunningGraphs = report.numberOfRunningGraphs;
-    const runtimeMetricsHealth = {
+    const runtimeStatusHealth = sanitizeAuthorityRuntimeStatusHealth(report.health, {
+      state: report.state,
+      acceptingWork: report.acceptingWork,
+      reportedAt: report.reportedAt,
       cpuUsage: report.cpuUsage ?? null,
       memoryUsage: report.memoryUsage ?? null,
       eventLoopLag: report.eventLoopLag ?? null,
-      runtimeMetrics:
-        report.health?.runtimeMetrics &&
-        typeof report.health.runtimeMetrics === "object"
-          ? report.health.runtimeMetrics
-          : undefined,
-    };
+    });
     instance.isActive = report.isActive;
     instance.isNonResponsive = report.isNonResponsive;
     instance.isBlocked = report.isBlocked;
@@ -6515,13 +6667,7 @@ export default class ServiceRegistry {
     instance.reportedAt = report.reportedAt;
     instance.health = {
       ...(instance.health ?? {}),
-      ...(report.health ?? {}),
-      ...runtimeMetricsHealth,
-      runtimeStatus: {
-        state: report.state,
-        acceptingWork: report.acceptingWork,
-        reportedAt: report.reportedAt,
-      },
+      ...(runtimeStatusHealth ?? {}),
     };
     this.lastHeartbeatAtByInstance.set(report.serviceInstanceId, Date.now());
     this.missedHeartbeatsByInstance.set(report.serviceInstanceId, 0);
@@ -6754,15 +6900,20 @@ export default class ServiceRegistry {
       isActive: snapshot.isActive,
       isNonResponsive: snapshot.isNonResponsive,
       isBlocked: snapshot.isBlocked,
-      health: {
-        ...(localInstance.health ?? {}),
-        ...(this.buildRuntimeMetricsHealthPayload(runtimeMetricsSnapshot) ?? {}),
-        runtimeStatus: {
+      health: sanitizeAuthorityRuntimeStatusHealth(
+        {
+          ...(localInstance.health ?? {}),
+          ...(this.buildRuntimeMetricsHealthPayload(runtimeMetricsSnapshot) ?? {}),
+        },
+        {
           state: snapshot.state,
           acceptingWork: snapshot.acceptingWork,
           reportedAt,
+          cpuUsage: runtimeMetricsSnapshot?.cpuUsage ?? null,
+          memoryUsage: runtimeMetricsSnapshot?.memoryUsage ?? null,
+          eventLoopLag: runtimeMetricsSnapshot?.eventLoopLag ?? null,
         },
-      },
+      ),
     };
 
     this.applyRuntimeStatusReport(report);
@@ -9642,29 +9793,51 @@ export default class ServiceRegistry {
         this.runtimeStatusHeartbeatStarted = true;
         if (!this.runtimeMetricsSamplingStarted) {
           this.runtimeMetricsSamplingStarted = true;
+          Cadenza.emit(META_RUNTIME_METRICS_SAMPLE_TICK_SIGNAL, {});
           Cadenza.interval(
             META_RUNTIME_METRICS_SAMPLE_TICK_SIGNAL,
             {},
             this.runtimeMetricsSampleIntervalMs,
-            true,
+            false,
+            this.buildJitteredIntervalStartDate(
+              this.runtimeMetricsSampleIntervalMs,
+              "runtime-metrics-sample",
+            ),
           );
         }
+        Cadenza.emit(META_RUNTIME_STATUS_HEARTBEAT_TICK_SIGNAL, {
+          reason: "heartbeat",
+        });
         Cadenza.interval(
           META_RUNTIME_STATUS_HEARTBEAT_TICK_SIGNAL,
           { reason: "heartbeat" },
           this.runtimeStatusHeartbeatIntervalMs,
-          true,
+          false,
+          this.buildJitteredIntervalStartDate(
+            this.runtimeStatusHeartbeatIntervalMs,
+            "runtime-status-heartbeat",
+          ),
         );
         Cadenza.interval(
           META_RUNTIME_STATUS_MONITOR_TICK_SIGNAL,
           {},
           this.runtimeStatusHeartbeatIntervalMs,
+          false,
+          this.buildJitteredIntervalStartDate(
+            this.runtimeStatusHeartbeatIntervalMs,
+            "runtime-status-monitor",
+          ),
         );
+        Cadenza.emit(META_RUNTIME_STATUS_REST_REFRESH_TICK_SIGNAL, {});
         Cadenza.interval(
           META_RUNTIME_STATUS_REST_REFRESH_TICK_SIGNAL,
           {},
           this.runtimeStatusRestRefreshIntervalMs,
-          true,
+          false,
+          this.buildJitteredIntervalStartDate(
+            this.runtimeStatusRestRefreshIntervalMs,
+            "runtime-status-rest-refresh",
+          ),
         );
         return true;
       },
@@ -10933,6 +11106,7 @@ export default class ServiceRegistry {
   }
 
   reset() {
+    this.clearBootstrapFullSyncRetryTimer();
     this.instances.clear();
     this.deputies.clear();
     this.remoteSignals.clear();
@@ -10956,5 +11130,22 @@ export default class ServiceRegistry {
     this.lastRuntimeStatusSnapshot = null;
     this.isFrontend = false;
     this.localInstanceSeed = null;
+    this.bootstrapFullSyncRetryIndex = 0;
+    this.bootstrapFullSyncRetryGeneration = 0;
+    this.bootstrapFullSyncSatisfied = false;
+    this.bootstrapFullSyncRetryReason = null;
+    this.knownGlobalSignalMaps.clear();
+    this.authorityBootstrapRoute = {
+      origin: null,
+      role: "internal",
+      routeKey: null,
+      fetchId: null,
+      serviceInstanceId: null,
+      serviceTransportId: null,
+      handshakeEstablished: false,
+    };
+    this.authorityBootstrapHandshakeInFlight = false;
+    this.authorityFullSyncResponderTask = null;
+    this.authorityServiceCommunicationPersistenceTask = null;
   }
 }

@@ -59,6 +59,7 @@ function createLocalAuthorityInsertTask(
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+let nextTestPort = 41000;
 
 describe("graph sync authority rows", () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
@@ -69,7 +70,7 @@ describe("graph sync authority rows", () => {
     consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    process.env.HTTP_PORT = "0";
+    process.env.HTTP_PORT = String(nextTestPort++);
     resetRuntimeState();
   });
 
@@ -262,8 +263,8 @@ describe("graph sync authority rows", () => {
     expect(splitPayloads[0].data).toMatchObject({
       name: "Register compact task",
       service_name: "OrdersApi",
-      function_string: expect.any(String),
-      tag_id_getter: expect.any(String),
+      function_string: "",
+      tag_id_getter: null,
       is_meta: true,
       is_hidden: false,
       validate_input_context: false,
@@ -644,8 +645,8 @@ describe("graph sync authority rows", () => {
     expect(insertedTaskRow).toMatchObject({
       name: "Sync task intent snapshot",
       service_name: "OrdersApi",
-      function_string: expect.any(String),
-      tag_id_getter: expect.any(String),
+      function_string: "",
+      tag_id_getter: null,
       is_meta: true,
       signals: {
         observed: ["global.orders.updated"],

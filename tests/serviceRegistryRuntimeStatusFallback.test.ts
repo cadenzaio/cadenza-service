@@ -189,6 +189,75 @@ describe("service registry runtime status fallback", () => {
       memoryUsage: 0.35,
       eventLoopLag: 6,
     });
+
+    expect(
+      registry.normalizeRuntimeStatusReport({
+        serviceName: "OrdersService",
+        serviceInstanceId: "orders-1",
+        numberOfRunningGraphs: 1,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        state: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-04-12T10:00:00.000Z",
+        health: {
+          cpuUsage: 0.44,
+          runtimeMetrics: {
+            rssBytes: 2_000,
+            heapUsedBytes: 900,
+            heapTotalBytes: 1_100,
+            memoryLimitBytes: 4_000,
+            sampledAt: "2026-04-12T09:59:55.000Z",
+            oversizedNested: {
+              should: "be removed",
+            },
+          },
+          runtimeStatus: {
+            state: "unhealthy-custom",
+            extra: "ignored",
+          },
+          giantNestedBlob: {
+            payload: ["drop me"],
+          },
+        },
+      }),
+    ).toMatchObject({
+      cpuUsage: 0.44,
+      health: {
+        cpuUsage: 0.44,
+        runtimeMetrics: {
+          rssBytes: 2_000,
+          heapUsedBytes: 900,
+          heapTotalBytes: 1_100,
+          memoryLimitBytes: 4_000,
+          sampledAt: "2026-04-12T09:59:55.000Z",
+        },
+        runtimeStatus: {
+          state: "healthy",
+          acceptingWork: true,
+          reportedAt: "2026-04-12T10:00:00.000Z",
+        },
+      },
+    });
+    expect(
+      registry.normalizeRuntimeStatusReport({
+        serviceName: "OrdersService",
+        serviceInstanceId: "orders-1",
+        numberOfRunningGraphs: 1,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        state: "healthy",
+        acceptingWork: true,
+        reportedAt: "2026-04-12T10:00:00.000Z",
+        health: {
+          giantNestedBlob: {
+            payload: ["drop me"],
+          },
+        },
+      })?.health,
+    ).not.toHaveProperty("giantNestedBlob");
   });
 
   it("resolves runtime status fallback directly via the REST status endpoint", async () => {

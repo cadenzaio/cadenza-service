@@ -17,6 +17,141 @@ const SERVICE_REGISTRY_TRACE_SERVICE = (
   process.env.CADENZA_SERVICE_REGISTRY_TRACE_SERVICE ?? ""
 ).trim();
 
+function deputyTaskExecutor(
+  this: any,
+  context: AnyObject,
+  emit: (signal: string, ctx: AnyObject) => void,
+  inquire: (
+    inquiry: string,
+    context: AnyObject,
+    options: InquiryOptions,
+  ) => Promise<AnyObject>,
+  _tools: unknown,
+  progressCallback: (progress: number) => void,
+): Promise<TaskResult> {
+  const task = this as DeputyTask;
+  return new Promise((resolve, reject) => {
+    if (context.__metadata.__blockRemoteExecution) {
+      reject(new Error("Blocked remote execution"));
+      return;
+    }
+
+    if (context.__metadata.__skipRemoteExecution) {
+      resolve(context);
+      return;
+    }
+
+    const processId = uuid();
+
+    context.__metadata.__deputyExecId = processId;
+
+    if (
+      (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
+        process.env.CADENZA_INSTANCE_DEBUG === "true") &&
+      context.__remoteRoutineName === "Insert service_instance"
+    ) {
+      console.log("[CADENZA_INSTANCE_DEBUG] deputy_delegation_requested", {
+        localServiceName: Cadenza.serviceRegistry.serviceName,
+        localTaskName: context.__localTaskName ?? null,
+        remoteRoutineName: context.__remoteRoutineName ?? null,
+        targetServiceName: context.__serviceName ?? null,
+        deputyExecId: processId,
+        dataKeys:
+          context.data && typeof context.data === "object"
+            ? Object.keys(context.data)
+            : [],
+        queryDataKeys:
+          context.queryData && typeof context.queryData === "object"
+            ? Object.keys(context.queryData)
+            : [],
+        queryDataDataKeys:
+          context.queryData?.data && typeof context.queryData.data === "object"
+            ? Object.keys(context.queryData.data as AnyObject)
+            : [],
+      });
+    }
+
+    emit("meta.deputy.delegation_requested", {
+      ...context,
+    });
+
+    Cadenza.createEphemeralMetaTask(
+      `On progress deputy ${(task as any).remoteRoutineName}`,
+      (ctx) => {
+        if (typeof progressCallback === "function" && ctx.progress) {
+          progressCallback(ctx.progress * ctx.weight);
+        }
+      },
+      `Ephemeral task for deputy process ${processId}`,
+      {
+        once: false,
+        destroyCondition: (ctx: AnyObject) =>
+          ctx.progress === 1 || ctx.progress === undefined,
+        register: false,
+      },
+    ).doOn(
+      `meta.socket_client.delegation_progress:${processId}`,
+      `meta.socket_client.delegated:${processId}`,
+      `meta.fetch.delegated:${processId}`,
+      `meta.service_registry.load_balance_failed:${processId}`,
+    );
+
+    Cadenza.createEphemeralMetaTask(
+      `Resolve deputy ${(task as any).remoteRoutineName}`,
+      (responseCtx) => {
+        const mergedResponseCtx =
+          responseCtx && typeof responseCtx === "object"
+            ? ({
+                ...context,
+                ...responseCtx,
+              } as AnyObject)
+            : responseCtx;
+        if (responseCtx?.errored) {
+          reject(new Error(responseCtx.__error));
+        } else {
+          if (
+            SERVICE_REGISTRY_TRACE_SERVICE.length > 0 &&
+            Cadenza.serviceRegistry.serviceName ===
+              SERVICE_REGISTRY_TRACE_SERVICE &&
+            context.__remoteRoutineName === "Insert service_instance"
+          ) {
+            console.log(
+              "[CADENZA_SERVICE_REGISTRY_TRACE] deputy_insert_service_instance_resolved",
+              {
+                localServiceName: Cadenza.serviceRegistry.serviceName,
+                targetServiceName: context.__serviceName ?? null,
+                resolverRequestId: context.__resolverRequestId ?? null,
+                serviceInstanceId:
+                  mergedResponseCtx && typeof mergedResponseCtx === "object"
+                    ? (mergedResponseCtx as AnyObject).__serviceInstanceId ??
+                      (mergedResponseCtx as AnyObject).uuid ??
+                      (mergedResponseCtx as AnyObject).data?.uuid ??
+                      null
+                    : null,
+                hasResolverQueryData:
+                  mergedResponseCtx &&
+                  typeof mergedResponseCtx === "object" &&
+                  (mergedResponseCtx as AnyObject).__resolverQueryData !==
+                    undefined,
+              },
+            );
+          }
+          if (mergedResponseCtx && typeof mergedResponseCtx === "object") {
+            delete mergedResponseCtx.__isDeputy;
+          }
+          resolve(mergedResponseCtx);
+        }
+      },
+      `Ephemeral resolver for deputy process ${processId}`,
+      { register: false },
+    ).doOn(
+      `meta.socket_client.delegated:${processId}`,
+      `meta.fetch.delegated:${processId}`,
+      `meta.service_registry.load_balance_failed:${processId}`,
+    );
+  });
+}
+
 /**
  * Represents a task that delegates execution of a routine to a remote system or service.
  * The `DeputyTask` serves as a proxy to perform and track the progress of a remote workflow.
@@ -79,140 +214,9 @@ export default class DeputyTask extends Task {
     retryDelayMax: number = 0,
     retryDelayFactor: number = 1,
   ) {
-    const taskFunction = (
-      context: AnyObject,
-      emit: (signal: string, ctx: AnyObject) => void,
-      inquire: (
-        inquiry: string,
-        context: AnyObject,
-        options: InquiryOptions,
-      ) => Promise<AnyObject>,
-      progressCallback: (progress: number) => void,
-    ): Promise<TaskResult> => {
-      return new Promise((resolve, reject) => {
-        if (context.__metadata.__blockRemoteExecution) {
-          reject(new Error("Blocked remote execution"));
-          return;
-        }
-
-        if (context.__metadata.__skipRemoteExecution) {
-          resolve(context);
-          return;
-        }
-
-        const processId = uuid();
-
-        context.__metadata.__deputyExecId = processId;
-
-        if (
-          (process.env.CADENZA_INSTANCE_DEBUG === "1" ||
-            process.env.CADENZA_INSTANCE_DEBUG === "true") &&
-          context.__remoteRoutineName === "Insert service_instance"
-        ) {
-          console.log("[CADENZA_INSTANCE_DEBUG] deputy_delegation_requested", {
-            localServiceName: Cadenza.serviceRegistry.serviceName,
-            localTaskName: context.__localTaskName ?? null,
-            remoteRoutineName: context.__remoteRoutineName ?? null,
-            targetServiceName: context.__serviceName ?? null,
-            deputyExecId: processId,
-            dataKeys:
-              context.data && typeof context.data === "object"
-                ? Object.keys(context.data)
-                : [],
-            queryDataKeys:
-              context.queryData && typeof context.queryData === "object"
-                ? Object.keys(context.queryData)
-                : [],
-            queryDataDataKeys:
-              context.queryData?.data &&
-              typeof context.queryData.data === "object"
-                ? Object.keys(context.queryData.data as AnyObject)
-                : [],
-          });
-        }
-
-        emit("meta.deputy.delegation_requested", {
-          ...context,
-        });
-
-        // Ephemeral meta-task for progress
-        Cadenza.createEphemeralMetaTask(
-          `On progress deputy ${this.remoteRoutineName}`,
-          (ctx) => {
-            if (ctx.progress) progressCallback(ctx.progress * ctx.weight);
-          },
-          `Ephemeral task for deputy process ${processId}`,
-          {
-            once: false,
-            destroyCondition: (ctx: AnyObject) =>
-              ctx.progress === 1 || ctx.progress === undefined,
-            register: false,
-          },
-        ).doOn(
-          `meta.socket_client.delegation_progress:${processId}`,
-          `meta.socket_client.delegated:${processId}`,
-          `meta.fetch.delegated:${processId}`,
-          `meta.service_registry.load_balance_failed:${processId}`,
-        );
-
-        // Ephemeral meta-task for resolution
-        Cadenza.createEphemeralMetaTask(
-          `Resolve deputy ${this.remoteRoutineName}`,
-          (responseCtx) => {
-            const mergedResponseCtx =
-              responseCtx && typeof responseCtx === "object"
-                ? ({
-                    ...context,
-                    ...responseCtx,
-                  } as AnyObject)
-                : responseCtx;
-            if (responseCtx?.errored) {
-              reject(new Error(responseCtx.__error));
-            } else {
-              if (
-                SERVICE_REGISTRY_TRACE_SERVICE.length > 0 &&
-                Cadenza.serviceRegistry.serviceName ===
-                  SERVICE_REGISTRY_TRACE_SERVICE &&
-                context.__remoteRoutineName === "Insert service_instance"
-              ) {
-                console.log("[CADENZA_SERVICE_REGISTRY_TRACE] deputy_insert_service_instance_resolved", {
-                  localServiceName: Cadenza.serviceRegistry.serviceName,
-                  targetServiceName: context.__serviceName ?? null,
-                  resolverRequestId: context.__resolverRequestId ?? null,
-                  serviceInstanceId:
-                    mergedResponseCtx && typeof mergedResponseCtx === "object"
-                      ? (mergedResponseCtx as AnyObject).__serviceInstanceId ??
-                        (mergedResponseCtx as AnyObject).uuid ??
-                        (mergedResponseCtx as AnyObject).data?.uuid ??
-                        null
-                      : null,
-                  hasResolverQueryData:
-                    mergedResponseCtx &&
-                    typeof mergedResponseCtx === "object" &&
-                    (mergedResponseCtx as AnyObject).__resolverQueryData !==
-                      undefined,
-                });
-              }
-              // TODO clean up metadata
-              if (mergedResponseCtx && typeof mergedResponseCtx === "object") {
-                delete mergedResponseCtx.__isDeputy;
-              }
-              resolve(mergedResponseCtx);
-            }
-          },
-          `Ephemeral resolver for deputy process ${processId}`,
-          { register: false },
-        ).doOn(
-          `meta.socket_client.delegated:${processId}`,
-          `meta.fetch.delegated:${processId}`,
-          `meta.service_registry.load_balance_failed:${processId}`,
-        );
-      });
-    };
-
     super(
       name,
-      taskFunction,
+      deputyTaskExecutor as any,
       description,
       concurrency,
       timeout,
@@ -244,6 +248,12 @@ export default class DeputyTask extends Task {
       serviceName: this.serviceName,
       communicationType: "delegation",
     });
+  }
+
+  clone(): never {
+    throw new Error(
+      `DeputyTask '${this.name}' does not support clone(). Create a new named deputy task or use a flow-specific meta task that performs an inquiry instead.`,
+    );
   }
 
   /**
@@ -307,6 +317,28 @@ export default class DeputyTask extends Task {
       ),
     );
 
-    return this.taskFunction(deputyContext, emit, inquire, progressCallback);
+    const resolvedTools =
+      typeof (Cadenza as any).resolveToolsForOwner === "function"
+        ? (Cadenza as any).resolveToolsForOwner(
+            this,
+            deputyContext,
+            emit,
+            inquire,
+            progressCallback,
+          )
+        : {
+            helpers: {},
+            globals: {},
+          };
+    const resolvedProgressCallback =
+      typeof progressCallback === "function" ? progressCallback : () => {};
+
+    return (this.taskFunction as any)(
+      deputyContext,
+      emit,
+      inquire,
+      resolvedTools,
+      resolvedProgressCallback,
+    );
   }
 }
