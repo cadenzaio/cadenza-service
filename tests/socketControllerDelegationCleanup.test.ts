@@ -61,6 +61,7 @@ vi.mock("socket.io-client", async () => {
 import Cadenza from "../src/Cadenza";
 import SocketController from "../src/network/SocketController";
 import { __getLastSocket } from "socket.io-client";
+import { buildTransportHandleKey } from "../src/utils/transport";
 
 async function waitForCondition(
   predicate: () => boolean | Promise<boolean>,
@@ -150,7 +151,8 @@ describe("SocketController delegation cleanup", () => {
     const serviceOrigin = "http://127.0.0.1:65531";
     const serviceName = "RetryLeakTestService";
     const fetchId = "retry-transport-1";
-    const delegationSignal = `meta.service_registry.selected_instance_for_socket:${fetchId}`;
+    const socketHandle = buildTransportHandleKey(fetchId, "socket");
+    const delegationSignal = `meta.service_registry.selected_instance_for_socket:${socketHandle}`;
 
     Cadenza.emit("meta.fetch.handshake_complete", {
       serviceInstanceId: "remote-instance",
@@ -163,7 +165,7 @@ describe("SocketController delegation cleanup", () => {
 
     await waitForCondition(
       async () =>
-        Boolean(await controller.getSocketClientDiagnosticsEntry(fetchId)),
+        Boolean(await controller.getSocketClientDiagnosticsEntry(socketHandle)),
       1_000,
     );
 
@@ -173,7 +175,7 @@ describe("SocketController delegation cleanup", () => {
 
     for (let i = 0; i < 15; i++) {
       const previousErrorCount =
-        (await controller.getSocketClientDiagnosticsEntry(fetchId))
+        (await controller.getSocketClientDiagnosticsEntry(socketHandle))
           ?.errorHistory.length ?? 0;
 
       Cadenza.emit(delegationSignal, {
@@ -185,7 +187,7 @@ describe("SocketController delegation cleanup", () => {
       });
 
       await waitForCondition(async () => {
-        const state = await controller.getSocketClientDiagnosticsEntry(fetchId);
+        const state = await controller.getSocketClientDiagnosticsEntry(socketHandle);
         return Boolean(
           state &&
             state.errorHistory.length > previousErrorCount &&
@@ -195,7 +197,7 @@ describe("SocketController delegation cleanup", () => {
       }, 1_000);
     }
 
-    const finalState = await controller.getSocketClientDiagnosticsEntry(fetchId);
+    const finalState = await controller.getSocketClientDiagnosticsEntry(socketHandle);
     expect(finalState).toBeDefined();
     expect(finalState.pendingDelegations).toBe(0);
     expect(finalState.pendingTimers).toBe(0);
@@ -206,6 +208,7 @@ describe("SocketController delegation cleanup", () => {
     SocketController.instance;
 
     const fetchId = "socket-routing-strip-1";
+    const socketHandle = buildTransportHandleKey(fetchId, "socket");
     Cadenza.emit("meta.fetch.handshake_complete", {
       serviceInstanceId: "remote-cadenza-db",
       communicationTypes: ["socket"],
@@ -216,6 +219,15 @@ describe("SocketController delegation cleanup", () => {
     });
 
     await waitForCondition(() => Boolean(__getLastSocket()?.connected), 1_000);
+    await waitForCondition(
+      async () =>
+        Boolean(
+          await (SocketController.instance as any).getSocketClientDiagnosticsEntry(
+            socketHandle,
+          ),
+        ),
+      1_000,
+    );
 
     let capturedPayload: any = null;
     __getLastSocket()!.ackHandlers.delegation = (data, callback) => {
@@ -223,11 +235,11 @@ describe("SocketController delegation cleanup", () => {
       callback?.(null, { __status: "success" });
     };
 
-    Cadenza.emit(`meta.service_registry.selected_instance_for_socket:${fetchId}`, {
+    Cadenza.emit(`meta.service_registry.selected_instance_for_socket:${socketHandle}`, {
       __remoteRoutineName: "Insert execution_trace",
       __signalEmission: {
         fullSignalName:
-          "meta.service_registry.selected_instance_for_socket:socket-routing-strip-1",
+          `meta.service_registry.selected_instance_for_socket:${socketHandle}`,
         taskName: "Get balanced instance",
         taskExecutionId: "transport-task-exec-1",
       },

@@ -9,7 +9,7 @@ import { decomposeSignalName } from "../utils/tools";
 import { v4 as uuid } from "uuid";
 import {
   resolveRoutinePersistenceMetadata,
-  stripLocalRoutinePersistenceHints,
+  sanitizeExecutionPersistenceContext,
   splitRoutinePersistenceContext,
 } from "../utils/routinePersistence";
 
@@ -194,7 +194,8 @@ export default class SignalController {
 
         const traceContext = { ...ctx };
         delete traceContext.__traceCreatedBySignalBroker;
-        const sanitizedTraceContext = stripLocalRoutinePersistenceHints(traceContext);
+        const sanitizedTraceContext =
+          sanitizeExecutionPersistenceContext(traceContext);
         const routineMetadata = resolveRoutinePersistenceMetadata(traceContext);
         const { context: routineContext, metaContext: routineMetaContext } =
           splitRoutinePersistenceContext(traceContext);

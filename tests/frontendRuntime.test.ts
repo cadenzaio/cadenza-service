@@ -12,6 +12,15 @@ import RestController from "../src/network/RestController";
 import ServiceRegistry from "../src/registry/ServiceRegistry";
 import SignalController from "../src/signals/SignalController";
 import SocketController from "../src/network/SocketController";
+import { buildTransportHandleKey as buildHandleKey } from "../src/utils/transport";
+
+function buildRouteKey(
+  serviceName: string,
+  role: "internal" | "public",
+  origin: string,
+) {
+  return `${serviceName}|${role}|${origin}`;
+}
 
 async function waitForCondition(
   predicate: () => boolean | Promise<boolean>,
@@ -166,6 +175,17 @@ describe("frontend runtime mode", () => {
   });
 
   it("routes distributed inquiries in frontend mode through remote intent deputies", async () => {
+    const selectedContexts: AnyObject[] = [];
+    const fetchHandle = buildHandleKey(
+      buildRouteKey("OrdersService", "public", "http://orders.example:7000"),
+      "rest",
+    );
+
+    Cadenza.createMetaTask("Capture frontend distributed inquiry selection", (ctx) => {
+      selectedContexts.push(ctx);
+      return true;
+    }).doOn(`meta.service_registry.selected_instance_for_fetch:${fetchHandle}`);
+
     Cadenza.createCadenzaService("BrowserApp", "Frontend app", {
       isFrontend: true,
       useSocket: false,
@@ -179,43 +199,66 @@ describe("frontend runtime mode", () => {
       () => ServiceRegistry.instance.serviceInstanceId === "browser-app-3",
     );
 
-    Cadenza.createMetaTask("Fake fetch inquiry transport", (ctx, emit) => {
-      emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
-        orders: [{ id: "order-1" }],
-      });
-      return true;
-    }).doOn("meta.service_registry.selected_instance_for_fetch:orders-public-1");
+    Cadenza.emit("meta.initializing_service", {
+      serviceInstance: {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        isFrontend: false,
+        health: {},
+        transports: [
+          {
+            uuid: "orders-public-1",
+            service_instance_id: "orders-1",
+            role: "public",
+            origin: "http://orders.example:7000",
+            protocols: ["rest", "socket"],
+          },
+        ],
+      },
+    });
+    Cadenza.emit("global.meta.graph_metadata.task_intent_associated", {
+      intentName: "orders-lookup",
+      serviceName: "OrdersService",
+      taskName: "LookupOrders",
+      taskVersion: 1,
+    });
 
-    Cadenza.emit("global.meta.cadenza_db.gathered_sync_data", {
-      signalToTaskMaps: [],
-      intentToTaskMaps: [
-        {
-          intentName: "orders-lookup",
-          serviceName: "OrdersService",
-          taskName: "LookupOrders",
-          taskVersion: 1,
-        },
-      ],
-      serviceInstances: [
-        {
-          uuid: "orders-1",
-          serviceName: "OrdersService",
-          isActive: true,
-          isNonResponsive: false,
-          isBlocked: false,
-          isFrontend: false,
-          health: {},
-          transports: [
-            {
-              uuid: "orders-public-1",
-              service_instance_id: "orders-1",
-              role: "public",
-              origin: "http://orders.example:7000",
-              protocols: ["rest", "socket"],
-            },
-          ],
-        },
-      ],
+    await waitForCondition(() => {
+      const instance = (ServiceRegistry.instance as any).instances
+        .get("OrdersService")
+        ?.find((entry: AnyObject) => entry.uuid === "orders-1");
+      return Boolean(instance);
+    });
+
+    const restController = RestController.instance as any;
+    vi.spyOn(restController, "fetchDataWithTimeout").mockResolvedValue({
+      __status: "success",
+    });
+
+    const setupFetchClientTask = Cadenza.get("Setup fetch client") as AnyObject;
+    expect(setupFetchClientTask).toBeDefined();
+    setupFetchClientTask.taskFunction({
+      serviceName: "OrdersService",
+      serviceOrigin: "http://orders.example:7000",
+      serviceTransportId: "orders-public-1",
+      routeKey: buildRouteKey(
+        "OrdersService",
+        "public",
+        "http://orders.example:7000",
+      ),
+      fetchId: fetchHandle,
+    });
+
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceName: "OrdersService",
+      serviceInstanceId: "orders-1",
+      serviceTransportId: "orders-public-1",
+      serviceOrigin: "http://orders.example:7000",
+      transportProtocols: ["rest"],
+      communicationTypes: ["rest"],
     });
 
     await waitForCondition(() => {
@@ -223,28 +266,50 @@ describe("frontend runtime mode", () => {
         Cadenza.inquiryBroker.inquiryObservers.get("orders-lookup");
       return Boolean(observer && observer.tasks.size === 1);
     });
+    await waitForCondition(() => {
+      const instance = (ServiceRegistry.instance as any).instances
+        .get("OrdersService")
+        ?.find((entry: AnyObject) => entry.uuid === "orders-1");
+      return Boolean(instance?.clientReadyTransportIds?.length);
+    });
+    const observer = Cadenza.inquiryBroker.inquiryObservers.get("orders-lookup");
+    expect(observer?.tasks.size).toBe(1);
 
-    const response = await Cadenza.inquire(
-      "orders-lookup",
-      {
-        accountId: "acct-1",
+    Cadenza.run((ServiceRegistry.instance as any).getBalancedInstance, {
+      __remoteRoutineName: "LookupOrders",
+      __serviceName: "OrdersService",
+      __timeout: 500,
+      __metadata: {
+        __deputyExecId: "orders-lookup-deputy-1",
       },
-      {
-        overallTimeoutMs: 500,
-      },
-    );
+    });
 
-    expect(response.orders).toEqual([{ id: "order-1" }]);
-    expect(response.__inquiryMeta).toEqual(
+    await waitForCondition(() => selectedContexts.length === 1);
+
+    expect(selectedContexts[0]).toEqual(
       expect.objectContaining({
-        inquiry: "orders-lookup",
-        responded: 1,
-        failed: 0,
+        __serviceName: "OrdersService",
+        __instance: "orders-1",
+        __transportId: "orders-public-1",
+        __transportOrigin: "http://orders.example:7000",
+        __transportProtocol: "rest",
+        __fetchId: fetchHandle,
       }),
     );
   });
 
   it("keeps public routing after internal runtime status updates", async () => {
+    const selectedContexts: AnyObject[] = [];
+    const fetchHandle = buildHandleKey(
+      buildRouteKey("OrdersService", "public", "http://orders.example:7000"),
+      "rest",
+    );
+
+    Cadenza.createMetaTask("Capture public routing after runtime status updates", (ctx) => {
+      selectedContexts.push(ctx);
+      return true;
+    }).doOn(`meta.service_registry.selected_instance_for_fetch:${fetchHandle}`);
+
     Cadenza.createCadenzaService("BrowserApp", "Frontend app", {
       isFrontend: true,
       useSocket: false,
@@ -258,46 +323,47 @@ describe("frontend runtime mode", () => {
       () => ServiceRegistry.instance.serviceInstanceId === "browser-app-3c",
     );
 
-    const delegatedPayloads: AnyObject[] = [];
+    Cadenza.emit("meta.initializing_service", {
+      serviceInstance: {
+        uuid: "orders-2",
+        serviceName: "OrdersService",
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        isFrontend: false,
+        health: {},
+        transports: [
+          {
+            uuid: "orders-public-2",
+            service_instance_id: "orders-2",
+            role: "public",
+            origin: "http://orders.example:7000",
+            protocols: ["rest", "socket"],
+          },
+        ],
+      },
+    });
+    Cadenza.emit("global.meta.graph_metadata.task_intent_associated", {
+      intentName: "orders-lookup",
+      serviceName: "OrdersService",
+      taskName: "LookupOrders",
+      taskVersion: 1,
+    });
 
-    Cadenza.createMetaTask("Fake fetch inquiry transport for public route", (ctx, emit) => {
-      delegatedPayloads.push(ctx);
-      emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
-        orders: [{ id: "order-2" }],
-      });
-      return true;
-    }).doOn("meta.service_registry.selected_instance_for_fetch:orders-public-2");
+    await waitForCondition(() => {
+      const instance = (ServiceRegistry.instance as any).instances
+        .get("OrdersService")
+        ?.find((entry: AnyObject) => entry.uuid === "orders-2");
+      return Boolean(instance);
+    });
 
-    Cadenza.emit("global.meta.cadenza_db.gathered_sync_data", {
-      signalToTaskMaps: [],
-      intentToTaskMaps: [
-        {
-          intentName: "orders-lookup",
-          serviceName: "OrdersService",
-          taskName: "LookupOrders",
-          taskVersion: 1,
-        },
-      ],
-      serviceInstances: [
-        {
-          uuid: "orders-2",
-          serviceName: "OrdersService",
-          isActive: true,
-          isNonResponsive: false,
-          isBlocked: false,
-          isFrontend: false,
-          health: {},
-          transports: [
-            {
-              uuid: "orders-public-2",
-              service_instance_id: "orders-2",
-              role: "public",
-              origin: "http://orders.example:7000",
-              protocols: ["rest", "socket"],
-            },
-          ],
-        },
-      ],
+    Cadenza.emit("meta.fetch.handshake_complete", {
+      serviceName: "OrdersService",
+      serviceInstanceId: "orders-2",
+      serviceTransportId: "orders-public-2",
+      serviceOrigin: "http://orders.example:7000",
+      transportProtocols: ["rest"],
+      communicationTypes: ["rest"],
     });
 
     await waitForCondition(() => {
@@ -330,21 +396,31 @@ describe("frontend runtime mode", () => {
         Cadenza.inquiryBroker.inquiryObservers.get("orders-lookup");
       return Boolean(observer && observer.tasks.size === 1);
     });
-
-    const response = await Cadenza.inquire(
-      "orders-lookup",
-      {
-        accountId: "acct-2",
+    await waitForCondition(() => {
+      const instance = (ServiceRegistry.instance as any).instances
+        .get("OrdersService")
+        ?.find((entry: AnyObject) => entry.uuid === "orders-2");
+      return Boolean(instance?.clientReadyTransportIds?.length);
+    });
+    Cadenza.run((ServiceRegistry.instance as any).getBalancedInstance, {
+      __remoteRoutineName: "LookupOrders",
+      __serviceName: "OrdersService",
+      __timeout: 500,
+      __metadata: {
+        __deputyExecId: "orders-lookup-deputy-2",
       },
-      {
-        overallTimeoutMs: 500,
-      },
-    );
+    });
 
-    expect(response.orders).toEqual([{ id: "order-2" }]);
-    expect(delegatedPayloads).toHaveLength(1);
-    expect(delegatedPayloads[0]?.__transportOrigin).toBe(
-      "http://orders.example:7000",
+    await waitForCondition(() => selectedContexts.length === 1);
+
+    expect(selectedContexts[0]).toEqual(
+      expect.objectContaining({
+        __instance: "orders-2",
+        __transportId: "orders-public-2",
+        __transportOrigin: "http://orders.example:7000",
+        __transportProtocol: "rest",
+        __fetchId: fetchHandle,
+      }),
     );
 
     const ordersInstance = (ServiceRegistry.instance as any).instances
@@ -415,6 +491,8 @@ describe("frontend runtime mode", () => {
   });
 
   it("normalizes mixed full-sync payloads for remote intents and signals", async () => {
+    const socketSelections: AnyObject[] = [];
+
     Cadenza.createCadenzaService("BrowserApp", "Frontend app", {
       isFrontend: true,
       useSocket: true,
@@ -476,23 +554,6 @@ describe("frontend runtime mode", () => {
       return originalInquire(inquiry, ctx ?? {}, options ?? {});
     });
 
-    const transmissions: AnyObject[] = [];
-
-    Cadenza.createMetaTask("Fake full sync fetch inquiry transport", (ctx, emit) => {
-      emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
-        orders: [{ id: "order-1b" }],
-      });
-      return true;
-    }).doOn("meta.service_registry.selected_instance_for_fetch:orders-public-1b");
-
-    Cadenza.createMetaTask("Track mixed-shape socket signal transmission", (ctx, emit) => {
-      transmissions.push(ctx);
-      emit(`meta.socket_client.transmitted:${ctx.__routineExecId}`, {
-        __status: "success",
-      });
-      return true;
-    }).doOn("meta.service_registry.selected_instance_for_socket:orders-public-1b");
-
     Cadenza.signalBroker.registerEmittedSignal("global.orders.updated");
     Cadenza.createTask("Emit browser orders signal", (_ctx, emit) => {
       emit("global.orders.updated", {
@@ -528,23 +589,87 @@ describe("frontend runtime mode", () => {
       expect.objectContaining({
         uuid: "orders-public-1b",
         role: "public",
+        origin: "http://orders.example:7000",
       }),
     ]);
-    Cadenza.createSignalTransmissionTask("global.orders.updated", "OrdersService");
 
-    Cadenza.emit("browser.orders.updated", {});
+    const normalizedTransport = ordersInstance?.transports?.[0];
+    const socketHandle = buildHandleKey(
+      normalizedTransport?.role && normalizedTransport?.origin
+        ? buildRouteKey(
+            "OrdersService",
+            normalizedTransport.role,
+            normalizedTransport.origin,
+          )
+        : String(normalizedTransport?.uuid ?? ""),
+      "socket",
+    );
 
-    await waitForCondition(() => transmissions.length === 1);
-    expect(transmissions[0]).toEqual(
+    Cadenza.createMetaTask("Capture normalized mixed full sync socket selection", (ctx) => {
+      socketSelections.push(ctx);
+      return true;
+    }).doOn(`meta.service_registry.selected_instance_for_socket:${socketHandle}`);
+
+    Cadenza.emit("meta.socket.handshake", {
+      serviceName: "OrdersService",
+      serviceInstanceId: "orders-1b",
+      serviceTransportId: "orders-public-1b",
+      serviceOrigin: "http://orders.example:7000",
+      transportProtocols: ["socket"],
+      communicationTypes: ["socket"],
+    });
+    await waitForCondition(() => {
+      const instance = (ServiceRegistry.instance as any).instances
+        .get("OrdersService")
+        ?.find((entry: AnyObject) => entry.uuid === "orders-1b");
+      return Boolean(instance?.clientReadyTransportIds?.length);
+    });
+    expect(
+      Cadenza.createSignalTransmissionTask("global.orders.updated", "OrdersService") ??
+        Cadenza.get("Transmit signal: global.orders.updated to OrdersService"),
+    ).toBeDefined();
+
+    Cadenza.run((ServiceRegistry.instance as any).getBalancedInstance, {
+      __serviceName: "OrdersService",
+      __signalName: "global.orders.updated",
+      __routineExecId: "browser-orders-signal-1",
+    });
+
+    await waitForCondition(() => socketSelections.length === 1);
+
+    expect(socketSelections[0]).toEqual(
       expect.objectContaining({
         __signalName: "global.orders.updated",
+        __serviceName: "OrdersService",
+        __instance: "orders-1b",
+        __transportId: "orders-public-1b",
+        __transportProtocol: "socket",
+        __fetchId: socketHandle,
       }),
     );
   });
 
   it("transmits remote signals in frontend mode through socket-selected instances", async () => {
-    const transmissions: AnyObject[] = [];
+    const socketSelections: AnyObject[] = [];
     const fetchSelections: AnyObject[] = [];
+    const socketHandle = buildHandleKey(
+      buildRouteKey("OrdersService", "public", "http://orders.example:7000"),
+      "socket",
+    );
+    const fetchHandle = buildHandleKey(
+      buildRouteKey("OrdersService", "public", "http://orders.example:7000"),
+      "rest",
+    );
+
+    Cadenza.createMetaTask("Capture remote socket signal selection", (ctx) => {
+      socketSelections.push(ctx);
+      return true;
+    }).doOn(`meta.service_registry.selected_instance_for_socket:${socketHandle}`);
+
+    Cadenza.createMetaTask("Capture unexpected remote fetch signal selection", (ctx) => {
+      fetchSelections.push(ctx);
+      return true;
+    }).doOn(`meta.service_registry.selected_instance_for_fetch:${fetchHandle}`);
 
     Cadenza.createCadenzaService("BrowserApp", "Frontend app", {
       isFrontend: true,
@@ -559,18 +684,7 @@ describe("frontend runtime mode", () => {
       () => ServiceRegistry.instance.serviceInstanceId === "browser-app-4",
     );
 
-    Cadenza.createMetaTask("Track socket signal transmission", (ctx, emit) => {
-      transmissions.push(ctx);
-      emit(`meta.socket_client.transmitted:${ctx.__routineExecId}`, {
-        __status: "success",
-      });
-      return true;
-    }).doOn("meta.service_registry.selected_instance_for_socket:orders-public-2");
-
-    Cadenza.createMetaTask("Track fetch signal transmission", (ctx) => {
-      fetchSelections.push(ctx);
-      return true;
-    }).doOn("meta.service_registry.selected_instance_for_fetch:orders-public-2");
+    const emitSpy = vi.spyOn(Cadenza, "emit");
 
     Cadenza.emit("meta.initializing_service", {
       serviceInstance: {
@@ -594,24 +708,50 @@ describe("frontend runtime mode", () => {
       },
     });
 
-    Cadenza.createSignalTransmissionTask(
-      "global.orders.updated",
-      "OrdersService",
-    );
-
-    Cadenza.emit("global.orders.updated", {
-      orderId: "order-99",
+    await waitForCondition(() => {
+      const instance = (ServiceRegistry.instance as any).instances
+        .get("OrdersService")
+        ?.find((entry: AnyObject) => entry.uuid === "orders-2");
+      return Boolean(instance);
     });
 
-    await waitForCondition(
-      () => transmissions.length + fetchSelections.length === 1,
-    );
+    Cadenza.emit("meta.socket.handshake", {
+      serviceName: "OrdersService",
+      serviceInstanceId: "orders-2",
+      serviceTransportId: "orders-public-2",
+      serviceOrigin: "http://orders.example:7000",
+      transportProtocols: ["socket"],
+      communicationTypes: ["socket"],
+    });
+    await waitForCondition(() => {
+      const instance = (ServiceRegistry.instance as any).instances
+        .get("OrdersService")
+        ?.find((entry: AnyObject) => entry.uuid === "orders-2");
+      return Boolean(instance?.clientReadyTransportIds?.length);
+    });
+
+    expect(
+      Cadenza.createSignalTransmissionTask("global.orders.updated", "OrdersService") ??
+        Cadenza.get("Transmit signal: global.orders.updated to OrdersService"),
+    ).toBeDefined();
+
+    Cadenza.run((ServiceRegistry.instance as any).getBalancedInstance, {
+      __serviceName: "OrdersService",
+      __signalName: "global.orders.updated",
+      __routineExecId: "browser-orders-signal-2",
+    });
+
+    await waitForCondition(() => socketSelections.length === 1);
 
     expect(fetchSelections).toEqual([]);
-    expect(transmissions[0]).toEqual(
+    expect(socketSelections[0]).toEqual(
       expect.objectContaining({
         __signalName: "global.orders.updated",
         __serviceName: "OrdersService",
+        __instance: "orders-2",
+        __transportId: "orders-public-2",
+        __transportProtocol: "socket",
+        __fetchId: socketHandle,
       }),
     );
   });

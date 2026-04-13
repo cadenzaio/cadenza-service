@@ -51,11 +51,17 @@ export function normalizeServiceManifestSnapshot(
     intents: normalizeArray(record.intents),
     actors: normalizeArray(record.actors),
     routines: normalizeArray(record.routines),
+    helpers: normalizeArray(record.helpers),
+    globals: normalizeArray(record.globals),
     directionalTaskMaps: normalizeArray(record.directionalTaskMaps),
     signalToTaskMaps: normalizeArray(record.signalToTaskMaps),
     intentToTaskMaps: normalizeArray(record.intentToTaskMaps),
     actorTaskMaps: normalizeArray(record.actorTaskMaps),
     taskToRoutineMaps: normalizeArray(record.taskToRoutineMaps),
+    taskToHelperMaps: normalizeArray(record.taskToHelperMaps),
+    helperToHelperMaps: normalizeArray(record.helperToHelperMaps),
+    taskToGlobalMaps: normalizeArray(record.taskToGlobalMaps),
+    helperToGlobalMaps: normalizeArray(record.helperToGlobalMaps),
   };
 }
 

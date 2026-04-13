@@ -9,6 +9,31 @@ export const LOCAL_ROUTINE_PERSISTENCE_KEYS = [
   "__routineIsMeta",
 ] as const;
 
+const BULKY_EXECUTION_PERSISTENCE_KEYS = [
+  "rows",
+  "joinedContexts",
+  "serviceInstances",
+  "serviceInstanceLeases",
+  "serviceInstanceTransports",
+  "serviceManifests",
+  "tasks",
+  "helpers",
+  "globals",
+  "signals",
+  "intents",
+  "actors",
+  "routines",
+  "directionalTaskMaps",
+  "actorTaskMaps",
+  "taskToRoutineMaps",
+  "taskToHelperMaps",
+  "helperToHelperMaps",
+  "taskToGlobalMaps",
+  "helperToGlobalMaps",
+  "signalToTaskMaps",
+  "intentToTaskMaps",
+] as const;
+
 export type RoutinePersistenceMetadata = {
   createdByRunner: boolean;
   routineName: string | null;
@@ -58,13 +83,121 @@ export function stripLocalRoutinePersistenceHints<T extends AnyObject>(
   return context as T;
 }
 
+function summarizeQueryData(
+  queryData: AnyObject | undefined,
+): AnyObject | undefined {
+  if (!queryData || typeof queryData !== "object") {
+    return undefined;
+  }
+
+  const summary: AnyObject = {};
+
+  if (queryData.data && typeof queryData.data === "object") {
+    summary.dataKeys = Object.keys(queryData.data as AnyObject).sort();
+  }
+  if (queryData.filter && typeof queryData.filter === "object") {
+    summary.filterKeys = Object.keys(queryData.filter as AnyObject).sort();
+  }
+  if (queryData.onConflict && typeof queryData.onConflict === "object") {
+    const onConflict = queryData.onConflict as AnyObject;
+    summary.onConflictTarget = Array.isArray(onConflict.target)
+      ? [...onConflict.target]
+      : onConflict.target ?? null;
+  }
+
+  return Object.keys(summary).length > 0 ? summary : undefined;
+}
+
+export function sanitizeExecutionPersistenceContext<T extends AnyObject>(
+  input: T | undefined,
+): T {
+  const context = stripLocalRoutinePersistenceHints(input) as AnyObject;
+
+  for (const key of BULKY_EXECUTION_PERSISTENCE_KEYS) {
+    const value = context[key];
+    if (value === undefined) {
+      continue;
+    }
+
+    const countKey = `${key}Count`;
+    if (context[countKey] === undefined) {
+      if (Array.isArray(value)) {
+        context[countKey] = value.length;
+      } else if (value && typeof value === "object") {
+        context[countKey] = Object.keys(value as AnyObject).length;
+      }
+    }
+
+    delete context[key];
+  }
+
+  if (context.queryData && typeof context.queryData === "object") {
+    const queryDataSummary = summarizeQueryData(context.queryData as AnyObject);
+    if (queryDataSummary) {
+      context.queryData = queryDataSummary;
+    } else {
+      delete context.queryData;
+    }
+  }
+
+  return context as T;
+}
+
+export function sanitizeExecutionPersistenceResultPayload<T extends AnyObject>(
+  input: T | undefined,
+): T {
+  const payload = (input && typeof input === "object"
+    ? { ...input }
+    : {}) as AnyObject;
+
+  const resultContext =
+    payload.resultContext && typeof payload.resultContext === "object"
+      ? sanitizeExecutionPersistenceContext(
+          payload.resultContext as Record<string, unknown>,
+        )
+      : payload.resultContext;
+  const metaResultContext =
+    payload.metaResultContext && typeof payload.metaResultContext === "object"
+      ? sanitizeExecutionPersistenceContext(
+          payload.metaResultContext as Record<string, unknown>,
+        )
+      : payload.metaResultContext;
+  const snakeResultContext =
+    payload.result_context && typeof payload.result_context === "object"
+      ? sanitizeExecutionPersistenceContext(
+          payload.result_context as Record<string, unknown>,
+        )
+      : payload.result_context;
+  const snakeMetaResultContext =
+    payload.meta_result_context && typeof payload.meta_result_context === "object"
+      ? sanitizeExecutionPersistenceContext(
+          payload.meta_result_context as Record<string, unknown>,
+        )
+      : payload.meta_result_context;
+
+  if (resultContext !== undefined) {
+    payload.resultContext = resultContext;
+  }
+  if (metaResultContext !== undefined) {
+    payload.metaResultContext = metaResultContext;
+  }
+  if (snakeResultContext !== undefined) {
+    payload.result_context = snakeResultContext;
+  }
+  if (snakeMetaResultContext !== undefined) {
+    payload.meta_result_context = snakeMetaResultContext;
+  }
+
+  return payload as T;
+}
+
 export function splitRoutinePersistenceContext(
   input: AnyObject | undefined,
 ): {
   context: AnyObject;
   metaContext: AnyObject;
 } {
-  const sanitized = stripLocalRoutinePersistenceHints(input);
+  const sanitized = sanitizeExecutionPersistenceContext(input);
 
   return {
     context: Object.fromEntries(

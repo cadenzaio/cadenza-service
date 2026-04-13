@@ -6,6 +6,10 @@ import type { Task, GraphRoutine } from "@cadenza.io/core";
 import type {
   ServiceManifestActorDefinition,
   ServiceManifestActorTaskMap,
+  ServiceManifestGlobalDefinition,
+  ServiceManifestHelperDefinition,
+  ServiceManifestHelperGlobalMap,
+  ServiceManifestHelperHelperMap,
   ServiceManifestIntentDefinition,
   ServiceManifestIntentTaskMap,
   ServiceManifestPublicationLayer,
@@ -14,9 +18,31 @@ import type {
   ServiceManifestSignalTaskMap,
   ServiceManifestSnapshot,
   ServiceManifestTaskDefinition,
+  ServiceManifestTaskGlobalMap,
+  ServiceManifestTaskHelperMap,
   ServiceManifestTaskRoutineMap,
   ServiceManifestDirectionalTaskMap,
 } from "../types/serviceManifest";
+
+type HelperDefinition = {
+  name: string;
+  version: number;
+  description: string;
+  isMeta: boolean;
+  helperFunction: (...args: any[]) => any;
+  helperAliases: Map<string, string>;
+  globalAliases: Map<string, string>;
+  destroyed?: boolean;
+};
+
+type GlobalDefinition = {
+  name: string;
+  version: number;
+  description: string;
+  isMeta: boolean;
+  value: unknown;
+  destroyed?: boolean;
+};
 
 const ACTOR_TASK_METADATA = Symbol.for("@cadenza.io/core/actor-task-meta");
 
@@ -223,6 +249,35 @@ function buildRoutineDefinition(
   };
 }
 
+function buildHelperDefinition(
+  helper: HelperDefinition,
+  serviceName: string,
+): ServiceManifestHelperDefinition {
+  return {
+    name: helper.name,
+    version: helper.version,
+    description: helper.description,
+    service_name: serviceName,
+    is_meta: helper.isMeta === true,
+    handler_source: helper.helperFunction.toString(),
+    language: "js",
+  };
+}
+
+function buildGlobalDefinition(
+  globalDefinition: GlobalDefinition,
+  serviceName: string,
+): ServiceManifestGlobalDefinition {
+  return {
+    name: globalDefinition.name,
+    version: globalDefinition.version,
+    description: globalDefinition.description,
+    service_name: serviceName,
+    is_meta: globalDefinition.isMeta === true,
+    value: sanitizeManifestValue(globalDefinition.value),
+  };
+}
+
 function shouldExportTask(task: Task): boolean {
   return (
     task.register !== false &&
@@ -256,6 +311,22 @@ function buildRoutineKey(routine: {
   return `${routine.service_name}|${routine.name}|${routine.version}`;
 }
 
+function buildHelperKey(helper: {
+  service_name: string;
+  name: string;
+  version: number;
+}): string {
+  return `${helper.service_name}|${helper.name}|${helper.version}`;
+}
+
+function buildGlobalKey(globalDefinition: {
+  service_name: string;
+  name: string;
+  version: number;
+}): string {
+  return `${globalDefinition.service_name}|${globalDefinition.name}|${globalDefinition.version}`;
+}
+
 function listManifestTasks(): Task[] {
   const registryTasks = Array.from(Cadenza.registry.tasks.values()).filter(
     (task): task is Task => Boolean(task),
@@ -268,6 +339,25 @@ function listManifestTasks(): Task[] {
     new Map(
       [...registryTasks, ...cachedTasks].map((task) => [task.name, task] as const),
     ).values(),
+  );
+}
+
+function listManifestHelpers(): HelperDefinition[] {
+  const toolRuntime = Cadenza as typeof Cadenza & {
+    getAllHelpers?: () => unknown[];
+  };
+  return (toolRuntime.getAllHelpers?.() ?? []).filter(
+    (helper): helper is HelperDefinition => Boolean(helper && !(helper as HelperDefinition).destroyed),
+  );
+}
+
+function listManifestGlobals(): GlobalDefinition[] {
+  const toolRuntime = Cadenza as typeof Cadenza & {
+    getAllGlobals?: () => unknown[];
+  };
+  return (toolRuntime.getAllGlobals?.() ?? []).filter(
+    (globalDefinition): globalDefinition is GlobalDefinition =>
+      Boolean(globalDefinition && !(globalDefinition as GlobalDefinition).destroyed),
   );
 }
 
@@ -298,6 +388,8 @@ export function buildServiceManifestSnapshot(params: {
     publicationLayer = "business_structural",
   } = params;
   const tasks = listManifestTasks().filter(shouldExportTask);
+  const helpers = listManifestHelpers();
+  const globals = listManifestGlobals();
   const routines = Array.from(Cadenza.registry.routines.values())
     .filter((routine): routine is GraphRoutine => Boolean(routine))
     .filter(shouldExportRoutine);
@@ -315,6 +407,10 @@ export function buildServiceManifestSnapshot(params: {
   const directionalTaskMaps = new Map<string, ServiceManifestDirectionalTaskMap>();
   const actorTaskMaps = new Map<string, ServiceManifestActorTaskMap>();
   const taskToRoutineMaps = new Map<string, ServiceManifestTaskRoutineMap>();
+  const helperTaskMaps = new Map<string, ServiceManifestTaskHelperMap>();
+  const helperHelperMaps = new Map<string, ServiceManifestHelperHelperMap>();
+  const taskGlobalMaps = new Map<string, ServiceManifestTaskGlobalMap>();
+  const helperGlobalMaps = new Map<string, ServiceManifestHelperGlobalMap>();
 
   const registerSignal = (signalName: string) => {
     const normalizedSignalName = canonicalizeSignalName(signalName);
@@ -419,6 +515,47 @@ export function buildServiceManifestSnapshot(params: {
         is_meta: actorTaskMetadata.actorKind === "meta" || task.isMeta === true,
       });
     }
+
+    const taskTools = task as Task & {
+      helperAliases?: Map<string, string>;
+      globalAliases?: Map<string, string>;
+    };
+
+    for (const [alias, helperName] of taskTools.helperAliases?.entries?.() ?? []) {
+      const helper = (Cadenza as typeof Cadenza & {
+        getHelper?: (name: string) => HelperDefinition | undefined;
+      }).getHelper?.(helperName);
+      if (!helper) {
+        continue;
+      }
+      const key = `${task.name}|${task.version}|${alias}|${helper.name}|${helper.version}|${serviceName}`;
+      helperTaskMaps.set(key, {
+        task_name: task.name,
+        task_version: task.version,
+        service_name: serviceName,
+        alias,
+        helper_name: helper.name,
+        helper_version: helper.version,
+      });
+    }
+
+    for (const [alias, globalName] of taskTools.globalAliases?.entries?.() ?? []) {
+      const globalDefinition = (Cadenza as typeof Cadenza & {
+        getGlobal?: (name: string) => GlobalDefinition | undefined;
+      }).getGlobal?.(globalName);
+      if (!globalDefinition) {
+        continue;
+      }
+      const key = `${task.name}|${task.version}|${alias}|${globalDefinition.name}|${globalDefinition.version}|${serviceName}`;
+      taskGlobalMaps.set(key, {
+        task_name: task.name,
+        task_version: task.version,
+        service_name: serviceName,
+        alias,
+        global_name: globalDefinition.name,
+        global_version: globalDefinition.version,
+      });
+    }
   }
 
   const intentDefinitions = Array.from(Cadenza.inquiryBroker.intents.values())
@@ -472,6 +609,58 @@ export function buildServiceManifestSnapshot(params: {
       `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
     );
 
+  const helperDefinitions = helpers
+    .map((helper) => buildHelperDefinition(helper, serviceName))
+    .sort((left, right) =>
+      `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
+    );
+
+  const globalDefinitions = globals
+    .map((globalDefinition) => buildGlobalDefinition(globalDefinition, serviceName))
+    .sort((left, right) =>
+      `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
+    );
+
+  for (const helper of helpers) {
+    for (const [alias, dependencyHelperName] of helper.helperAliases.entries()) {
+      const dependencyHelper = (Cadenza as typeof Cadenza & {
+        getHelper?: (name: string) => HelperDefinition | undefined;
+      }).getHelper?.(dependencyHelperName);
+      if (!dependencyHelper) {
+        continue;
+      }
+
+      const key = `${helper.name}|${helper.version}|${alias}|${dependencyHelper.name}|${dependencyHelper.version}|${serviceName}`;
+      helperHelperMaps.set(key, {
+        helper_name: helper.name,
+        helper_version: helper.version,
+        service_name: serviceName,
+        alias,
+        dependency_helper_name: dependencyHelper.name,
+        dependency_helper_version: dependencyHelper.version,
+      });
+    }
+
+    for (const [alias, globalName] of helper.globalAliases.entries()) {
+      const globalDefinition = (Cadenza as typeof Cadenza & {
+        getGlobal?: (name: string) => GlobalDefinition | undefined;
+      }).getGlobal?.(globalName);
+      if (!globalDefinition) {
+        continue;
+      }
+
+      const key = `${helper.name}|${helper.version}|${alias}|${globalDefinition.name}|${globalDefinition.version}|${serviceName}`;
+      helperGlobalMaps.set(key, {
+        helper_name: helper.name,
+        helper_version: helper.version,
+        service_name: serviceName,
+        alias,
+        global_name: globalDefinition.name,
+        global_version: globalDefinition.version,
+      });
+    }
+  }
+
   for (const routine of routines) {
     for (const task of routine.tasks) {
       if (!task) {
@@ -511,6 +700,15 @@ export function buildServiceManifestSnapshot(params: {
   );
   const routineDefinitionsByKey = new Map(
     routineDefinitions.map((routine) => [buildRoutineKey(routine), routine] as const),
+  );
+  const helperDefinitionsByKey = new Map(
+    helperDefinitions.map((helper) => [buildHelperKey(helper), helper] as const),
+  );
+  const globalDefinitionsByKey = new Map(
+    globalDefinitions.map((globalDefinition) => [
+      buildGlobalKey(globalDefinition),
+      globalDefinition,
+    ] as const),
   );
 
   const routingTaskKeys = new Set<string>();
@@ -944,6 +1142,166 @@ export function buildServiceManifestSnapshot(params: {
           ).sort((left, right) =>
             `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
           );
+  const businessHelpers = helperDefinitions
+    .filter((helper) => helper.is_meta !== true)
+    .sort((left, right) =>
+      `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
+    );
+  const localMetaHelpers = helperDefinitions
+    .filter((helper) => helper.is_meta === true)
+    .sort((left, right) =>
+      `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
+    );
+  const businessGlobals = globalDefinitions
+    .filter((globalDefinition) => globalDefinition.is_meta !== true)
+    .sort((left, right) =>
+      `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
+    );
+  const localMetaGlobals = globalDefinitions
+    .filter((globalDefinition) => globalDefinition.is_meta === true)
+    .sort((left, right) =>
+      `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
+    );
+  const businessTaskToHelperMaps = Array.from(helperTaskMaps.values())
+    .filter((map) => {
+      const task = taskDefinitionsByKey.get(
+        buildTaskKey({
+          service_name: map.service_name,
+          name: map.task_name,
+          version: map.task_version,
+        }),
+      );
+      const helper = helperDefinitionsByKey.get(
+        buildHelperKey({
+          service_name: map.service_name,
+          name: map.helper_name,
+          version: map.helper_version,
+        }),
+      );
+      return task?.is_meta !== true && task?.is_sub_meta !== true && helper?.is_meta !== true;
+    })
+    .sort((left, right) =>
+      `${left.task_name}:${left.alias}`.localeCompare(`${right.task_name}:${right.alias}`),
+    );
+  const localMetaTaskToHelperMaps = Array.from(helperTaskMaps.values())
+    .filter((map) => !businessTaskToHelperMaps.includes(map))
+    .sort((left, right) =>
+      `${left.task_name}:${left.alias}`.localeCompare(`${right.task_name}:${right.alias}`),
+    );
+  const businessHelperToHelperMaps = Array.from(helperHelperMaps.values())
+    .filter((map) => {
+      const helper = helperDefinitionsByKey.get(
+        buildHelperKey({
+          service_name: map.service_name,
+          name: map.helper_name,
+          version: map.helper_version,
+        }),
+      );
+      const dependencyHelper = helperDefinitionsByKey.get(
+        buildHelperKey({
+          service_name: map.service_name,
+          name: map.dependency_helper_name,
+          version: map.dependency_helper_version,
+        }),
+      );
+      return helper?.is_meta !== true && dependencyHelper?.is_meta !== true;
+    })
+    .sort((left, right) =>
+      `${left.helper_name}:${left.alias}`.localeCompare(`${right.helper_name}:${right.alias}`),
+    );
+  const localMetaHelperToHelperMaps = Array.from(helperHelperMaps.values())
+    .filter((map) => !businessHelperToHelperMaps.includes(map))
+    .sort((left, right) =>
+      `${left.helper_name}:${left.alias}`.localeCompare(`${right.helper_name}:${right.alias}`),
+    );
+  const businessTaskToGlobalMaps = Array.from(taskGlobalMaps.values())
+    .filter((map) => {
+      const task = taskDefinitionsByKey.get(
+        buildTaskKey({
+          service_name: map.service_name,
+          name: map.task_name,
+          version: map.task_version,
+        }),
+      );
+      const globalDefinition = globalDefinitionsByKey.get(
+        buildGlobalKey({
+          service_name: map.service_name,
+          name: map.global_name,
+          version: map.global_version,
+        }),
+      );
+      return task?.is_meta !== true && task?.is_sub_meta !== true && globalDefinition?.is_meta !== true;
+    })
+    .sort((left, right) =>
+      `${left.task_name}:${left.alias}`.localeCompare(`${right.task_name}:${right.alias}`),
+    );
+  const localMetaTaskToGlobalMaps = Array.from(taskGlobalMaps.values())
+    .filter((map) => !businessTaskToGlobalMaps.includes(map))
+    .sort((left, right) =>
+      `${left.task_name}:${left.alias}`.localeCompare(`${right.task_name}:${right.alias}`),
+    );
+  const businessHelperToGlobalMaps = Array.from(helperGlobalMaps.values())
+    .filter((map) => {
+      const helper = helperDefinitionsByKey.get(
+        buildHelperKey({
+          service_name: map.service_name,
+          name: map.helper_name,
+          version: map.helper_version,
+        }),
+      );
+      const globalDefinition = globalDefinitionsByKey.get(
+        buildGlobalKey({
+          service_name: map.service_name,
+          name: map.global_name,
+          version: map.global_version,
+        }),
+      );
+      return helper?.is_meta !== true && globalDefinition?.is_meta !== true;
+    })
+    .sort((left, right) =>
+      `${left.helper_name}:${left.alias}`.localeCompare(`${right.helper_name}:${right.alias}`),
+    );
+  const localMetaHelperToGlobalMaps = Array.from(helperGlobalMaps.values())
+    .filter((map) => !businessHelperToGlobalMaps.includes(map))
+    .sort((left, right) =>
+      `${left.helper_name}:${left.alias}`.localeCompare(`${right.helper_name}:${right.alias}`),
+    );
+  const cumulativeHelpers =
+    publicationLayer === "routing_capability"
+      ? []
+      : publicationLayer === "business_structural"
+        ? businessHelpers
+        : [...businessHelpers, ...localMetaHelpers];
+  const cumulativeGlobals =
+    publicationLayer === "routing_capability"
+      ? []
+      : publicationLayer === "business_structural"
+        ? businessGlobals
+        : [...businessGlobals, ...localMetaGlobals];
+  const cumulativeTaskToHelperMaps =
+    publicationLayer === "routing_capability"
+      ? []
+      : publicationLayer === "business_structural"
+        ? businessTaskToHelperMaps
+        : [...businessTaskToHelperMaps, ...localMetaTaskToHelperMaps];
+  const cumulativeHelperToHelperMaps =
+    publicationLayer === "routing_capability"
+      ? []
+      : publicationLayer === "business_structural"
+        ? businessHelperToHelperMaps
+        : [...businessHelperToHelperMaps, ...localMetaHelperToHelperMaps];
+  const cumulativeTaskToGlobalMaps =
+    publicationLayer === "routing_capability"
+      ? []
+      : publicationLayer === "business_structural"
+        ? businessTaskToGlobalMaps
+        : [...businessTaskToGlobalMaps, ...localMetaTaskToGlobalMaps];
+  const cumulativeHelperToGlobalMaps =
+    publicationLayer === "routing_capability"
+      ? []
+      : publicationLayer === "business_structural"
+        ? businessHelperToGlobalMaps
+        : [...businessHelperToGlobalMaps, ...localMetaHelperToGlobalMaps];
   const cumulativeDirectionalTaskMaps =
     publicationLayer === "routing_capability"
       ? []
@@ -1002,6 +1360,8 @@ export function buildServiceManifestSnapshot(params: {
     intents: cumulativeIntents,
     actors: cumulativeActors,
     routines: cumulativeRoutines,
+    helpers: cumulativeHelpers,
+    globals: cumulativeGlobals,
     directionalTaskMaps: cumulativeDirectionalTaskMaps,
     signalToTaskMaps:
       publicationLayer === "routing_capability"
@@ -1017,6 +1377,10 @@ export function buildServiceManifestSnapshot(params: {
         : [...publishedIntentTaskMaps, ...localMetaIntentTaskMaps],
     actorTaskMaps: cumulativeActorTaskMaps,
     taskToRoutineMaps: cumulativeTaskToRoutineMaps,
+    taskToHelperMaps: cumulativeTaskToHelperMaps,
+    helperToHelperMaps: cumulativeHelperToHelperMaps,
+    taskToGlobalMaps: cumulativeTaskToGlobalMaps,
+    helperToGlobalMaps: cumulativeHelperToGlobalMaps,
   };
 
   return {
@@ -1035,11 +1399,17 @@ export function explodeServiceManifestSnapshots(
   intents: ServiceManifestIntentDefinition[];
   actors: ServiceManifestActorDefinition[];
   routines: ServiceManifestRoutineDefinition[];
+  helpers: ServiceManifestHelperDefinition[];
+  globals: ServiceManifestGlobalDefinition[];
   directionalTaskMaps: ServiceManifestDirectionalTaskMap[];
   signalToTaskMaps: ServiceManifestSignalTaskMap[];
   intentToTaskMaps: ServiceManifestIntentTaskMap[];
   actorTaskMaps: ServiceManifestActorTaskMap[];
   taskToRoutineMaps: ServiceManifestTaskRoutineMap[];
+  taskToHelperMaps: ServiceManifestTaskHelperMap[];
+  helperToHelperMaps: ServiceManifestHelperHelperMap[];
+  taskToGlobalMaps: ServiceManifestTaskGlobalMap[];
+  helperToGlobalMaps: ServiceManifestHelperGlobalMap[];
 } {
   const dedupe = <T>(
     items: T[],
@@ -1079,6 +1449,23 @@ export function explodeServiceManifestSnapshots(
   const routines = dedupe(
     snapshots.flatMap((snapshot) => snapshot.routines),
     (routine) => `${routine.service_name}|${routine.name}|${routine.version}`,
+    (left, right) =>
+      `${left.service_name}|${left.name}|${left.version}`.localeCompare(
+        `${right.service_name}|${right.name}|${right.version}`,
+      ),
+  );
+  const helpers = dedupe(
+    snapshots.flatMap((snapshot) => snapshot.helpers),
+    (helper) => `${helper.service_name}|${helper.name}|${helper.version}`,
+    (left, right) =>
+      `${left.service_name}|${left.name}|${left.version}`.localeCompare(
+        `${right.service_name}|${right.name}|${right.version}`,
+      ),
+  );
+  const globals = dedupe(
+    snapshots.flatMap((snapshot) => snapshot.globals),
+    (globalDefinition) =>
+      `${globalDefinition.service_name}|${globalDefinition.name}|${globalDefinition.version}`,
     (left, right) =>
       `${left.service_name}|${left.name}|${left.version}`.localeCompare(
         `${right.service_name}|${right.name}|${right.version}`,
@@ -1129,6 +1516,42 @@ export function explodeServiceManifestSnapshots(
         `${right.routine_name}|${right.routine_version}|${right.service_name}|${right.task_name}|${right.task_version}`,
       ),
   );
+  const taskToHelperMaps = dedupe(
+    snapshots.flatMap((snapshot) => snapshot.taskToHelperMaps),
+    (map) =>
+      `${map.service_name}|${map.task_name}|${map.task_version}|${map.alias}|${map.helper_name}|${map.helper_version}`,
+    (left, right) =>
+      `${left.service_name}|${left.task_name}|${left.alias}|${left.helper_name}`.localeCompare(
+        `${right.service_name}|${right.task_name}|${right.alias}|${right.helper_name}`,
+      ),
+  );
+  const helperToHelperMaps = dedupe(
+    snapshots.flatMap((snapshot) => snapshot.helperToHelperMaps),
+    (map) =>
+      `${map.service_name}|${map.helper_name}|${map.helper_version}|${map.alias}|${map.dependency_helper_name}|${map.dependency_helper_version}`,
+    (left, right) =>
+      `${left.service_name}|${left.helper_name}|${left.alias}|${left.dependency_helper_name}`.localeCompare(
+        `${right.service_name}|${right.helper_name}|${right.alias}|${right.dependency_helper_name}`,
+      ),
+  );
+  const taskToGlobalMaps = dedupe(
+    snapshots.flatMap((snapshot) => snapshot.taskToGlobalMaps),
+    (map) =>
+      `${map.service_name}|${map.task_name}|${map.task_version}|${map.alias}|${map.global_name}|${map.global_version}`,
+    (left, right) =>
+      `${left.service_name}|${left.task_name}|${left.alias}|${left.global_name}`.localeCompare(
+        `${right.service_name}|${right.task_name}|${right.alias}|${right.global_name}`,
+      ),
+  );
+  const helperToGlobalMaps = dedupe(
+    snapshots.flatMap((snapshot) => snapshot.helperToGlobalMaps),
+    (map) =>
+      `${map.service_name}|${map.helper_name}|${map.helper_version}|${map.alias}|${map.global_name}|${map.global_version}`,
+    (left, right) =>
+      `${left.service_name}|${left.helper_name}|${left.alias}|${left.global_name}`.localeCompare(
+        `${right.service_name}|${right.helper_name}|${right.alias}|${right.global_name}`,
+      ),
+  );
 
   return {
     tasks,
@@ -1136,10 +1559,16 @@ export function explodeServiceManifestSnapshots(
     intents,
     actors,
     routines,
+    helpers,
+    globals,
     directionalTaskMaps,
     signalToTaskMaps,
     intentToTaskMaps,
     actorTaskMaps,
     taskToRoutineMaps,
+    taskToHelperMaps,
+    helperToHelperMaps,
+    taskToGlobalMaps,
+    helperToGlobalMaps,
   };
 }

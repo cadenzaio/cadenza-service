@@ -79,6 +79,25 @@ export type ServiceManifestRoutineDefinition = {
   is_meta: boolean;
 };
 
+export type ServiceManifestHelperDefinition = {
+  name: string;
+  version: number;
+  description: string;
+  service_name: string;
+  is_meta: boolean;
+  handler_source: string;
+  language: "js" | "ts";
+};
+
+export type ServiceManifestGlobalDefinition = {
+  name: string;
+  version: number;
+  description: string;
+  service_name: string;
+  is_meta: boolean;
+  value: unknown;
+};
+
 export type ServiceManifestDirectionalTaskMap = {
   task_name: string;
   task_version: number;
@@ -122,6 +141,42 @@ export type ServiceManifestTaskRoutineMap = {
   service_name: string;
 };
 
+export type ServiceManifestTaskHelperMap = {
+  task_name: string;
+  task_version: number;
+  service_name: string;
+  alias: string;
+  helper_name: string;
+  helper_version: number;
+};
+
+export type ServiceManifestHelperHelperMap = {
+  helper_name: string;
+  helper_version: number;
+  service_name: string;
+  alias: string;
+  dependency_helper_name: string;
+  dependency_helper_version: number;
+};
+
+export type ServiceManifestTaskGlobalMap = {
+  task_name: string;
+  task_version: number;
+  service_name: string;
+  alias: string;
+  global_name: string;
+  global_version: number;
+};
+
+export type ServiceManifestHelperGlobalMap = {
+  helper_name: string;
+  helper_version: number;
+  service_name: string;
+  alias: string;
+  global_name: string;
+  global_version: number;
+};
+
 export type ServiceManifestSnapshot = {
   serviceName: string;
   serviceInstanceId: string;
@@ -134,9 +189,15 @@ export type ServiceManifestSnapshot = {
   intents: ServiceManifestIntentDefinition[];
   actors: ServiceManifestActorDefinition[];
   routines: ServiceManifestRoutineDefinition[];
+  helpers: ServiceManifestHelperDefinition[];
+  globals: ServiceManifestGlobalDefinition[];
   directionalTaskMaps: ServiceManifestDirectionalTaskMap[];
   signalToTaskMaps: ServiceManifestSignalTaskMap[];
   intentToTaskMaps: ServiceManifestIntentTaskMap[];
   actorTaskMaps: ServiceManifestActorTaskMap[];
   taskToRoutineMaps: ServiceManifestTaskRoutineMap[];
+  taskToHelperMaps: ServiceManifestTaskHelperMap[];
+  helperToHelperMaps: ServiceManifestHelperHelperMap[];
+  taskToGlobalMaps: ServiceManifestTaskGlobalMap[];
+  helperToGlobalMaps: ServiceManifestHelperGlobalMap[];
 };

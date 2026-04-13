@@ -179,6 +179,28 @@ export default class SignalTransmissionTask extends Task {
       }),
     );
 
-    return this.taskFunction(deputyContext, emit, inquire, progressCallback);
+    const resolvedTools =
+      typeof (Cadenza as any).resolveToolsForOwner === "function"
+        ? (Cadenza as any).resolveToolsForOwner(
+            this,
+            deputyContext,
+            emit,
+            inquire,
+            progressCallback,
+          )
+        : {
+            helpers: {},
+            globals: {},
+          };
+    const resolvedProgressCallback =
+      typeof progressCallback === "function" ? progressCallback : () => {};
+
+    return (this.taskFunction as any)(
+      deputyContext,
+      emit,
+      inquire,
+      resolvedTools,
+      resolvedProgressCallback,
+    );
   }
 }
