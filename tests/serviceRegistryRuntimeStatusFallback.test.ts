@@ -525,6 +525,85 @@ describe("service registry runtime status fallback", () => {
         transports: [],
       },
     ]);
+    registry.instances.set("TelemetryCollectorService", [
+      {
+        uuid: "telemetry-1",
+        serviceName: "TelemetryCollectorService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [
+          {
+            uuid: "telemetry-transport-1",
+            serviceInstanceId: "telemetry-1",
+            role: "internal",
+            origin: "http://telemetry-collector:3003",
+            protocols: ["rest"],
+            securityProfile: null,
+            authStrategy: null,
+            deleted: false,
+            clientCreated: true,
+          },
+        ],
+      },
+    ]);
+    registry.dependeesByService.set("TelemetryCollectorService", new Set(["telemetry-1"]));
+    registry.dependeeByInstance.set("telemetry-1", "TelemetryCollectorService");
+    registry.lastHeartbeatAtByInstance.set("telemetry-1", 0);
+    registry.missedHeartbeatsByInstance.set("telemetry-1", 2);
+
+    let requestedCtx: Record<string, unknown> | null = null;
+    Cadenza.createEphemeralMetaTask(
+      "Capture runtime status fallback request",
+      (ctx) => {
+        requestedCtx = { ...ctx };
+        return ctx;
+      },
+      "",
+      { register: false },
+    ).doOn("meta.service_registry.runtime_status_fallback_requested");
+
+    Cadenza.emit("meta.service_registry.runtime_status.monitor_tick", {});
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(requestedCtx).toMatchObject({
+      serviceName: "TelemetryCollectorService",
+      serviceInstanceId: "telemetry-1",
+      serviceTransportId: "telemetry-transport-1",
+      serviceOrigin: "http://telemetry-collector:3003",
+    });
+  });
+
+  it("does not request runtime status fallback for CadenzaDB dependees", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.serviceInstanceId = "orders-1";
+    registry.useSocket = false;
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [],
+      },
+    ]);
     registry.instances.set("CadenzaDB", [
       {
         uuid: "cadenza-db",
@@ -561,7 +640,7 @@ describe("service registry runtime status fallback", () => {
 
     let requestedCtx: Record<string, unknown> | null = null;
     Cadenza.createEphemeralMetaTask(
-      "Capture runtime status fallback request",
+      "Capture skipped CadenzaDB runtime status fallback request",
       (ctx) => {
         requestedCtx = { ...ctx };
         return ctx;
@@ -574,12 +653,7 @@ describe("service registry runtime status fallback", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 25));
 
-    expect(requestedCtx).toMatchObject({
-      serviceName: "CadenzaDB",
-      serviceInstanceId: "cadenza-db",
-      serviceTransportId: "cadenza-db-transport-1",
-      serviceOrigin: "http://cadenza-db:5000",
-    });
+    expect(requestedCtx).toBeNull();
   });
 
   it("refreshes heartbeat freshness when a runtime status report is applied", () => {
@@ -931,10 +1005,10 @@ describe("service registry runtime status fallback", () => {
         transports: [],
       },
     ]);
-    registry.instances.set("CadenzaDB", [
+    registry.instances.set("AnomalyDetectorService", [
       {
-        uuid: "cadenza-db",
-        serviceName: "CadenzaDB",
+        uuid: "anomaly-1",
+        serviceName: "AnomalyDetectorService",
         numberOfRunningGraphs: 0,
         isPrimary: false,
         isActive: true,
@@ -944,7 +1018,7 @@ describe("service registry runtime status fallback", () => {
         acceptingWork: true,
         health: {},
         isFrontend: false,
-        isDatabase: true,
+        isDatabase: false,
         transports: [],
       },
     ]);
@@ -961,8 +1035,8 @@ describe("service registry runtime status fallback", () => {
     ).doOn("global.meta.service_instance.updated");
 
     Cadenza.emit("meta.service_registry.runtime_status_unreachable", {
-      serviceName: "CadenzaDB",
-      serviceInstanceId: "cadenza-db",
+      serviceName: "AnomalyDetectorService",
+      serviceInstanceId: "anomaly-1",
     });
 
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -974,12 +1048,104 @@ describe("service registry runtime status fallback", () => {
         deleted: false,
       },
       filter: {
-        uuid: "cadenza-db",
+        uuid: "anomaly-1",
       },
     });
   });
 
   it("marks an instance inactive after repeated runtime status misses", async () => {
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "OrdersService";
+    registry.serviceInstanceId = "orders-1";
+    registry.instances.set("OrdersService", [
+      {
+        uuid: "orders-1",
+        serviceName: "OrdersService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [],
+      },
+    ]);
+    registry.instances.set("AnomalyDetectorService", [
+      {
+        uuid: "anomaly-1",
+        serviceName: "AnomalyDetectorService",
+        numberOfRunningGraphs: 0,
+        isPrimary: false,
+        isActive: true,
+        isNonResponsive: false,
+        isBlocked: false,
+        runtimeState: "healthy",
+        acceptingWork: true,
+        health: {},
+        isFrontend: false,
+        isDatabase: false,
+        transports: [],
+      },
+    ]);
+    registry.missedHeartbeatsByInstance.set("anomaly-1", 6);
+
+    let updatedCtx: Record<string, unknown> | null = null;
+    let durableUpdateCtx: Record<string, unknown> | null = null;
+    let durableTransportUpdateCtx: Record<string, unknown> | null = null;
+    Cadenza.createEphemeralMetaTask(
+      "Capture inactive service instance update from runtime fallback",
+      (ctx) => {
+        updatedCtx = { ...ctx };
+        return ctx;
+      },
+      "",
+      { register: false },
+    ).doOn("global.meta.service_instance.updated");
+    Cadenza.createEphemeralMetaTask(
+      "Capture unexpected durable inactive instance persistence",
+      (ctx) => {
+        durableUpdateCtx = { ...ctx };
+        return ctx;
+      },
+      "",
+      { register: false },
+    ).doOn("meta.service_registry.instance_update_requested");
+    Cadenza.createEphemeralMetaTask(
+      "Capture unexpected durable inactive transport persistence",
+      (ctx) => {
+        durableTransportUpdateCtx = { ...ctx };
+        return ctx;
+      },
+      "",
+      { register: false },
+    ).doOn("meta.service_registry.transport_update_requested");
+
+    Cadenza.emit("meta.service_registry.runtime_status_unreachable", {
+      serviceName: "AnomalyDetectorService",
+      serviceInstanceId: "anomaly-1",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(updatedCtx).toMatchObject({
+      data: {
+        is_active: false,
+        is_non_responsive: false,
+        deleted: false,
+      },
+      filter: {
+        uuid: "anomaly-1",
+      },
+    });
+    expect(durableUpdateCtx).toBeNull();
+    expect(durableTransportUpdateCtx).toBeNull();
+  });
+
+  it("does not demote CadenzaDB through generic runtime status unreachable handling", async () => {
     const registry = ServiceRegistry.instance as any;
     registry.serviceName = "OrdersService";
     registry.serviceInstanceId = "orders-1";
@@ -1017,13 +1183,10 @@ describe("service registry runtime status fallback", () => {
         transports: [],
       },
     ]);
-    registry.missedHeartbeatsByInstance.set("cadenza-db", 6);
 
     let updatedCtx: Record<string, unknown> | null = null;
-    let durableUpdateCtx: Record<string, unknown> | null = null;
-    let durableTransportUpdateCtx: Record<string, unknown> | null = null;
     Cadenza.createEphemeralMetaTask(
-      "Capture inactive service instance update from runtime fallback",
+      "Capture skipped CadenzaDB runtime status demotion",
       (ctx) => {
         updatedCtx = { ...ctx };
         return ctx;
@@ -1031,24 +1194,6 @@ describe("service registry runtime status fallback", () => {
       "",
       { register: false },
     ).doOn("global.meta.service_instance.updated");
-    Cadenza.createEphemeralMetaTask(
-      "Capture unexpected durable inactive instance persistence",
-      (ctx) => {
-        durableUpdateCtx = { ...ctx };
-        return ctx;
-      },
-      "",
-      { register: false },
-    ).doOn("meta.service_registry.instance_update_requested");
-    Cadenza.createEphemeralMetaTask(
-      "Capture unexpected durable inactive transport persistence",
-      (ctx) => {
-        durableTransportUpdateCtx = { ...ctx };
-        return ctx;
-      },
-      "",
-      { register: false },
-    ).doOn("meta.service_registry.transport_update_requested");
 
     Cadenza.emit("meta.service_registry.runtime_status_unreachable", {
       serviceName: "CadenzaDB",
@@ -1057,18 +1202,14 @@ describe("service registry runtime status fallback", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 25));
 
-    expect(updatedCtx).toMatchObject({
-      data: {
-        is_active: false,
-        is_non_responsive: false,
-        deleted: false,
-      },
-      filter: {
+    expect(updatedCtx).toBeNull();
+    expect(registry.instances.get("CadenzaDB")).toEqual([
+      expect.objectContaining({
         uuid: "cadenza-db",
-      },
-    });
-    expect(durableUpdateCtx).toBeNull();
-    expect(durableTransportUpdateCtx).toBeNull();
+        isActive: true,
+        isNonResponsive: false,
+      }),
+    ]);
   });
 
   it("emits a service_instance update when handshake marks an instance active again", async () => {

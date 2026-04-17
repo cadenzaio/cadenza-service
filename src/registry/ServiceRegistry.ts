@@ -7508,6 +7508,10 @@ export default class ServiceRegistry {
       return false;
     }
 
+    if (instance.serviceName === "CadenzaDB") {
+      return false;
+    }
+
     if (this.hasReadyClientTransportForProtocol(instance, "socket")) {
       return false;
     }
@@ -8590,6 +8594,9 @@ export default class ServiceRegistry {
         const signalName = String(
           ctx.__signalName ?? ctx.__signalEmission?.fullSignalName ?? "",
         ).trim();
+        const isRuntimeStatusUnreachableSignal =
+          signalName === "meta.service_registry.runtime_status_unreachable" ||
+          signalName.startsWith("meta.service_registry.runtime_status_unreachable.");
         const isFetchHandshakeFailure =
           signalName === "meta.fetch.handshake_failed" ||
           signalName.startsWith("meta.fetch.handshake_failed:");
@@ -8612,10 +8619,24 @@ export default class ServiceRegistry {
           return false;
         }
 
+        if (serviceName === "CadenzaDB") {
+          if (!this.authorityBootstrapRecoveryActive) {
+            this.restartAuthorityBootstrapRecovery("cadenza_db_unreachable");
+          }
+          return false;
+        }
+
         if (
           serviceName === "CadenzaDB" &&
           ((isFetchHandshakeFailure && recoverableFetchHandshakeFailure) ||
             (isFetchDelegateFailure && recoverableFetchDelegateFailure))
+        ) {
+          return false;
+        }
+
+        if (
+          serviceName === "CadenzaDB" &&
+          isRuntimeStatusUnreachableSignal
         ) {
           return false;
         }
@@ -10492,6 +10513,10 @@ export default class ServiceRegistry {
           for (const serviceInstanceId of instanceIds) {
             const instance = this.getInstance(serviceName, serviceInstanceId);
             if (!instance || !instance.isActive || instance.isBlocked) {
+              continue;
+            }
+
+            if (instance.serviceName === "CadenzaDB") {
               continue;
             }
 
