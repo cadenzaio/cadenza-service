@@ -1,3 +1,10 @@
+## [2.21.3](https://github.com/cadenzaio/cadenza-service/compare/v2.21.2...v2.21.3) (2026-04-17)
+
+
+### Bug Fixes
+
+* stop authority runtime status recovery storms ([a7b7ed9](https://github.com/cadenzaio/cadenza-service/commit/a7b7ed9646a66421d2585cb1b70b84de87391495))
+
 ## [2.21.2](https://github.com/cadenzaio/cadenza-service/compare/v2.21.1...v2.21.2) (2026-04-17)
 
 
