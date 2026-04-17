@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { GraphContext } from "@cadenza.io/core";
 import type { AnyObject, InquiryOptions, TaskFunction } from "@cadenza.io/core";
 import Cadenza from "../src/Cadenza";
 
@@ -12,6 +13,22 @@ const noopInquire = async (
 
 async function invokeTask(task: TaskFunction, context: AnyObject = {}) {
   return task(context, noopEmit, noopInquire, noopProgress);
+}
+
+async function executeRegisteredTask(
+  task: { execute: (...args: any[]) => any },
+  context: AnyObject = {},
+) {
+  return task.execute(
+    new GraphContext(context),
+    noopEmit,
+    noopInquire,
+    noopProgress,
+    {
+      nodeId: "test-node",
+      routineExecId: "test-routine",
+    },
+  );
 }
 
 function resetRuntimeState() {
@@ -238,6 +255,55 @@ describe("Actor runtime", () => {
 
     const actor = Cadenza.createActorFromDefinition(definition);
     expect(actor.toDefinition()).toEqual(definition);
+  });
+
+  it("allows service consumers to use helpers and globals from actor-bound tasks", async () => {
+    const actor = Cadenza.createActor({
+      name: "ServiceToolAwareActor",
+      defaultKey: "service-tool-aware",
+      initState: { value: 0 },
+    });
+
+    const config = Cadenza.createGlobal("Service actor tool config", {
+      multiplier: 5,
+    });
+    const normalizeAmount = Cadenza.createHelper(
+      "Normalize service actor amount",
+      (context) => ({
+        ...context,
+        normalizedValue: Number(context.value ?? 0),
+      }),
+    );
+
+    const task = Cadenza.createTask(
+      "Service actor task with declared tools",
+      actor.task(
+        ({ input, setState }, _emit, _inquire, tools) => {
+          const normalized = tools.helpers.normalize({
+            value: input.value,
+          }) as { normalizedValue: number };
+          const nextValue =
+            normalized.normalizedValue *
+            (tools.globals.config as { multiplier: number }).multiplier;
+          setState({ value: nextValue });
+          return {
+            nextValue,
+          };
+        },
+        { mode: "write" },
+      ),
+    )
+      .usesHelpers({
+        normalize: normalizeAmount,
+      })
+      .usesGlobals({
+        config,
+      });
+
+    const result = await executeRegisteredTask(task, { value: 3 });
+
+    expect(result).toEqual({ nextValue: 15 });
+    expect(actor.getState()).toEqual({ value: 15 });
   });
 
   it("applies patch writes as shallow merge by default", async () => {

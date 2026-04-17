@@ -244,7 +244,7 @@ export default class SignalController {
                   null,
                 context: {
                   id: uuid(),
-                  context: traceContext,
+                  context: sanitizedTraceContext,
                 },
                 is_meta: signalEmission.isMeta,
                 service_name: Cadenza.serviceRegistry.serviceName,

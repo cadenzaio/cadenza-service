@@ -42,6 +42,12 @@ function deputyTaskExecutor(
     }
 
     const processId = uuid();
+    const resolvedTimeoutMs = Math.max(
+      1_000,
+      Number(context.__timeout ?? task.timeout ?? 0) || 60_000,
+    );
+    let settled = false;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
     context.__metadata.__deputyExecId = processId;
 
@@ -75,7 +81,45 @@ function deputyTaskExecutor(
       ...context,
     });
 
-    Cadenza.createEphemeralMetaTask(
+    let progressTask: Task | null = null;
+    let resolveTask: Task | null = null;
+
+    const cleanup = () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+
+      if (progressTask && !progressTask.destroyed) {
+        progressTask.destroy();
+      }
+
+      if (resolveTask && !resolveTask.destroyed) {
+        resolveTask.destroy();
+      }
+    };
+
+    const settleSuccess = (value: TaskResult) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const settleFailure = (error: unknown) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+
+    progressTask = Cadenza.createEphemeralMetaTask(
       `On progress deputy ${(task as any).remoteRoutineName}`,
       (ctx) => {
         if (typeof progressCallback === "function" && ctx.progress) {
@@ -96,7 +140,7 @@ function deputyTaskExecutor(
       `meta.service_registry.load_balance_failed:${processId}`,
     );
 
-    Cadenza.createEphemeralMetaTask(
+    resolveTask = Cadenza.createEphemeralMetaTask(
       `Resolve deputy ${(task as any).remoteRoutineName}`,
       (responseCtx) => {
         const mergedResponseCtx =
@@ -107,7 +151,7 @@ function deputyTaskExecutor(
               } as AnyObject)
             : responseCtx;
         if (responseCtx?.errored) {
-          reject(new Error(responseCtx.__error));
+          settleFailure(new Error(responseCtx.__error));
         } else {
           if (
             SERVICE_REGISTRY_TRACE_SERVICE.length > 0 &&
@@ -139,7 +183,7 @@ function deputyTaskExecutor(
           if (mergedResponseCtx && typeof mergedResponseCtx === "object") {
             delete mergedResponseCtx.__isDeputy;
           }
-          resolve(mergedResponseCtx);
+          settleSuccess(mergedResponseCtx);
         }
       },
       `Ephemeral resolver for deputy process ${processId}`,
@@ -149,6 +193,15 @@ function deputyTaskExecutor(
       `meta.fetch.delegated:${processId}`,
       `meta.service_registry.load_balance_failed:${processId}`,
     );
+
+    timeoutHandle = setTimeout(() => {
+      settleFailure(
+        new Error(
+          `Deputy task '${task.name}' timed out waiting for remote resolution after ${resolvedTimeoutMs}ms.`,
+        ),
+      );
+    }, resolvedTimeoutMs);
+    timeoutHandle.unref?.();
   });
 }
 

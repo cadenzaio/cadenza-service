@@ -154,7 +154,14 @@ function sanitizePersistedTaskSourceFields(
 }
 
 function shouldSkipDirectTaskMetadata(task?: Task): boolean {
-  return !task || !task.register || task.isHidden || task.isDeputy;
+  return (
+    !task ||
+    !task.register ||
+    task.isHidden ||
+    task.isDeputy ||
+    task.isMeta ||
+    task.isSubMeta
+  );
 }
 
 function isManagedRouteRecoveryTaskError(errorMessage: unknown): boolean {
@@ -175,7 +182,17 @@ function isLocallyHandledIntentName(intentName: string): boolean {
   }
 
   for (const task of observer.tasks) {
-    if (task.register && !task.isHidden && !task.isDeputy) {
+    if (!task) {
+      continue;
+    }
+
+    if (
+      task.register &&
+      !task.isHidden &&
+      !task.isDeputy &&
+      !task.isMeta &&
+      !task.isSubMeta
+    ) {
       return true;
     }
   }
@@ -540,7 +557,7 @@ export default class GraphMetadataController {
       }
 
       const helper = resolveHelperFromMetadataContext(ctx);
-      if (!helper) {
+      if (!helper || helper.isMeta) {
         return false;
       }
 
@@ -564,7 +581,7 @@ export default class GraphMetadataController {
       }
 
       const globalDefinition = resolveGlobalFromMetadataContext(ctx);
-      if (!globalDefinition) {
+      if (!globalDefinition || globalDefinition.isMeta) {
         return false;
       }
 
@@ -707,6 +724,10 @@ export default class GraphMetadataController {
         return false;
       }
 
+      if (ctx.data?.isMeta === true) {
+        return false;
+      }
+
       return buildDatabaseTriggerContext({
         ...ctx.data,
         serviceName: Cadenza.serviceRegistry.serviceName,
@@ -717,6 +738,10 @@ export default class GraphMetadataController {
 
     createLocalGraphMetadataTask("Handle routine update", (ctx) => {
       if (!shouldEmitDirectPrimitiveMetadata()) {
+        return false;
+      }
+
+      if (ctx.data?.isMeta === true) {
         return false;
       }
 
@@ -1605,6 +1630,10 @@ export default class GraphMetadataController {
         return false;
       }
 
+      if (ctx.data?.is_meta === true) {
+        return false;
+      }
+
       if (shouldSkipDirectActorMetadata(ctx?.data?.name)) {
         return false;
       }
@@ -1619,6 +1648,10 @@ export default class GraphMetadataController {
 
     createLocalGraphMetadataTask("Handle actor task association", (ctx) => {
       if (!shouldEmitDirectPrimitiveMetadata()) {
+        return false;
+      }
+
+      if (ctx.data?.is_meta === true) {
         return false;
       }
 

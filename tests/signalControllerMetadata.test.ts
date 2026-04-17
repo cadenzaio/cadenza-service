@@ -440,6 +440,69 @@ describe("Signal controller metadata contracts", () => {
     expect(signalEvent?.data?.service_instance_id).toBeNull();
   });
 
+  it("sanitizes signal-created execution trace contexts before emitting persistence bundles", async () => {
+    const bundles: AnyObject[] = [];
+
+    resetRuntimeState();
+    Cadenza.bootstrap();
+    Cadenza.serviceRegistry.serviceName = "CadenzaDB";
+    Cadenza.serviceRegistry.serviceInstanceId =
+      "signal-metadata-cadenza-db-service-1";
+
+    Cadenza.createMetaTask(
+      "Capture sanitized signal trace persistence bundle",
+      (ctx) => {
+        bundles.push(ctx);
+        return true;
+      },
+    ).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    SignalController.instance;
+
+    Cadenza.emit("sub_meta.signal_broker.emitting_signal", {
+      orderId: "order-11",
+      rows: [{ id: 1 }, { id: 2 }],
+      joinedContexts: [{ foo: "bar" }],
+      queryData: {
+        data: { orderId: "order-11", amount: 42 },
+        filter: { status: "open" },
+      },
+      __traceCreatedBySignalBroker: true,
+      __intent: "iot-anomaly-detect",
+      __signalEmission: {
+        uuid: "signal-emission-sanitized-1",
+        signalName: "orders.created",
+        signalTag: null,
+        executionTraceId: "trace-sanitized-1",
+        emittedAt: "2026-03-27T00:00:00.000Z",
+        isMeta: false,
+      },
+    });
+
+    await waitForCondition(() => bundles.length === 1);
+
+    const ensures = Array.isArray(bundles[0]?.ensures)
+      ? (bundles[0].ensures as AnyObject[])
+      : [];
+    const executionTraceEvent = ensures.find(
+      (event) => event?.entityType === "execution_trace",
+    );
+
+    expect(executionTraceEvent?.data?.context?.context).toMatchObject({
+      orderId: "order-11",
+      rowsCount: 2,
+      joinedContextsCount: 1,
+      queryData: {
+        dataKeys: ["amount", "orderId"],
+        filterKeys: ["status"],
+      },
+    });
+    expect(executionTraceEvent?.data?.context?.context?.rows).toBeUndefined();
+    expect(
+      executionTraceEvent?.data?.context?.context?.joinedContexts,
+    ).toBeUndefined();
+  });
+
   it("emits routine_execution before task-bound signal_emission when the local runner created the routine", async () => {
     const bundles: AnyObject[] = [];
 

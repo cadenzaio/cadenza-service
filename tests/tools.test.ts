@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decomposeSignalName, formatTimestamp } from "../src/utils/tools";
+import { createGlobal, createHelper, createTask } from "../src/index";
+import Cadenza from "../src/Cadenza";
 
 describe("tools", () => {
   it("formats timestamps as ISO strings", () => {
@@ -42,5 +44,37 @@ describe("tools", () => {
         action: "emitting_signal",
       },
     );
+  });
+
+  it("re-exports helper and global authoring APIs from the service surface", () => {
+    Cadenza.reset();
+
+    const config = createGlobal("Service surface tool config", {
+      prefix: "svc",
+    });
+    const normalize = createHelper("Service surface normalizer", (context) => ({
+      ...context,
+      value: String(context.value ?? "").trim(),
+    }));
+
+    const task = createTask(
+      "Service surface tool task",
+      (_context, _emit, _inquire, tools) => {
+        const normalized = tools.helpers.normalize({
+          value: "  ok  ",
+        }) as { value: string };
+        return {
+          label: `${(tools.globals.config as { prefix: string }).prefix}:${normalized.value}`,
+        };
+      },
+    )
+      .usesHelpers({
+        normalize,
+      })
+      .usesGlobals({
+        config,
+      });
+
+    expect(task).toBeDefined();
   });
 });

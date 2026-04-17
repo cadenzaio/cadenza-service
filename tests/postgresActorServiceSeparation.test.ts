@@ -1198,6 +1198,99 @@ describe("PostgresActor and database service separation", () => {
     ).toBe("trace-1");
   });
 
+  it("cleans up deputy resolver signal observers after successful delegation", async () => {
+    let delegatedContext: Record<string, unknown> | null = null;
+
+    const deputyTask = Cadenza.createDeputyTask("Resolve Metrics", "MetricsDB", {
+      timeout: 5_000,
+    }) as any;
+
+    const executionPromise = deputyTask.execute(
+      new GraphContext({
+        __metadata: {},
+      }),
+      (signal: string, ctx: Record<string, unknown>) => {
+        if (signal !== "meta.deputy.delegation_requested") {
+          return;
+        }
+
+        delegatedContext = ctx;
+        queueMicrotask(() => {
+          Cadenza.emit(`meta.fetch.delegated:${ctx.__metadata.__deputyExecId}`, {
+            __success: true,
+          });
+        });
+      },
+      async () => ({}),
+      () => undefined,
+      {
+        nodeId: "node-deputy-cleanup-success",
+        routineExecId: "routine-deputy-cleanup-success",
+      },
+    );
+
+    await expect(executionPromise).resolves.toMatchObject({
+      __success: true,
+    });
+
+    const deputyExecId = String(
+      delegatedContext?.__metadata?.__deputyExecId ?? "",
+    ).trim();
+    expect(deputyExecId).toHaveLength(36);
+
+    await waitForCondition(() => {
+      const observers = (Cadenza.signalBroker as any).signalObservers;
+      return (
+        !observers.has(`meta.fetch.delegated:${deputyExecId}`) &&
+        !observers.has(`meta.service_registry.load_balance_failed:${deputyExecId}`) &&
+        !observers.has(`meta.socket_client.delegated:${deputyExecId}`)
+      );
+    });
+  });
+
+  it("cleans up deputy resolver signal observers after timeout", async () => {
+    let delegatedContext: Record<string, unknown> | null = null;
+
+    const deputyTask = Cadenza.createDeputyTask("Resolve Metrics", "MetricsDB", {
+      timeout: 25,
+    }) as any;
+
+    const executionPromise = deputyTask.execute(
+      new GraphContext({
+        __metadata: {},
+      }),
+      (signal: string, ctx: Record<string, unknown>) => {
+        if (signal === "meta.deputy.delegation_requested") {
+          delegatedContext = ctx;
+        }
+      },
+      async () => ({}),
+      () => undefined,
+      {
+        nodeId: "node-deputy-cleanup-timeout",
+        routineExecId: "routine-deputy-cleanup-timeout",
+      },
+    );
+
+    await expect(executionPromise).rejects.toThrow(
+      "timed out waiting for remote resolution",
+    );
+
+    const deputyExecId = String(
+      delegatedContext?.__metadata?.__deputyExecId ?? "",
+    ).trim();
+    expect(deputyExecId).toHaveLength(36);
+
+    await waitForCondition(() => {
+      const observers = (Cadenza.signalBroker as any).signalObservers;
+      return (
+        !observers.has(`meta.fetch.delegated:${deputyExecId}`) &&
+        !observers.has(`meta.service_registry.load_balance_failed:${deputyExecId}`) &&
+        !observers.has(`meta.socket_client.delegated:${deputyExecId}`)
+      );
+    });
+  });
+
   it("caps generated insert and upsert tasks with shared write-task throttles", () => {
     const controller = DatabaseController.instance;
     const registration = controller.createPostgresActor(

@@ -21,6 +21,7 @@ import {
   QueryMode,
   SubOperation,
 } from "../types/queryData";
+import { META_INTENT_PREFIX } from "../utils/inquiry";
 
 export interface OperationIntentDefinition {
   name: string;
@@ -151,7 +152,9 @@ const ACTOR_SESSION_TRACE_ENABLED =
   process.env.CADENZA_ACTOR_SESSION_TRACE === "true";
 const ACTOR_SESSION_TRACE_LIMIT = 20;
 let actorSessionTraceCount = 0;
-const GENERATED_POSTGRES_WRITE_TASK_CONCURRENCY = 200;
+// PostgresActor writes are serialized per actor key. High graph-task concurrency only
+// inflates runner state with waiting write nodes that cannot execute in parallel.
+const GENERATED_POSTGRES_WRITE_TASK_CONCURRENCY = 1;
 const GENERATED_POSTGRES_WRITE_TASK_TIMEOUT_MS = 120_000;
 const EXECUTION_OBSERVABILITY_TABLES = new Set<string>([
   "execution_trace",
@@ -324,6 +327,13 @@ function normalizeIntentToken(value: string): string {
   }
 
   return normalized;
+}
+
+function prefixMetaIntentName(
+  intentName: string,
+  isMeta: boolean | undefined,
+): string {
+  return isMeta ? `${META_INTENT_PREFIX}${intentName}` : intentName;
 }
 
 function shouldValidateGeneratedDbTaskInput(
@@ -514,9 +524,14 @@ export function resolveTableOperationIntents(
   table: TableDefinition,
   operation: DbOperationType,
   defaultInputSchema: SchemaDefinition,
+  options?: {
+    isMeta?: boolean;
+  },
 ): OperationIntentResolution {
   const actorToken = normalizeIntentToken(actorName);
-  const defaultIntentName = `${operation}-pg-${actorToken}-${tableName}`;
+  const defaultIntentName = `${
+    options?.isMeta ? META_INTENT_PREFIX : ""
+  }${operation}-pg-${actorToken}-${tableName}`;
   validateIntentName(defaultIntentName);
 
   const intents: OperationIntentDefinition[] = [
@@ -537,6 +552,12 @@ export function resolveTableOperationIntents(
     if (!intentName) {
       throw new Error(
         `Invalid custom ${operation} intent on table '${tableName}': intent must be a non-empty string`,
+      );
+    }
+
+    if (options?.isMeta && !intentName.startsWith(META_INTENT_PREFIX)) {
+      throw new Error(
+        `Invalid custom ${operation} intent '${intentName}' on table '${tableName}': meta PostgresActor intents must start with '${META_INTENT_PREFIX}'`,
       );
     }
 
@@ -574,6 +595,7 @@ export function resolveTableQueryIntents(
     table,
     "query",
     defaultInputSchema,
+    undefined,
   );
 }
 
@@ -3294,7 +3316,10 @@ export default class DatabaseController {
     ];
 
     for (const macroOperation of queryMacroOperations) {
-      const intentName = `${macroOperation}-pg-${registration.actorToken}-${tableName}`;
+      const intentName = prefixMetaIntentName(
+        `${macroOperation}-pg-${registration.actorToken}-${tableName}`,
+        registration.options.isMeta,
+      );
       if (registration.intentNames.has(intentName)) {
         throw new Error(
           `Duplicate macro intent '${intentName}' detected for table '${tableName}' in actor '${registration.actorName}'`,
@@ -3343,7 +3368,10 @@ export default class DatabaseController {
       ).respondsTo(intentName);
     }
 
-    const upsertIntentName = `upsert-pg-${registration.actorToken}-${tableName}`;
+    const upsertIntentName = prefixMetaIntentName(
+      `upsert-pg-${registration.actorToken}-${tableName}`,
+      registration.options.isMeta,
+    );
     if (registration.intentNames.has(upsertIntentName)) {
       throw new Error(
         `Duplicate macro intent '${upsertIntentName}' detected for table '${tableName}' in actor '${registration.actorName}'`,
@@ -3732,6 +3760,9 @@ export default class DatabaseController {
       table,
       op,
       schema,
+      {
+        isMeta: Boolean(registration.options.isMeta),
+      },
     );
 
     for (const intent of intents) {

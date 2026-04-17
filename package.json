@@ -130,16 +130,16 @@
     "prettier": "3.6.2",
     "react": "^19.0.0",
     "react-test-renderer": "^19.0.0",
-    "vue": "^3.5.13",
     "semantic-release": "^24.2.3",
     "tsup": "^8.4.0",
     "tsx": "^4.20.2",
     "typedoc": "^0.28.14",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.3"
+    "vitest": "^3.2.3",
+    "vue": "^3.5.13"
   },
   "dependencies": {
-    "@cadenza.io/core": "^3.27.0",
+    "@cadenza.io/core": "^3.28.1",
     "@types/pg": "^8.15.4",
     "@types/uuid": "^10.0.0",
     "body-parser": "^2.2.0",

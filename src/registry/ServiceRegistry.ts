@@ -134,6 +134,13 @@ const META_AUTHORITY_BOOTSTRAP_HANDSHAKE_REQUESTED_SIGNAL =
 const META_RUNTIME_STATUS_REST_REFRESH_TICK_SIGNAL =
   "meta.service_registry.runtime_status.rest_refresh_tick";
 const AUTHORITY_BOOTSTRAP_HANDSHAKE_TIMEOUT_MS = 5_000;
+const AUTHORITY_BOOTSTRAP_HANDSHAKE_RETRY_DELAYS_MS = [
+  1_000,
+  3_000,
+  7_000,
+  15_000,
+] as const;
+const AUTHORITY_BOOTSTRAP_ROUTINE_TIMEOUT_MS = 60_000;
 const EARLY_FULL_SYNC_DELAYS_MS = [
   100,
   1500,
@@ -143,21 +150,13 @@ const EARLY_FULL_SYNC_DELAYS_MS = [
   45000,
   70000,
 ] as const;
+const PENDING_ROUTE_SELECTION_RETRY_DELAYS_MS = [
+  50,
+  125,
+  250,
+  500,
+] as const;
 const MIN_BOOTSTRAP_FULL_SYNC_ATTEMPTS = 4;
-const INTERNAL_RUNTIME_STATUS_TASK_NAMES = new Set([
-  "Track local routine start",
-  "Track local routine end",
-  "Start runtime status sharing intervals",
-  "Broadcast runtime status",
-  "Flush local runtime status to authority",
-  "Monitor dependee heartbeat freshness",
-  "Refresh REST dependee runtime status",
-  "Resolve runtime status fallback inquiry",
-  "Respond runtime status inquiry",
-  "Respond readiness inquiry",
-  "Collect distributed readiness",
-  "Get status",
-]);
 const SERVICE_REGISTRY_TRACE_SERVICE = (
   process.env.CADENZA_SERVICE_REGISTRY_TRACE_SERVICE ?? ""
 ).trim();
@@ -166,6 +165,57 @@ function shouldTraceServiceRegistry(serviceName: string | null | undefined): boo
   return (
     SERVICE_REGISTRY_TRACE_SERVICE.length > 0 &&
     serviceName === SERVICE_REGISTRY_TRACE_SERVICE
+  );
+}
+
+function getFetchFailureText(ctx: AnyObject | null | undefined): string {
+  return String(ctx?.__error ?? ctx?.error ?? ctx?.message ?? "").trim();
+}
+
+function isTerminalFetchTransportFailure(ctx: AnyObject | null | undefined): boolean {
+  const errorText = getFetchFailureText(ctx);
+  if (!errorText) {
+    return false;
+  }
+
+  return (
+    errorText.includes("ENOTFOUND") ||
+    errorText.includes("ECONNREFUSED") ||
+    errorText.includes("EHOSTUNREACH")
+  );
+}
+
+function isRecoverableFetchTransportFailure(
+  ctx: AnyObject | null | undefined,
+  options: {
+    includeConnectionRefused?: boolean;
+  } = {},
+): boolean {
+  const errorText = getFetchFailureText(ctx);
+  if (!errorText) {
+    return false;
+  }
+
+  return (
+    errorText.includes("AbortError") ||
+    errorText.includes("The operation was aborted") ||
+    errorText.includes("socket hang up") ||
+    errorText.includes("ECONNRESET") ||
+    errorText.includes("ETIMEDOUT") ||
+    (options.includeConnectionRefused === true &&
+      errorText.includes("ECONNREFUSED"))
+  );
+}
+
+function isHardFetchHandshakeFailure(ctx: AnyObject | null | undefined): boolean {
+  const errorText = getFetchFailureText(ctx);
+  if (!errorText) {
+    return false;
+  }
+
+  return (
+    isTerminalFetchTransportFailure(ctx) ||
+    isRecoverableFetchTransportFailure(ctx)
   );
 }
 
@@ -444,23 +494,35 @@ function compactAuthorityBootstrapRequestBody(ctx: AnyObject): AnyObject {
     return ctx;
   }
 
-  const queryData =
+  const existingQueryData =
     ctx.queryData && typeof ctx.queryData === "object"
       ? ({ ...(ctx.queryData as AnyObject) } as AnyObject)
-      : null;
-  if (!queryData) {
-    return ctx;
+      : ({} as AnyObject);
+  const compactQueryData: AnyObject = {};
+
+  for (const key of BOOTSTRAP_DB_OPERATION_CONTEXT_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(existingQueryData, key)) {
+      compactQueryData[key] = existingQueryData[key];
+      continue;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(ctx, key)) {
+      compactQueryData[key] = ctx[key];
+    }
   }
 
   const compacted: AnyObject = {
-    ...ctx,
-    queryData,
+    __remoteRoutineName: ctx.__remoteRoutineName,
+    __serviceName: ctx.__serviceName,
+    __localServiceName: ctx.__localServiceName,
+    __timeout: ctx.__timeout,
+    __syncing: true,
+    __authorityBootstrapChannel: true,
+    queryData: compactQueryData,
   };
 
-  for (const key of BOOTSTRAP_DB_OPERATION_CONTEXT_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(queryData, key)) {
-      delete compacted[key];
-    }
+  if (typeof ctx.__reason === "string" && ctx.__reason.trim().length > 0) {
+    compacted.__reason = ctx.__reason;
   }
 
   return compacted;
@@ -1812,6 +1874,11 @@ export default class ServiceRegistry {
     handshakeEstablished: false,
   };
   private authorityBootstrapHandshakeInFlight = false;
+  private authorityBootstrapHandshakeRetryTimer: ReturnType<typeof setTimeout> | null =
+    null;
+  private authorityBootstrapHandshakeRetryIndex = 0;
+  private authorityBootstrapHandshakeRetryGeneration = 0;
+  private authorityBootstrapHandshakeRetryReason: string | null = null;
 
   handleInstanceUpdateTask: Task;
   handleTransportUpdateTask: Task;
@@ -2800,6 +2867,7 @@ export default class ServiceRegistry {
       serviceTransportId: String(ctx.serviceTransportId ?? "").trim() || null,
       handshakeEstablished: true,
     };
+    this.markAuthorityBootstrapHandshakeSatisfied();
 
     return true;
   }
@@ -2839,6 +2907,117 @@ export default class ServiceRegistry {
       serviceTransportId: null,
       handshakeEstablished: false,
     };
+  }
+
+  private clearAuthorityBootstrapHandshakeRetryTimer(): void {
+    if (this.authorityBootstrapHandshakeRetryTimer) {
+      clearTimeout(this.authorityBootstrapHandshakeRetryTimer);
+      this.authorityBootstrapHandshakeRetryTimer = null;
+    }
+  }
+
+  private invalidateAuthorityBootstrapHandshakeRetryState(reason?: string): void {
+    this.authorityBootstrapHandshakeRetryGeneration += 1;
+    this.clearAuthorityBootstrapHandshakeRetryTimer();
+    this.authorityBootstrapHandshakeRetryIndex = 0;
+    if (typeof reason === "string" && reason.trim()) {
+      this.authorityBootstrapHandshakeRetryReason = reason.trim();
+    }
+  }
+
+  private markAuthorityBootstrapHandshakeSatisfied(): void {
+    this.clearAuthorityBootstrapHandshakeRetryTimer();
+    this.authorityBootstrapHandshakeRetryIndex =
+      AUTHORITY_BOOTSTRAP_HANDSHAKE_RETRY_DELAYS_MS.length;
+    this.authorityBootstrapHandshakeRetryReason = null;
+  }
+
+  private buildJitteredAuthorityBootstrapHandshakeRetryDelayMs(
+    baseDelayMs: number,
+    attempt: number,
+  ): number {
+    return buildDeterministicJitteredDelayMs(
+      baseDelayMs,
+      this.bootstrapFullSyncRetryJitterRatio,
+      this.buildDeterministicInstanceJitterKey(
+        `authority-bootstrap-handshake-retry-${attempt}`,
+      ),
+    );
+  }
+
+  private scheduleAuthorityBootstrapHandshakeRetry(reason?: string): boolean {
+    if (
+      !this.connectsToCadenzaDB ||
+      !this.serviceName ||
+      this.serviceName === "CadenzaDB"
+    ) {
+      return false;
+    }
+
+    if (this.hasAuthorityBootstrapHandshakeEstablished()) {
+      return false;
+    }
+
+    if (this.authorityBootstrapHandshakeInFlight) {
+      return false;
+    }
+
+    if (typeof reason === "string" && reason.trim()) {
+      this.authorityBootstrapHandshakeRetryReason = reason.trim();
+    }
+
+    if (this.authorityBootstrapHandshakeRetryTimer) {
+      return false;
+    }
+
+    const retryGeneration = this.authorityBootstrapHandshakeRetryGeneration;
+    const retryReason =
+      this.authorityBootstrapHandshakeRetryReason ??
+      "authority_bootstrap_handshake_retry";
+    const attempt = this.authorityBootstrapHandshakeRetryIndex + 1;
+    const baseDelayMs =
+      AUTHORITY_BOOTSTRAP_HANDSHAKE_RETRY_DELAYS_MS[
+        Math.min(
+          this.authorityBootstrapHandshakeRetryIndex,
+          AUTHORITY_BOOTSTRAP_HANDSHAKE_RETRY_DELAYS_MS.length - 1,
+        )
+      ] ?? AUTHORITY_BOOTSTRAP_HANDSHAKE_RETRY_DELAYS_MS.at(-1)!;
+    const delayMs = this.buildJitteredAuthorityBootstrapHandshakeRetryDelayMs(
+      baseDelayMs,
+      attempt,
+    );
+    this.authorityBootstrapHandshakeRetryIndex += 1;
+
+    this.authorityBootstrapHandshakeRetryTimer = setTimeout(() => {
+      this.authorityBootstrapHandshakeRetryTimer = null;
+
+      if (
+        this.hasAuthorityBootstrapHandshakeEstablished() ||
+        this.authorityBootstrapHandshakeInFlight ||
+        retryGeneration !== this.authorityBootstrapHandshakeRetryGeneration
+      ) {
+        return;
+      }
+
+      this.requestAuthorityBootstrapHandshake({
+        __reason: retryReason,
+        __authorityBootstrapRetry: true,
+        __authorityBootstrapRetryAttempt: attempt,
+      });
+    }, delayMs);
+
+    return true;
+  }
+
+  private restartAuthorityBootstrapHandshakeRetryChain(reason: string): boolean {
+    this.invalidateAuthorityBootstrapHandshakeRetryState(reason);
+    return this.scheduleAuthorityBootstrapHandshakeRetry(reason);
+  }
+
+  private restartAuthorityBootstrapRecovery(reason: string): boolean {
+    this.invalidateAuthorityBootstrapHandshake();
+    this.invalidateBootstrapFullSyncRetryState(reason);
+    return this.restartAuthorityBootstrapHandshakeRetryChain(reason);
   }
 
   private requestAuthorityBootstrapHandshake(
@@ -3122,16 +3301,27 @@ export default class ServiceRegistry {
     }
 
     const deputyTaskName = `Inquire ${map.intentName} via ${map.serviceName} (${map.taskName} v${map.taskVersion})`;
+    const shouldUseAuthorityBootstrapTimeout =
+      map.serviceName === "CadenzaDB" && isMetaIntentName(map.intentName);
+    const effectiveTimeout = shouldUseAuthorityBootstrapTimeout
+      ? Math.max(map.timeout ?? 0, AUTHORITY_BOOTSTRAP_ROUTINE_TIMEOUT_MS)
+      : map.timeout;
+    const authorityBootstrapIntentSpec =
+      map.serviceName === "CadenzaDB"
+        ? getAuthorityBootstrapIntentSpec(map.intentName)
+        : null;
+    const authorityBootstrapTaskName =
+      authorityBootstrapIntentSpec?.authorityTaskName ?? map.taskName;
 
     const deputyTask =
-      map.serviceName === "CadenzaDB" && isAuthorityBootstrapIntent(map.intentName)
+      authorityBootstrapIntentSpec
         ? Cadenza.createMetaTask(
             deputyTaskName,
             async (ctx) =>
               this.invokeAuthorityBootstrapRoutine(
-                map.taskName,
+                authorityBootstrapTaskName,
                 ctx,
-                map.timeout ?? 15_000,
+                effectiveTimeout ?? AUTHORITY_BOOTSTRAP_ROUTINE_TIMEOUT_MS,
               ),
             "Routes reserved authority bootstrap inquiries directly through the post-handshake authority control-plane channel.",
             {
@@ -3143,7 +3333,7 @@ export default class ServiceRegistry {
           ? Cadenza.createMetaDeputyTask(map.taskName, map.serviceName, {
               register: false,
               isHidden: true,
-              timeout: map.timeout,
+              timeout: effectiveTimeout,
               retryCount: 1,
               retryDelay: 50,
               retryDelayFactor: 1.2,
@@ -3151,7 +3341,7 @@ export default class ServiceRegistry {
           : Cadenza.createDeputyTask(map.taskName, map.serviceName, {
               register: false,
               isHidden: true,
-              timeout: map.timeout,
+              timeout: effectiveTimeout,
               retryCount: 1,
               retryDelay: 50,
               retryDelayFactor: 1.2,
@@ -3168,7 +3358,7 @@ export default class ServiceRegistry {
       key,
       intentName: map.intentName,
       serviceName: map.serviceName,
-      remoteTaskName: map.taskName,
+      remoteTaskName: authorityBootstrapTaskName,
       remoteTaskVersion: map.taskVersion,
       localTaskName: deputyTask.name || deputyTaskName,
       localTask: deputyTask,
@@ -3182,7 +3372,7 @@ export default class ServiceRegistry {
         localServiceName: this.serviceName,
         intentName: map.intentName,
         remoteServiceName: map.serviceName,
-        remoteTaskName: map.taskName,
+        remoteTaskName: authorityBootstrapTaskName,
         remoteTaskVersion: map.taskVersion,
       });
     }
@@ -4179,6 +4369,69 @@ export default class ServiceRegistry {
         this.selectReadyTransportForInstance(instance, routingContext, role),
       );
     });
+  }
+
+  private hasPendingRouteableInstanceForSelection(
+    serviceName: string,
+    ctx: AnyObject,
+    role: ServiceTransportRole,
+    targetServiceInstanceId?: string,
+  ): boolean {
+    return (this.instances.get(serviceName) ?? []).some((instance) => {
+      if (
+        targetServiceInstanceId &&
+        instance.uuid !== targetServiceInstanceId
+      ) {
+        return false;
+      }
+
+      if (!instance.isActive || instance.isNonResponsive || instance.isBlocked) {
+        return false;
+      }
+
+      if (instance.isFrontend) {
+        return false;
+      }
+
+      const transport = this.selectTransportForInstance(instance, ctx, role);
+      if (!transport) {
+        return false;
+      }
+
+      return !this.hasTransportClientReady(instance, transport);
+    });
+  }
+
+  private maybeSchedulePendingRouteSelectionRetry(
+    ctx: AnyObject,
+    serviceName: string,
+  ): boolean {
+    const signalName = String(
+      ctx.__signalName ?? ctx.__signalEmission?.fullSignalName ?? "",
+    ).trim();
+    if (!signalName) {
+      return false;
+    }
+
+    const attempt = Math.max(
+      0,
+      Number(ctx.__pendingRouteSelectionAttempt ?? 0) || 0,
+    );
+    const delayMs = PENDING_ROUTE_SELECTION_RETRY_DELAYS_MS[attempt];
+    if (delayMs === undefined) {
+      return false;
+    }
+
+    Cadenza.schedule(
+      signalName,
+      {
+        ...ctx,
+        __pendingRouteSelectionAttempt: attempt + 1,
+        __pendingRouteSelectionServiceName: serviceName,
+      },
+      delayMs,
+    );
+    return true;
   }
 
   private refreshRoutingCooldownsForService(serviceName: string): void {
@@ -5424,9 +5677,9 @@ export default class ServiceRegistry {
   }
 
   private clearTransportReadyFromContext(ctx: AnyObject): void {
-    const serviceName = String(ctx.serviceName ?? "").trim();
+    const serviceName = resolveServiceNameFromContext(ctx);
     const explicitRouteKey =
-      String(ctx.routeKey ?? "").trim() ||
+      String(ctx.routeKey ?? ctx.__routeKey ?? "").trim() ||
       parseTransportHandleKey(ctx.fetchId ?? ctx.__fetchId)?.routeKey ||
       "";
     const serviceTransportId = String(
@@ -8291,7 +8544,13 @@ export default class ServiceRegistry {
         }
 
         this.clearTransportReadyFromContext(ctx);
-        const { serviceName, serviceInstanceId, serviceTransportId } = ctx;
+        const serviceName = resolveServiceNameFromContext(ctx);
+        const serviceInstanceId = String(
+          ctx.serviceInstanceId ?? ctx.__instance ?? ctx.filter?.uuid ?? "",
+        ).trim();
+        const serviceTransportId = String(
+          ctx.serviceTransportId ?? ctx.__transportId ?? "",
+        ).trim();
         if (
           serviceName === "CadenzaDB" &&
           this.hasAuthorityBootstrapHandshakeEstablished()
@@ -8316,6 +8575,39 @@ export default class ServiceRegistry {
           if (staleAuthorityInstance || staleAuthorityTransport) {
             return true;
           }
+        }
+
+        const signalName = String(
+          ctx.__signalName ?? ctx.__signalEmission?.fullSignalName ?? "",
+        ).trim();
+        const isFetchHandshakeFailure =
+          signalName === "meta.fetch.handshake_failed" ||
+          signalName.startsWith("meta.fetch.handshake_failed:");
+        const hardFetchHandshakeFailure =
+          isFetchHandshakeFailure && isHardFetchHandshakeFailure(ctx);
+        const recoverableFetchHandshakeFailure =
+          isFetchHandshakeFailure &&
+          isRecoverableFetchTransportFailure(ctx, {
+            includeConnectionRefused: true,
+          });
+        const isFetchDelegateFailure =
+          signalName === "meta.fetch.delegate_failed" ||
+          signalName.startsWith("meta.fetch.delegate_failed:");
+        const hardFetchDelegateFailure =
+          isFetchDelegateFailure && isHardFetchHandshakeFailure(ctx);
+        const recoverableFetchDelegateFailure =
+          isFetchDelegateFailure && isRecoverableFetchTransportFailure(ctx);
+
+        if (isFetchDelegateFailure && !hardFetchDelegateFailure) {
+          return false;
+        }
+
+        if (
+          serviceName === "CadenzaDB" &&
+          ((isFetchHandshakeFailure && recoverableFetchHandshakeFailure) ||
+            (isFetchDelegateFailure && recoverableFetchDelegateFailure))
+        ) {
+          return false;
         }
 
         const serviceInstances = this.instances.get(serviceName);
@@ -8345,6 +8637,10 @@ export default class ServiceRegistry {
           serviceName,
         );
 
+        if (serviceName === "CadenzaDB") {
+          this.restartAuthorityBootstrapRecovery("cadenza_db_unreachable");
+        }
+
         for (const instance of instances ?? []) {
           if (
             instance.serviceName === this.serviceName &&
@@ -8364,20 +8660,18 @@ export default class ServiceRegistry {
             continue;
           }
 
-          const signalName = String(
-            ctx.__signalName ?? ctx.__signalEmission?.fullSignalName ?? "",
-          ).trim();
-          const isFetchHandshakeFailure =
-            signalName === "meta.fetch.handshake_failed" ||
-            signalName.startsWith("meta.fetch.handshake_failed:");
-
           if (
-            isFetchHandshakeFailure &&
+            ((isFetchHandshakeFailure &&
+              (!hardFetchHandshakeFailure || recoverableFetchHandshakeFailure)) ||
+              (isFetchDelegateFailure &&
+                (!hardFetchDelegateFailure || recoverableFetchDelegateFailure))) &&
             affectedTransport &&
             this.isCurrentRouteContext(ctx) &&
             this.scheduleDependeeClientRecovery(instance, affectedTransport, {
               ...ctx,
-              __reason: "fetch_handshake_failed_retry",
+              __reason: isFetchDelegateFailure
+                ? "fetch_delegate_failed_retry"
+                : "fetch_handshake_failed_retry",
             })
           ) {
             continue;
@@ -8394,9 +8688,48 @@ export default class ServiceRegistry {
             continue;
           }
 
+          if (
+            (isFetchHandshakeFailure && recoverableFetchHandshakeFailure) ||
+            (isFetchDelegateFailure && recoverableFetchDelegateFailure)
+          ) {
+            continue;
+          }
+
           this.applyInstanceLifecycleState(instance, {
             isActive: false,
             isNonResponsive: true,
+          });
+          const transportsToClear = affectedTransport
+            ? [affectedTransport]
+            : (instance.transports ?? []).filter((transport) => !transport.deleted);
+          for (const transport of transportsToClear) {
+            this.clearTransportFailureState(instance.uuid, transport.uuid);
+            this.clearTransportClientState(instance, transport);
+            this.clearRemoteRouteRecordIfCurrent(
+              instance.serviceName,
+              instance.uuid,
+              transport,
+            );
+            this.emitTransportHandleShutdowns(
+              emit,
+              this.buildTransportRouteKey(instance.serviceName, transport),
+              transport,
+            );
+          }
+          emit("meta.service_registry.service_not_responding", {
+            ...ctx,
+            serviceName: instance.serviceName,
+            serviceInstanceId: instance.uuid,
+            serviceTransportId:
+              affectedTransport?.uuid ?? serviceTransportId ?? undefined,
+            routeKey:
+              affectedTransport
+                ? this.buildTransportRouteKey(instance.serviceName, affectedTransport)
+                : ctx.routeKey ?? ctx.__routeKey,
+            __routeKey:
+              affectedTransport
+                ? this.buildTransportRouteKey(instance.serviceName, affectedTransport)
+                : ctx.__routeKey ?? ctx.routeKey,
           });
           emit("global.meta.service_registry.service_not_responding", {
             data: {
@@ -8428,6 +8761,8 @@ export default class ServiceRegistry {
       .doOn(
         "meta.fetch.handshake_failed",
         "meta.fetch.handshake_failed.*",
+        "meta.fetch.delegate_failed",
+        "meta.fetch.delegate_failed.*",
         "meta.socket_client.disconnected",
         "meta.socket_client.disconnected.*",
         "meta.service_registry.runtime_status_unreachable",
@@ -8665,12 +9000,7 @@ export default class ServiceRegistry {
           }
         }
 
-        this.invalidateAuthorityBootstrapHandshake();
-        this.invalidateBootstrapFullSyncRetryState("cadenza_db_unreachable");
-        Cadenza.emit(META_AUTHORITY_BOOTSTRAP_HANDSHAKE_REQUESTED_SIGNAL, {
-          ...ctx,
-          __reason: "cadenza_db_unreachable",
-        });
+        this.restartAuthorityBootstrapRecovery("cadenza_db_unreachable");
         return true;
       },
       "Clears bootstrap full-sync retry satisfaction when the authority becomes unreachable.",
@@ -8692,7 +9022,7 @@ export default class ServiceRegistry {
         }
 
         this.ensureBootstrapAuthorityControlPlane(ctx, emit);
-        return this.restartBootstrapFullSyncRetryChain(
+        return this.scheduleNextBootstrapFullSyncRetry(
           "cadenza_db_fetch_handshake",
         );
       },
@@ -9127,6 +9457,18 @@ export default class ServiceRegistry {
           preferredRole,
           preferredProtocol,
         );
+        if (this.shouldDemandEstablishRemoteClients(context)) {
+          this.ensureDependeeClientsForService(__serviceName, emit, context);
+        }
+        const hasPendingRouteableInstance =
+          Boolean(__serviceName) &&
+          __serviceName !== "CadenzaDB" &&
+          this.hasPendingRouteableInstanceForSelection(
+            __serviceName,
+            context,
+            preferredRole,
+            targetServiceInstanceId,
+          );
         const activeRoutingCooldown =
           __serviceName && !targetServiceInstanceId
             ? this.getActiveRoutingCooldown(
@@ -9136,6 +9478,12 @@ export default class ServiceRegistry {
               )
             : null;
         if (activeRoutingCooldown) {
+          if (
+            hasPendingRouteableInstance &&
+            this.maybeSchedulePendingRouteSelectionRetry(context, __serviceName)
+          ) {
+            return false;
+          }
           context.errored = true;
           context.__error =
             `No routeable ${preferredRole} transport available for ${__serviceName}. ` +
@@ -9191,9 +9539,6 @@ export default class ServiceRegistry {
         }
         let retries = __retries ?? 0;
         let triedInstances = __triedInstances ?? [];
-        if (this.shouldDemandEstablishRemoteClients(context)) {
-          this.ensureDependeeClientsForService(__serviceName, emit, context);
-        }
         const filteredInstances =
           this.instances
           .get(__serviceName)
@@ -9225,6 +9570,14 @@ export default class ServiceRegistry {
               ),
             );
           }) ?? [];
+        if (
+          filteredInstances.length === 0 &&
+          __serviceName &&
+          hasPendingRouteableInstance &&
+          this.maybeSchedulePendingRouteSelectionRetry(context, __serviceName)
+        ) {
+          return false;
+        }
         const instances = this.collapseInstancesByRouteOrigin(
           filteredInstances,
           context,
@@ -9706,11 +10059,6 @@ export default class ServiceRegistry {
     Cadenza.createMetaTask(
       "Track local routine start",
       (ctx, emit) => {
-        const sourceTaskName = String(ctx.__signalEmission?.taskName ?? "");
-        if (INTERNAL_RUNTIME_STATUS_TASK_NAMES.has(sourceTaskName)) {
-          return false;
-        }
-
         const routineId = String(
           ctx.filter?.uuid ?? ctx.__routineExecId ?? "",
         );
@@ -9746,11 +10094,6 @@ export default class ServiceRegistry {
     Cadenza.createMetaTask(
       "Track local routine end",
       (ctx, emit) => {
-        const sourceTaskName = String(ctx.__signalEmission?.taskName ?? "");
-        if (INTERNAL_RUNTIME_STATUS_TASK_NAMES.has(sourceTaskName)) {
-          return false;
-        }
-
         const routineId = String(
           ctx.filter?.uuid ?? ctx.__routineExecId ?? "",
         );
@@ -10529,6 +10872,27 @@ export default class ServiceRegistry {
           return false;
         }
 
+        if (
+          (this.serviceName &&
+            normalizedLocalInstance.serviceName !== this.serviceName) ||
+          (this.serviceInstanceId &&
+            normalizedLocalInstance.uuid !== this.serviceInstanceId)
+        ) {
+          if (
+            shouldTraceServiceRegistry(
+              resolveServiceNameFromContext(ctx) || this.serviceName,
+            )
+          ) {
+            console.log("[CADENZA_SERVICE_REGISTRY_TRACE] setup_service_ignored_non_local_instance", {
+              localServiceName: this.serviceName,
+              localServiceInstanceId: this.serviceInstanceId,
+              resolvedServiceName: normalizedLocalInstance.serviceName,
+              resolvedServiceInstanceId: normalizedLocalInstance.uuid,
+            });
+          }
+          return false;
+        }
+
         if (shouldTraceServiceRegistry(normalizedLocalInstance.serviceName)) {
           console.log("[CADENZA_SERVICE_REGISTRY_TRACE] setup_service", {
             localServiceName: this.serviceName,
@@ -10832,6 +11196,11 @@ export default class ServiceRegistry {
               auth_strategy: "excluded",
               deleted: "false",
             },
+            where:
+              "service_instance_transport.deleted IS DISTINCT FROM FALSE OR " +
+              "service_instance_transport.protocols IS DISTINCT FROM excluded.protocols OR " +
+              "service_instance_transport.security_profile IS DISTINCT FROM excluded.security_profile OR " +
+              "service_instance_transport.auth_strategy IS DISTINCT FROM excluded.auth_strategy",
           },
         },
       },
@@ -11134,6 +11503,10 @@ export default class ServiceRegistry {
     this.bootstrapFullSyncRetryGeneration = 0;
     this.bootstrapFullSyncSatisfied = false;
     this.bootstrapFullSyncRetryReason = null;
+    this.clearAuthorityBootstrapHandshakeRetryTimer();
+    this.authorityBootstrapHandshakeRetryIndex = 0;
+    this.authorityBootstrapHandshakeRetryGeneration = 0;
+    this.authorityBootstrapHandshakeRetryReason = null;
     this.knownGlobalSignalMaps.clear();
     this.authorityBootstrapRoute = {
       origin: null,

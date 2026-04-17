@@ -6,6 +6,8 @@ import CadenzaService, {
 } from "./Cadenza";
 import {
   Actor,
+  GlobalDefinition,
+  HelperDefinition,
   type ActorDefinition,
   type ActorSpec,
   type ActorStateDefinition,
@@ -42,6 +44,8 @@ import type {
   AnyObject,
   DebounceOptions,
   EphemeralTaskOptions,
+  HelperFunction,
+  RuntimeTools,
   TaskFunction,
   TaskOptions,
   ThrottleTagGetter,
@@ -179,6 +183,18 @@ const createTask = CadenzaService.createTask.bind(
 const createMetaTask = CadenzaService.createMetaTask.bind(
   CadenzaService,
 ) as typeof CadenzaService.createMetaTask;
+const createHelper = CadenzaService.createHelper.bind(
+  CadenzaService,
+) as typeof CadenzaService.createHelper;
+const createMetaHelper = CadenzaService.createMetaHelper.bind(
+  CadenzaService,
+) as typeof CadenzaService.createMetaHelper;
+const createGlobal = CadenzaService.createGlobal.bind(
+  CadenzaService,
+) as typeof CadenzaService.createGlobal;
+const createMetaGlobal = CadenzaService.createMetaGlobal.bind(
+  CadenzaService,
+) as typeof CadenzaService.createMetaGlobal;
 const createActor = CadenzaService.createActor.bind(
   CadenzaService,
 ) as typeof CadenzaService.createActor;
@@ -258,8 +274,10 @@ export type {
   TaskOptions,
   ThrottleTagGetter,
   TaskFunction,
+  HelperFunction,
   DebounceOptions,
   EphemeralTaskOptions,
+  RuntimeTools,
   RuntimeValidationPolicy,
   RuntimeValidationScope,
   SignalDefinitionInput,
@@ -296,6 +314,8 @@ export type {
 };
 export {
   Actor,
+  HelperDefinition,
+  GlobalDefinition,
   GraphMetadataController,
   DeputyTask,
   DatabaseController,
@@ -314,6 +334,10 @@ export {
   log,
   createTask,
   createMetaTask,
+  createHelper,
+  createMetaHelper,
+  createGlobal,
+  createMetaGlobal,
   createActor,
   createCadenzaService,
   createDatabaseService,

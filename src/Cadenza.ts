@@ -10,9 +10,12 @@ import Cadenza, {
   EmitOptions,
   EphemeralTask,
   EphemeralTaskOptions,
+  GlobalDefinition,
   GraphRegistry,
   GraphRoutine,
   GraphRunner,
+  HelperDefinition,
+  HelperFunction,
   InquiryBroker,
   Intent,
   RuntimeValidationPolicy,
@@ -70,6 +73,7 @@ import {
   summarizeResponderStatuses,
 } from "./utils/inquiry";
 import { normalizeServiceTransportConfig } from "./utils/transport";
+import { EXECUTION_PERSISTENCE_BUNDLE_SIGNAL } from "./execution/ExecutionPersistenceCoordinator";
 import {
   type BrowserRuntimeActorHandle,
   type BrowserRuntimeActorOptions,
@@ -78,7 +82,10 @@ import {
 } from "./frontend/createBrowserRuntimeActor";
 import { buildServiceManifestSnapshot } from "./registry/serviceManifest";
 import { AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT } from "./registry/serviceManifestContract";
-import { isAuthorityBootstrapIntent } from "./registry/authorityBootstrapControlPlane";
+import {
+  isAuthorityBootstrapIntent,
+  isAuthorityBootstrapSignal,
+} from "./registry/authorityBootstrapControlPlane";
 import type { ServiceManifestPublicationLayer } from "./types/serviceManifest";
 
 export type SecurityProfile = "low" | "medium" | "high";
@@ -92,6 +99,8 @@ export type NetworkMode =
 const POSTGRES_SETUP_DEBUG_ENABLED =
   process.env.CADENZA_POSTGRES_SETUP_DEBUG === "1" ||
   process.env.CADENZA_POSTGRES_SETUP_DEBUG === "true";
+const DEFAULT_SERVICE_MANIFEST_PUBLICATION_TIMEOUT_MS = 15_000;
+const LOCAL_AUTHORITY_SERVICE_MANIFEST_PUBLICATION_TIMEOUT_MS = 60_000;
 
 function resolveInquiryFailureError(
   inquiry: string,
@@ -198,6 +207,10 @@ const SERVICE_MANIFEST_PUBLICATION_ORDER: ServiceManifestPublicationLayer[] = [
   "business_structural",
   "local_meta_structural",
 ];
+const ROUTING_CAPABILITY_PUBLICATION_RETRY_DELAY_MS = 250;
+const BUSINESS_STRUCTURAL_PUBLICATION_CALM_DELAY_MS = 1_500;
+const LOCAL_META_STRUCTURAL_PUBLICATION_CALM_DELAY_MS = 15_000;
+const MANIFEST_PUBLICATION_PREREQUISITE_RETRY_DELAY_MS = 1_000;
 
 function getServiceManifestPublicationLayerRank(
   layer: ServiceManifestPublicationLayer,
@@ -220,6 +233,7 @@ export default class CadenzaService {
   protected static isBootstrapped = false;
   protected static serviceCreated = false;
   protected static bootstrapSyncCompleted = false;
+  protected static bootstrapSyncCompletedAt = 0;
   protected static bootstrapSignalRegistrationsCompleted = false;
   protected static bootstrapIntentRegistrationsCompleted = false;
   protected static defaultDatabaseServiceName: string | null = null;
@@ -230,11 +244,25 @@ export default class CadenzaService {
   protected static lastPublishedServiceManifestHashes: Partial<
     Record<ServiceManifestPublicationLayer, string>
   > = {};
+  protected static serviceManifestPublishedAt: Partial<
+    Record<ServiceManifestPublicationLayer, number>
+  > = {};
   protected static serviceManifestPublicationInFlight = false;
   protected static serviceManifestPublicationPendingReason: string | null = null;
   protected static serviceManifestPublicationPendingLayer:
     | ServiceManifestPublicationLayer
     | null = null;
+  protected static serviceManifestPublicationRetryReason: string | null = null;
+  protected static serviceManifestPublicationRetryLayer:
+    | ServiceManifestPublicationLayer
+    | null = null;
+  protected static serviceManifestPublicationRetryTimer:
+    | ReturnType<typeof setTimeout>
+    | null = null;
+  protected static serviceManifestPublicationRetryCount = 0;
+  protected static localServiceManifestDefinitionInserted = false;
+  protected static localServiceManifestInstanceInserted = false;
+  protected static initialServiceManifestPublicationRequested = false;
   private static shutdownHandlersRegistered = false;
   private static shutdownInFlight = false;
   private static shutdownHandlerCleanup: Array<() => void> = [];
@@ -401,19 +429,95 @@ export default class CadenzaService {
       : fallback;
   }
 
+  private static clampServiceManifestPublicationLayer(
+    targetLayer: ServiceManifestPublicationLayer,
+  ): ServiceManifestPublicationLayer {
+    const maximumLayer = this.isLocalAuthorityService()
+      ? "routing_capability"
+      : "local_meta_structural";
+
+    return getServiceManifestPublicationLayerRank(targetLayer) >
+      getServiceManifestPublicationLayerRank(maximumLayer)
+      ? maximumLayer
+      : targetLayer;
+  }
+
   private static mergeServiceManifestPublicationRequest(
     reason: string,
     targetLayer: ServiceManifestPublicationLayer,
   ): void {
     this.serviceManifestPublicationPendingReason = reason;
+    const normalizedTargetLayer =
+      this.clampServiceManifestPublicationLayer(targetLayer);
 
     const currentTargetLayer =
       this.serviceManifestPublicationPendingLayer ?? "routing_capability";
     this.serviceManifestPublicationPendingLayer =
-      getServiceManifestPublicationLayerRank(targetLayer) >=
+      getServiceManifestPublicationLayerRank(normalizedTargetLayer) >=
       getServiceManifestPublicationLayerRank(currentTargetLayer)
-        ? targetLayer
+        ? normalizedTargetLayer
         : currentTargetLayer;
+  }
+
+  private static getServiceManifestPublicationGate(
+    publicationLayer: ServiceManifestPublicationLayer,
+  ): {
+    ready: boolean;
+    delayMs: number;
+  } {
+    if (
+      !this.localServiceManifestDefinitionInserted ||
+      !this.localServiceManifestInstanceInserted
+    ) {
+      return {
+        ready: false,
+        delayMs: ROUTING_CAPABILITY_PUBLICATION_RETRY_DELAY_MS,
+      };
+    }
+
+    if (publicationLayer === "routing_capability") {
+      return {
+        ready: true,
+        delayMs: 0,
+      };
+    }
+
+    if (!this.bootstrapSyncCompleted || this.bootstrapSyncCompletedAt <= 0) {
+      return {
+        ready: false,
+        delayMs: MANIFEST_PUBLICATION_PREREQUISITE_RETRY_DELAY_MS,
+      };
+    }
+
+    const now = Date.now();
+
+    if (publicationLayer === "business_structural") {
+      const allowedAt =
+        this.bootstrapSyncCompletedAt + BUSINESS_STRUCTURAL_PUBLICATION_CALM_DELAY_MS;
+      return {
+        ready: now >= allowedAt,
+        delayMs: Math.max(1, allowedAt - now),
+      };
+    }
+
+    const businessPublishedAt =
+      this.serviceManifestPublishedAt.business_structural ?? 0;
+    if (
+      !this.lastPublishedServiceManifestHashes.business_structural ||
+      businessPublishedAt <= 0
+    ) {
+      return {
+        ready: false,
+        delayMs: MANIFEST_PUBLICATION_PREREQUISITE_RETRY_DELAY_MS,
+      };
+    }
+
+    const allowedAt =
+      businessPublishedAt + LOCAL_META_STRUCTURAL_PUBLICATION_CALM_DELAY_MS;
+    return {
+      ready: now >= allowedAt,
+      delayMs: Math.max(1, allowedAt - now),
+    };
   }
 
   private static requestServiceManifestPublication(
@@ -425,16 +529,23 @@ export default class CadenzaService {
       return;
     }
 
+    const normalizedTargetLayer =
+      this.clampServiceManifestPublicationLayer(targetLayer);
+
     const signalName = "meta.service_manifest.publish_requested";
     const payload = {
       __reason: reason,
       __serviceName: this.serviceRegistry.serviceName,
       __serviceInstanceId: this.serviceRegistry.serviceInstanceId,
-      __publicationLayer: targetLayer,
+      __publicationLayer: normalizedTargetLayer,
     };
 
     if (immediate) {
-      this.emit(signalName, payload);
+      if (this.serviceManifestPublicationRetryTimer) {
+        clearTimeout(this.serviceManifestPublicationRetryTimer);
+        this.serviceManifestPublicationRetryTimer = null;
+      }
+      void this.publishServiceManifestIfNeeded(reason, normalizedTargetLayer);
       return;
     }
 
@@ -444,13 +555,284 @@ export default class CadenzaService {
   private static scheduleServiceManifestPublicationRetry(
     reason: string,
     targetLayer: ServiceManifestPublicationLayer = "business_structural",
+    options?: {
+      delayMs?: number;
+      incrementRetryCount?: boolean;
+    },
   ): void {
     if (!this.serviceRegistry.serviceName || !this.serviceRegistry.serviceInstanceId) {
       return;
     }
 
+    this.serviceManifestPublicationRetryReason = reason;
+    const normalizedTargetLayer =
+      this.clampServiceManifestPublicationLayer(targetLayer);
+    const currentRetryLayer =
+      this.serviceManifestPublicationRetryLayer ?? "routing_capability";
+    this.serviceManifestPublicationRetryLayer =
+      getServiceManifestPublicationLayerRank(normalizedTargetLayer) >=
+      getServiceManifestPublicationLayerRank(currentRetryLayer)
+        ? normalizedTargetLayer
+        : currentRetryLayer;
+
+    if (this.serviceManifestPublicationRetryTimer) {
+      return;
+    }
+
+    const retryReason =
+      this.serviceManifestPublicationRetryReason ?? reason;
+    const retryTargetLayer =
+      this.serviceManifestPublicationRetryLayer ?? targetLayer;
+    const shouldIncrementRetryCount = options?.incrementRetryCount !== false;
+    const delayMs =
+      options?.delayMs ??
+      Math.min(
+        10_000,
+        1_000 * Math.max(1, 2 ** this.serviceManifestPublicationRetryCount),
+      );
+    if (shouldIncrementRetryCount) {
+      this.serviceManifestPublicationRetryCount += 1;
+    }
+
+    this.serviceManifestPublicationRetryTimer = setTimeout(() => {
+      this.serviceManifestPublicationRetryTimer = null;
+
+      const pendingReason =
+        this.serviceManifestPublicationRetryReason ?? retryReason;
+      const pendingLayer =
+        this.serviceManifestPublicationRetryLayer ?? retryTargetLayer;
+      this.serviceManifestPublicationRetryReason = null;
+      this.serviceManifestPublicationRetryLayer = null;
+      void this.publishServiceManifestIfNeeded(pendingReason, pendingLayer);
+    }, delayMs);
+  }
+
+  private static shouldPublishBusinessManifestForTaskContext(
+    ctx: Record<string, any>,
+  ): boolean {
+    const task =
+      ctx?.taskInstance ??
+      (typeof ctx?.data?.name === "string" ? this.get(ctx.data.name) : undefined);
+    if (task) {
+      if (this.isRoutingCriticalManifestTask(task)) {
+        return true;
+      }
+      return (
+        task.register === true &&
+        task.isMeta !== true &&
+        task.isSubMeta !== true &&
+        task.isHidden !== true &&
+        task.isEphemeral !== true
+      );
+    }
+
+    if (this.hasRoutingCriticalManifestBindingInContext(ctx)) {
+      return true;
+    }
+
+    return (
+      ctx?.data?.isMeta !== true &&
+      ctx?.data?.isSubMeta !== true &&
+      ctx?.data?.isHidden !== true &&
+      ctx?.data?.isEphemeral !== true &&
+      ctx?.__isSubMeta !== true
+    );
+  }
+
+  private static isRoutingCriticalManifestSignalName(
+    signalName: string | null | undefined,
+  ): boolean {
+    const normalizedSignalName = String(signalName ?? "").trim();
+    if (!normalizedSignalName) {
+      return false;
+    }
+
+    return (
+      normalizedSignalName === EXECUTION_PERSISTENCE_BUNDLE_SIGNAL ||
+      isAuthorityBootstrapSignal(normalizedSignalName)
+    );
+  }
+
+  private static isRoutingCriticalManifestIntentName(
+    intentName: string | null | undefined,
+  ): boolean {
+    return isAuthorityBootstrapIntent(intentName);
+  }
+
+  private static isRoutingCriticalManifestTask(task: Task): boolean {
+    for (const signalName of task.observedSignals ?? []) {
+      if (this.isRoutingCriticalManifestSignalName(signalName)) {
+        return true;
+      }
+    }
+
+    for (const intentName of task.handlesIntents ?? []) {
+      if (this.isRoutingCriticalManifestIntentName(intentName)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private static hasRoutingCriticalManifestBindingInContext(
+    ctx: Record<string, any>,
+  ): boolean {
+    const signalCandidates = [
+      ctx?.signalName,
+      ctx?.data?.signalName,
+      ctx?.data?.signal_name,
+    ];
+    for (const signalName of signalCandidates) {
+      if (this.isRoutingCriticalManifestSignalName(signalName)) {
+        return true;
+      }
+    }
+
+    const intentCandidates = [
+      ctx?.intentName,
+      ctx?.data?.intentName,
+      ctx?.data?.intent_name,
+    ];
+    for (const intentName of intentCandidates) {
+      if (this.isRoutingCriticalManifestIntentName(intentName)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private static shouldPublishBusinessManifestForHelperContext(
+    ctx: Record<string, any>,
+  ): boolean {
+    const helperName =
+      typeof ctx?.data?.name === "string"
+        ? ctx.data.name
+        : typeof ctx?.data?.helperName === "string"
+        ? ctx.data.helperName
+        : typeof ctx?.data?.dependencyHelperName === "string"
+        ? ctx.data.dependencyHelperName
+        : "";
+    const helper = helperName ? Cadenza.getHelper(helperName) : undefined;
+    if (helper) {
+      return helper.isMeta !== true;
+    }
+
+    return ctx?.data?.isMeta !== true;
+  }
+
+  private static shouldPublishBusinessManifestForGlobalContext(
+    ctx: Record<string, any>,
+  ): boolean {
+    const globalName =
+      typeof ctx?.data?.name === "string"
+        ? ctx.data.name
+        : typeof ctx?.data?.globalName === "string"
+        ? ctx.data.globalName
+        : "";
+    const globalDefinition = globalName ? Cadenza.getGlobal(globalName) : undefined;
+    if (globalDefinition) {
+      return globalDefinition.isMeta !== true;
+    }
+
+    return ctx?.data?.isMeta !== true;
+  }
+
+  private static shouldPublishBusinessManifestForRoutineContext(
+    ctx: Record<string, any>,
+  ): boolean {
+    const routineName = typeof ctx?.data?.name === "string" ? ctx.data.name : "";
+    const routine = routineName ? this.getRoutine(routineName) : undefined;
+    if (routine) {
+      return routine.isMeta !== true;
+    }
+
+    return ctx?.data?.isMeta !== true;
+  }
+
+  private static shouldRequestServiceManifestPublicationForSignal(
+    ctx: Record<string, any>,
+  ): boolean {
+    const signalName =
+      typeof ctx?.signal === "string" && ctx.signal.trim().length > 0
+        ? ctx.signal.trim()
+        : "";
+
+    switch (signalName) {
+      case "meta.task.created":
+      case "meta.task.destroyed":
+      case "meta.task.relationship_added":
+      case "meta.task.relationship_removed":
+      case "meta.task.intent_associated":
+      case "meta.task.helper_associated":
+      case "meta.task.global_associated":
+      case "meta.task.observed_signal":
+      case "meta.task.attached_signal":
+      case "meta.task.detached_signal":
+        return this.shouldPublishBusinessManifestForTaskContext(ctx);
+      case "meta.helper.created":
+      case "meta.helper.updated":
+      case "meta.helper.helper_associated":
+      case "meta.helper.global_associated":
+        return this.shouldPublishBusinessManifestForHelperContext(ctx);
+      case "meta.global.created":
+      case "meta.global.updated":
+        return this.shouldPublishBusinessManifestForGlobalContext(ctx);
+      case "meta.actor.created":
+      case "meta.actor.task_associated":
+        return ctx?.data?.is_meta !== true && ctx?.__isSubMeta !== true;
+      case "global.meta.graph_metadata.routine_created":
+      case "global.meta.graph_metadata.routine_updated":
+        return this.shouldPublishBusinessManifestForRoutineContext(ctx);
+      default:
+        return false;
+    }
+  }
+
+  private static maybeRequestInitialServiceManifestPublication(
+    reason: string,
+    targetLayer: ServiceManifestPublicationLayer = "business_structural",
+  ): boolean {
+    if (
+      this.initialServiceManifestPublicationRequested ||
+      !this.canPublishServiceManifestToAuthority() ||
+      !this.serviceRegistry.serviceName ||
+      !this.serviceRegistry.serviceInstanceId ||
+      !this.localServiceManifestDefinitionInserted ||
+      !this.localServiceManifestInstanceInserted
+    ) {
+      return false;
+    }
+
+    this.initialServiceManifestPublicationRequested = true;
+    this.requestServiceManifestPublication(reason, true, targetLayer);
+    return true;
+  }
+
+  private static scheduleInitialServiceManifestPublicationFallback(
+    reason: string,
+    targetLayer: ServiceManifestPublicationLayer = "business_structural",
+  ): void {
+    if (
+      !this.canPublishServiceManifestToAuthority() ||
+      !this.serviceRegistry.serviceName ||
+      !this.serviceRegistry.serviceInstanceId
+    ) {
+      return;
+    }
+
     setTimeout(() => {
-      this.requestServiceManifestPublication(reason, false, targetLayer);
+      if (
+        this.initialServiceManifestPublicationRequested ||
+        !this.canPublishServiceManifestToAuthority() ||
+        !this.serviceRegistry.serviceName ||
+        !this.serviceRegistry.serviceInstanceId
+      ) {
+        return;
+      }
+
+      this.requestServiceManifestPublication(reason, true, targetLayer);
     }, 1000);
   }
 
@@ -466,7 +848,7 @@ export default class CadenzaService {
       }
   > {
     if (
-      !this.serviceRegistry.connectsToCadenzaDB ||
+      !this.canPublishServiceManifestToAuthority() ||
       !this.serviceRegistry.serviceName ||
       !this.serviceRegistry.serviceInstanceId
     ) {
@@ -477,8 +859,10 @@ export default class CadenzaService {
       typeof reason === "string" && reason.trim().length > 0
         ? reason.trim()
         : "service_manifest_publish";
+    const normalizedTargetLayer =
+      this.clampServiceManifestPublicationLayer(targetLayer);
     const publishTargetLayer = this.normalizeServiceManifestPublicationLayer(
-      targetLayer,
+      normalizedTargetLayer,
     );
 
     if (this.serviceManifestPublicationInFlight) {
@@ -525,14 +909,29 @@ export default class CadenzaService {
         getServiceManifestPublicationLayerRank(entry.layer) >
           getServiceManifestPublicationLayerRank(publicationLayer),
     );
+    const publicationGate =
+      this.getServiceManifestPublicationGate(publicationLayer);
+
+    if (!publicationGate.ready) {
+      this.scheduleServiceManifestPublicationRetry(publishReason, publishTargetLayer, {
+        delayMs: publicationGate.delayMs,
+        incrementRetryCount: false,
+      });
+      return false;
+    }
 
     this.serviceManifestPublicationInFlight = true;
     try {
-      this.serviceRegistry.ensureBootstrapAuthorityControlPlaneForInquiry(
-        AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
-        snapshot,
-      );
-      if (!this.serviceRegistry.hasAuthorityBootstrapHandshakeEstablished()) {
+      if (!this.isLocalAuthorityService()) {
+        this.serviceRegistry.ensureBootstrapAuthorityControlPlaneForInquiry(
+          AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+          snapshot,
+        );
+      }
+      if (
+        this.shouldRequireAuthorityBootstrapHandshakeForManifestPublication() &&
+        !this.serviceRegistry.hasAuthorityBootstrapHandshakeEstablished()
+      ) {
         this.scheduleServiceManifestPublicationRetry(
           publishReason,
           publishTargetLayer,
@@ -540,11 +939,15 @@ export default class CadenzaService {
         return false;
       }
       await this.inquire(AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT, snapshot, {
-        timeout: 15_000,
+        timeout: this.isLocalAuthorityService()
+          ? LOCAL_AUTHORITY_SERVICE_MANIFEST_PUBLICATION_TIMEOUT_MS
+          : DEFAULT_SERVICE_MANIFEST_PUBLICATION_TIMEOUT_MS,
         requireComplete: true,
       });
       this.serviceManifestRevision = snapshot.revision;
       this.lastPublishedServiceManifestHashes[publicationLayer] = snapshot.manifestHash;
+      this.serviceManifestPublishedAt[publicationLayer] = Date.now();
+      this.serviceManifestPublicationRetryCount = 0;
       if (hasPendingFollowupLayer) {
         this.mergeServiceManifestPublicationRequest(
           publishReason,
@@ -586,14 +989,7 @@ export default class CadenzaService {
         const pendingLayer = this.serviceManifestPublicationPendingLayer;
         this.serviceManifestPublicationPendingReason = null;
         this.serviceManifestPublicationPendingLayer = null;
-        this.debounce(
-          "meta.service_manifest.publish_requested",
-          {
-            __reason: pendingReason,
-            __publicationLayer: pendingLayer,
-          },
-          100,
-        );
+        void this.publishServiceManifestIfNeeded(pendingReason, pendingLayer);
       }
     }
   }
@@ -606,13 +1002,13 @@ export default class CadenzaService {
     this.createMetaTask(
       "Publish service manifest",
       async (ctx) =>
-        this.publishServiceManifestIfNeeded(
-          typeof ctx.__reason === "string" && ctx.__reason.trim().length > 0
+          this.publishServiceManifestIfNeeded(
+            typeof ctx.__reason === "string" && ctx.__reason.trim().length > 0
             ? ctx.__reason.trim()
             : "service_manifest_publish",
           this.normalizeServiceManifestPublicationLayer(
             ctx.__publicationLayer,
-            "business_structural",
+            "local_meta_structural",
           ),
         ),
       "Publishes staged static manifest snapshots to authority when the manifest hash changes.",
@@ -625,22 +1021,23 @@ export default class CadenzaService {
     this.createMetaTask(
       "Request manifest publication after structural change",
       (ctx) => {
+        if (!this.shouldRequestServiceManifestPublicationForSignal(ctx)) {
+          return false;
+        }
+
         const reason =
           typeof ctx.signal === "string" && ctx.signal.trim().length > 0
             ? ctx.signal
             : typeof ctx.__reason === "string" && ctx.__reason.trim().length > 0
               ? ctx.__reason
               : "manifest_structural_update";
-        const targetLayer =
-          reason === "meta.service_registry.instance_inserted"
-            ? "business_structural"
-            : this.normalizeServiceManifestPublicationLayer(
-                ctx.__publicationLayer,
-                "business_structural",
-              );
+        const targetLayer = this.normalizeServiceManifestPublicationLayer(
+          ctx.__publicationLayer,
+          "local_meta_structural",
+        );
         this.requestServiceManifestPublication(
           reason,
-          reason === "meta.service_registry.instance_inserted",
+          false,
           targetLayer,
         );
         return true;
@@ -651,7 +1048,6 @@ export default class CadenzaService {
         isHidden: true,
       },
     ).doOn(
-      "meta.service_registry.instance_inserted",
       "meta.task.created",
       "meta.task.destroyed",
       "meta.task.relationship_added",
@@ -670,13 +1066,25 @@ export default class CadenzaService {
       "meta.helper.global_associated",
       "meta.actor.created",
       "meta.actor.task_associated",
-      "meta.fetch.handshake_complete",
       "meta.service_registry.registered_global_signals",
       "meta.service_registry.registered_global_intents",
-      "meta.service_registry.initial_sync_complete",
       "global.meta.graph_metadata.routine_created",
       "global.meta.graph_metadata.routine_updated",
     );
+  }
+
+  private static isLocalAuthorityService(): boolean {
+    return this.serviceRegistry.serviceName === "CadenzaDB";
+  }
+
+  private static canPublishServiceManifestToAuthority(): boolean {
+    return (
+      this.serviceRegistry.connectsToCadenzaDB || this.isLocalAuthorityService()
+    );
+  }
+
+  private static shouldRequireAuthorityBootstrapHandshakeForManifestPublication(): boolean {
+    return !this.isLocalAuthorityService();
   }
 
   private static buildLegacyLocalCadenzaDBTaskName(
@@ -926,6 +1334,7 @@ export default class CadenzaService {
 
   public static markBootstrapSyncCompleted(): void {
     this.bootstrapSyncCompleted = true;
+    this.bootstrapSyncCompletedAt = Date.now();
   }
 
   /**
@@ -2024,6 +2433,7 @@ export default class CadenzaService {
 
     const serviceId = options.customServiceId ?? uuid();
     this.bootstrapSyncCompleted = false;
+    this.bootstrapSyncCompletedAt = 0;
     this.bootstrapSignalRegistrationsCompleted = false;
     this.bootstrapIntentRegistrationsCompleted = false;
     this.serviceRegistry.serviceName = serviceName;
@@ -2302,6 +2712,7 @@ export default class CadenzaService {
     };
 
     let bootstrapServiceCreationRequested = false;
+    const emitLocalServiceCreationImmediately = !options.cadenzaDB?.connect;
 
     if (options.cadenzaDB?.connect) {
       this.createMetaTask(
@@ -2327,7 +2738,6 @@ export default class CadenzaService {
         },
       ).doOn("meta.fetch.handshake_complete");
     } else {
-      this.emit("meta.create_service_requested", initContext);
       this.createMetaTask("Create signal transmission for sync", (ctx, emit) => {
         emit(
           "meta.service_registry.gathered_sync_transmission_reconcile_requested",
@@ -2340,6 +2750,27 @@ export default class CadenzaService {
     }
 
     let serviceSetupCompletedHandled = false;
+
+    this.createMetaTask("Handle local service definition insertion", (ctx) => {
+      const insertedServiceName = String(
+        ctx?.__serviceName ??
+          ctx?.serviceName ??
+          ctx?.service_name ??
+          ctx?.data?.name ??
+          "",
+      ).trim();
+
+      if (!insertedServiceName || insertedServiceName !== serviceName) {
+        return false;
+      }
+
+      this.localServiceManifestDefinitionInserted = true;
+      this.maybeRequestInitialServiceManifestPublication(
+        "service_setup_completed",
+        "local_meta_structural",
+      );
+      return true;
+    }).doOn("meta.service_registry.service_inserted");
 
     this.createMetaTask("Handle service setup completion", (ctx, emit) => {
       if (serviceSetupCompletedHandled) {
@@ -2378,14 +2809,20 @@ export default class CadenzaService {
       }
 
       serviceSetupCompletedHandled = true;
+      this.localServiceManifestInstanceInserted = true;
 
       if (options.cadenzaDB?.connect) {
         this.serviceRegistry.bootstrapFullSync(emit, ctx, "service_setup_completed");
-        void this.publishServiceManifestIfNeeded(
-          "service_setup_completed",
-          "business_structural",
-        );
       }
+
+      this.maybeRequestInitialServiceManifestPublication(
+        "service_setup_completed",
+        "local_meta_structural",
+      );
+      this.scheduleInitialServiceManifestPublicationFallback(
+        "service_setup_completed",
+        "local_meta_structural",
+      );
 
       if (isFrontend) {
         registerActorSessionPersistenceTasks();
@@ -2396,6 +2833,10 @@ export default class CadenzaService {
 
       return true;
     }).doOn("meta.service_registry.instance_inserted");
+
+    if (emitLocalServiceCreationImmediately) {
+      this.emit("meta.create_service_requested", initContext);
+    }
 
     if (!options.cadenzaDB?.connect) {
       Cadenza.schedule(
@@ -2975,6 +3416,56 @@ export default class CadenzaService {
     return Cadenza.createTask(name, func, description, options);
   }
 
+  static createHelper(
+    name: string,
+    func: HelperFunction,
+    description: string = "",
+  ): HelperDefinition {
+    this.bootstrap();
+    return Cadenza.createHelper(name, func, description);
+  }
+
+  static createMetaHelper(
+    name: string,
+    func: HelperFunction,
+    description: string = "",
+  ): HelperDefinition {
+    this.bootstrap();
+    return Cadenza.createMetaHelper(name, func, description);
+  }
+
+  static createHelperFromDefinition(
+    definition: Parameters<typeof Cadenza.createHelperFromDefinition>[0],
+  ): HelperDefinition {
+    this.bootstrap();
+    return Cadenza.createHelperFromDefinition(definition);
+  }
+
+  static createGlobal(
+    name: string,
+    value: unknown,
+    description: string = "",
+  ): GlobalDefinition {
+    this.bootstrap();
+    return Cadenza.createGlobal(name, value, description);
+  }
+
+  static createMetaGlobal(
+    name: string,
+    value: unknown,
+    description: string = "",
+  ): GlobalDefinition {
+    this.bootstrap();
+    return Cadenza.createMetaGlobal(name, value, description);
+  }
+
+  static createGlobalFromDefinition(
+    definition: Parameters<typeof Cadenza.createGlobalFromDefinition>[0],
+  ): GlobalDefinition {
+    this.bootstrap();
+    return Cadenza.createGlobalFromDefinition(definition);
+  }
+
   /**
    * Creates a meta task with the specified name, functionality, description, and options.
    * This is used for creating tasks that lives on the meta layer.
@@ -3379,6 +3870,7 @@ export default class CadenzaService {
     this.isBootstrapped = false;
     this.serviceCreated = false;
     this.bootstrapSyncCompleted = false;
+    this.bootstrapSyncCompletedAt = 0;
     this.bootstrapSignalRegistrationsCompleted = false;
     this.bootstrapIntentRegistrationsCompleted = false;
     this.defaultDatabaseServiceName = null;
@@ -3387,9 +3879,20 @@ export default class CadenzaService {
     this.frontendSyncScheduled = false;
     this.serviceManifestRevision = 0;
     this.lastPublishedServiceManifestHashes = {};
+    this.serviceManifestPublishedAt = {};
     this.serviceManifestPublicationInFlight = false;
     this.serviceManifestPublicationPendingReason = null;
     this.serviceManifestPublicationPendingLayer = null;
+    this.serviceManifestPublicationRetryReason = null;
+    this.serviceManifestPublicationRetryLayer = null;
+    if (this.serviceManifestPublicationRetryTimer) {
+      clearTimeout(this.serviceManifestPublicationRetryTimer);
+      this.serviceManifestPublicationRetryTimer = null;
+    }
+    this.serviceManifestPublicationRetryCount = 0;
+    this.localServiceManifestDefinitionInserted = false;
+    this.localServiceManifestInstanceInserted = false;
+    this.initialServiceManifestPublicationRequested = false;
     resetBrowserRuntimeActorHandles();
   }
 }

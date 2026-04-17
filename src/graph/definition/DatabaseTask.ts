@@ -30,6 +30,21 @@ const EXECUTION_OBSERVABILITY_INSERT_ROUTINES = new Set([
   "Insert task_execution",
   "Insert inquiry",
 ]);
+const ROOT_DB_OPERATION_CONTEXT_KEYS = [
+  "data",
+  "batch",
+  "transaction",
+  "onConflict",
+  "filter",
+  "fields",
+  "joins",
+  "sort",
+  "limit",
+  "offset",
+  "queryMode",
+  "aggregates",
+  "groupBy",
+] as const;
 
 /**
  * Represents a specialized task for delegating database operations. Extends `DeputyTask`.
@@ -223,6 +238,38 @@ export default class DatabaseTask extends DeputyTask {
           : ctx.data;
     }
 
+    const shouldCompactAuthorityBootstrapContext =
+      this.serviceName === "CadenzaDB" &&
+      (ctx.__authorityBootstrapChannel === true ||
+        metadata.__authorityBootstrapChannel === true ||
+        ctx.__metadata?.__authorityBootstrapChannel === true);
+
+    const rootDbOperationContext = shouldCompactAuthorityBootstrapContext
+      ? {}
+      : {
+          data: nextQueryData.data ?? ctx.data,
+          batch: nextQueryData.batch ?? ctx.batch,
+          transaction: nextQueryData.transaction ?? ctx.transaction,
+          onConflict: Object.prototype.hasOwnProperty.call(nextQueryData, "onConflict")
+            ? nextQueryData.onConflict
+            : undefined,
+          filter: nextQueryData.filter ?? ctx.filter,
+          fields: nextQueryData.fields ?? ctx.fields,
+          joins: nextQueryData.joins ?? ctx.joins,
+          sort: nextQueryData.sort ?? ctx.sort,
+          limit: nextQueryData.limit ?? ctx.limit,
+          offset: nextQueryData.offset ?? ctx.offset,
+          queryMode: nextQueryData.queryMode ?? ctx.queryMode,
+          aggregates: nextQueryData.aggregates ?? ctx.aggregates,
+          groupBy: nextQueryData.groupBy ?? ctx.groupBy,
+        };
+
+    if (shouldCompactAuthorityBootstrapContext) {
+      for (const key of ROOT_DB_OPERATION_CONTEXT_KEYS) {
+        delete ctx[key];
+      }
+    }
+
     const deputyContext = attachDelegationRequestSnapshot(
       stripDelegationRequestSnapshot(
         hoistDelegationMetadataFields({
@@ -245,14 +292,7 @@ export default class DatabaseTask extends DeputyTask {
               metadata.__blockRemoteExecution ?? ctx.__blockRemoteExecution ?? false,
             __deputyTaskName: this.name,
           },
-          data: nextQueryData.data ?? ctx.data,
-          batch: nextQueryData.batch ?? ctx.batch,
-          transaction: nextQueryData.transaction ?? ctx.transaction,
-          onConflict: Object.prototype.hasOwnProperty.call(nextQueryData, "onConflict")
-            ? nextQueryData.onConflict
-            : undefined,
-          filter: nextQueryData.filter ?? ctx.filter,
-          fields: nextQueryData.fields ?? ctx.fields,
+          ...rootDbOperationContext,
           queryData: nextQueryData,
         }),
       ),

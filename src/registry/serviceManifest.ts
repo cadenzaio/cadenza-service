@@ -1,4 +1,16 @@
 import Cadenza from "../Cadenza";
+import {
+  AUTHORITY_BOOTSTRAP_FULL_SYNC_INTENT,
+  AUTHORITY_BOOTSTRAP_SIGNAL_NAMES,
+  AUTHORITY_SERVICE_INSTANCE_REGISTER_INTENT,
+  AUTHORITY_SERVICE_INSTANCE_TRANSPORT_REGISTER_INTENT,
+} from "./authorityBootstrapControlPlane";
+import {
+  AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+  AUTHORITY_SERVICE_MANIFEST_UPDATED_SIGNAL,
+} from "./serviceManifestContract";
+import { AUTHORITY_RUNTIME_STATUS_REPORT_INTENT } from "./runtimeStatusContract";
+import { EXECUTION_PERSISTENCE_BUNDLE_SIGNAL } from "../execution/ExecutionPersistenceCoordinator";
 import { decomposeSignalName } from "../utils/tools";
 import { isMetaIntentName } from "../utils/inquiry";
 import CoreCadenza from "@cadenza.io/core";
@@ -362,16 +374,30 @@ function listManifestGlobals(): GlobalDefinition[] {
 }
 
 function isRoutingCriticalMetaSignal(
-  _signal: ServiceManifestSignalDefinition,
+  signal: ServiceManifestSignalDefinition,
 ): boolean {
-  return false;
+  return ROUTING_CRITICAL_META_SIGNALS.has(signal.name);
 }
 
 function isRoutingCriticalMetaIntent(
-  _intent: ServiceManifestIntentDefinition,
+  intent: ServiceManifestIntentDefinition,
 ): boolean {
-  return false;
+  return ROUTING_CRITICAL_META_INTENTS.has(intent.name);
 }
+
+const ROUTING_CRITICAL_META_INTENTS = new Set<string>([
+  AUTHORITY_BOOTSTRAP_FULL_SYNC_INTENT,
+  AUTHORITY_SERVICE_INSTANCE_REGISTER_INTENT,
+  AUTHORITY_SERVICE_INSTANCE_TRANSPORT_REGISTER_INTENT,
+  AUTHORITY_SERVICE_MANIFEST_REPORT_INTENT,
+  AUTHORITY_RUNTIME_STATUS_REPORT_INTENT,
+]);
+
+const ROUTING_CRITICAL_META_SIGNALS = new Set<string>([
+  AUTHORITY_SERVICE_MANIFEST_UPDATED_SIGNAL,
+  EXECUTION_PERSISTENCE_BUNDLE_SIGNAL,
+  ...AUTHORITY_BOOTSTRAP_SIGNAL_NAMES,
+]);
 
 export function buildServiceManifestSnapshot(params: {
   serviceName: string;
@@ -928,117 +954,13 @@ export function buildServiceManifestSnapshot(params: {
       ),
     );
 
-  const businessLocalMetaTaskKeys = new Set<string>();
-  const businessLocalMetaSignalNames = new Set<string>();
-  const businessLocalMetaIntentNames = new Set<string>();
-  const businessLocalMetaActorKeys = new Set<string>();
-  const businessLocalMetaRoutineKeys = new Set<string>();
-
-  for (const map of localMetaSignalTaskMaps) {
-    businessLocalMetaSignalNames.add(map.signal_name);
-    businessLocalMetaTaskKeys.add(
-      buildTaskKey({
-        service_name: map.service_name,
-        name: map.task_name,
-        version: map.task_version,
-      }),
-    );
-  }
-
-  for (const map of localMetaIntentTaskMaps) {
-    businessLocalMetaIntentNames.add(map.intent_name);
-    businessLocalMetaTaskKeys.add(
-      buildTaskKey({
-        service_name: map.service_name,
-        name: map.task_name,
-        version: map.task_version,
-      }),
-    );
-  }
-
-  for (const map of localMetaActorTaskMaps) {
-    businessLocalMetaActorKeys.add(
-      buildActorKey({
-        service_name: map.service_name,
-        name: map.actor_name,
-        version: map.actor_version,
-      }),
-    );
-    businessLocalMetaTaskKeys.add(
-      buildTaskKey({
-        service_name: map.service_name,
-        name: map.task_name,
-        version: map.task_version,
-      }),
-    );
-  }
-
-  for (const map of localMetaTaskToRoutineMaps) {
-    businessLocalMetaRoutineKeys.add(
-      buildRoutineKey({
-        service_name: map.service_name,
-        name: map.routine_name,
-        version: map.routine_version,
-      }),
-    );
-    businessLocalMetaTaskKeys.add(
-      buildTaskKey({
-        service_name: map.service_name,
-        name: map.task_name,
-        version: map.task_version,
-      }),
-    );
-  }
-
-  const businessLocalMetaTasks = Array.from(businessLocalMetaTaskKeys)
-    .map((key) => taskDefinitionsByKey.get(key) ?? null)
-    .filter(
-      (task): task is ServiceManifestTaskDefinition =>
-        task !== null && (task.is_meta === true || task.is_sub_meta === true),
-    )
-    .sort((left, right) =>
-      `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
-    );
-  const businessLocalMetaSignals = Array.from(businessLocalMetaSignalNames)
-    .map((name) => signalDefinitionsByName.get(name) ?? null)
-    .filter(
-      (signal): signal is ServiceManifestSignalDefinition =>
-        signal !== null && signal.is_meta === true,
-    )
-    .sort((left, right) => left.name.localeCompare(right.name));
-  const businessLocalMetaIntents = Array.from(businessLocalMetaIntentNames)
-    .map((name) => intentDefinitionsByName.get(name) ?? null)
-    .filter(
-      (intent): intent is ServiceManifestIntentDefinition =>
-        intent !== null && intent.is_meta === true,
-    )
-    .sort((left, right) => left.name.localeCompare(right.name));
-  const businessLocalMetaActors = Array.from(businessLocalMetaActorKeys)
-    .map((key) => actorDefinitionsByKey.get(key) ?? null)
-    .filter(
-      (actor): actor is ServiceManifestActorDefinition =>
-        actor !== null && actor.is_meta === true,
-    )
-    .sort((left, right) =>
-      `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
-    );
-  const businessLocalMetaRoutines = Array.from(businessLocalMetaRoutineKeys)
-    .map((key) => routineDefinitionsByKey.get(key) ?? null)
-    .filter(
-      (routine): routine is ServiceManifestRoutineDefinition =>
-        routine !== null && routine.is_meta === true,
-    )
-    .sort((left, right) =>
-      `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
-    );
-
   const cumulativeTasks =
     publicationLayer === "routing_capability"
       ? routingTasks
       : publicationLayer === "business_structural"
         ? Array.from(
             new Map(
-              [...routingTasks, ...businessTasks, ...businessLocalMetaTasks].map((task) => [
+              [...routingTasks, ...businessTasks].map((task) => [
                 buildTaskKey(task),
                 task,
               ]),
@@ -1062,7 +984,7 @@ export function buildServiceManifestSnapshot(params: {
       : publicationLayer === "business_structural"
         ? Array.from(
             new Map(
-              [...routingSignals, ...businessSignals, ...businessLocalMetaSignals].map(
+              [...routingSignals, ...businessSignals].map(
                 (signal) => [signal.name, signal],
               ),
             ).values(),
@@ -1081,7 +1003,7 @@ export function buildServiceManifestSnapshot(params: {
       : publicationLayer === "business_structural"
         ? Array.from(
             new Map(
-              [...routingIntents, ...businessIntents, ...businessLocalMetaIntents].map(
+              [...routingIntents, ...businessIntents].map(
                 (intent) => [intent.name, intent],
               ),
             ).values(),
@@ -1098,16 +1020,7 @@ export function buildServiceManifestSnapshot(params: {
     publicationLayer === "routing_capability"
       ? []
       : publicationLayer === "business_structural"
-        ? Array.from(
-            new Map(
-              [...businessActors, ...businessLocalMetaActors].map((actor) => [
-                buildActorKey(actor),
-                actor,
-              ]),
-            ).values(),
-          ).sort((left, right) =>
-            `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
-          )
+        ? businessActors
         : Array.from(
             new Map(
               [...businessActors, ...localMetaActors].map((actor) => [
@@ -1122,16 +1035,7 @@ export function buildServiceManifestSnapshot(params: {
     publicationLayer === "routing_capability"
       ? []
       : publicationLayer === "business_structural"
-        ? Array.from(
-            new Map(
-              [...businessRoutines, ...businessLocalMetaRoutines].map((routine) => [
-                buildRoutineKey(routine),
-                routine,
-              ]),
-            ).values(),
-          ).sort((left, right) =>
-            `${left.name}:${left.version}`.localeCompare(`${right.name}:${right.version}`),
-          )
+        ? businessRoutines
         : Array.from(
             new Map(
               [...businessRoutines, ...localMetaRoutines].map((routine) => [
@@ -1321,14 +1225,7 @@ export function buildServiceManifestSnapshot(params: {
     publicationLayer === "routing_capability"
       ? []
       : publicationLayer === "business_structural"
-        ? Array.from(
-            new Map(
-              [...businessActorTaskMaps, ...localMetaActorTaskMaps].map((map) => [
-                `${map.service_name}|${map.actor_name}|${map.actor_version}|${map.task_name}|${map.task_version}|${map.mode}`,
-                map,
-              ]),
-            ).values(),
-          )
+        ? businessActorTaskMaps
         : Array.from(
             new Map(
               [...businessActorTaskMaps, ...localMetaActorTaskMaps].map((map) => [
@@ -1368,13 +1265,13 @@ export function buildServiceManifestSnapshot(params: {
         ? publishedSignalTaskMaps
         : publicationLayer === "local_meta_structural"
         ? [...publishedSignalTaskMaps, ...localMetaSignalTaskMaps]
-        : [...publishedSignalTaskMaps, ...localMetaSignalTaskMaps],
+        : publishedSignalTaskMaps,
     intentToTaskMaps:
       publicationLayer === "routing_capability"
         ? publishedIntentTaskMaps
         : publicationLayer === "local_meta_structural"
         ? [...publishedIntentTaskMaps, ...localMetaIntentTaskMaps]
-        : [...publishedIntentTaskMaps, ...localMetaIntentTaskMaps],
+        : publishedIntentTaskMaps,
     actorTaskMaps: cumulativeActorTaskMaps,
     taskToRoutineMaps: cumulativeTaskToRoutineMaps,
     taskToHelperMaps: cumulativeTaskToHelperMaps,

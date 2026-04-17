@@ -187,6 +187,122 @@ describe("DatabaseController schema and intent helpers", () => {
     ).toBe("delete-pg-example-telemetry-postgres-actor-player");
   });
 
+  it("prefixes generated default intents with meta only for meta PostgresActors", () => {
+    const defaultSchema: SchemaDefinition = {
+      type: "object",
+      properties: {
+        filter: { type: "object" },
+      },
+    };
+
+    expect(
+      resolveTableOperationIntents(
+        "MetaTelemetryPostgresActor",
+        "player",
+        table,
+        "query",
+        defaultSchema,
+        {
+          isMeta: true,
+        },
+      ).intents[0].name,
+    ).toBe("meta-query-pg-meta-telemetry-postgres-actor-player");
+
+    expect(
+      resolveTableOperationIntents(
+        "ExampleTelemetryPostgresActor",
+        "player",
+        table,
+        "query",
+        defaultSchema,
+        {
+          isMeta: false,
+        },
+      ).intents[0].name,
+    ).toBe("query-pg-example-telemetry-postgres-actor-player");
+  });
+
+  it("prefixes generated macro intents with meta only for meta PostgresActors", () => {
+    const controller = DatabaseController.instance as any;
+    const schema: DatabaseSchemaDefinition = {
+      version: 1,
+      tables: {
+        player: table,
+      },
+    };
+
+    const metaRegistration = controller.createPostgresActor(
+      "MetaMacroTelemetryPostgresActor",
+      schema,
+      "",
+      {
+        isMeta: true,
+        databaseName: "meta_macro_telemetry_test",
+      },
+    );
+    controller.generateDatabaseTasks(metaRegistration);
+
+    expect(Array.from(metaRegistration.intentNames)).toEqual(
+      expect.arrayContaining([
+        "meta-count-pg-meta-macro-telemetry-postgres-actor-postgres-actor-player",
+        "meta-exists-pg-meta-macro-telemetry-postgres-actor-postgres-actor-player",
+        "meta-one-pg-meta-macro-telemetry-postgres-actor-postgres-actor-player",
+        "meta-aggregate-pg-meta-macro-telemetry-postgres-actor-postgres-actor-player",
+        "meta-upsert-pg-meta-macro-telemetry-postgres-actor-postgres-actor-player",
+      ]),
+    );
+
+    const normalRegistration = controller.createPostgresActor(
+      "NormalMacroTelemetryPostgresActor",
+      schema,
+      "",
+      {
+        isMeta: false,
+        databaseName: "normal_macro_telemetry_test",
+      },
+    );
+    controller.generateDatabaseTasks(normalRegistration);
+
+    expect(Array.from(normalRegistration.intentNames)).toEqual(
+      expect.arrayContaining([
+        "count-pg-normal-macro-telemetry-postgres-actor-postgres-actor-player",
+        "exists-pg-normal-macro-telemetry-postgres-actor-postgres-actor-player",
+        "one-pg-normal-macro-telemetry-postgres-actor-postgres-actor-player",
+        "aggregate-pg-normal-macro-telemetry-postgres-actor-postgres-actor-player",
+        "upsert-pg-normal-macro-telemetry-postgres-actor-postgres-actor-player",
+      ]),
+    );
+  });
+
+  it("rejects custom non-prefixed intents for meta PostgresActors", () => {
+    const defaultSchema: SchemaDefinition = {
+      type: "object",
+      properties: {
+        filter: { type: "object" },
+      },
+    };
+
+    expect(() =>
+      resolveTableOperationIntents(
+        "MetaTelemetryPostgresActor",
+        "player",
+        {
+          ...table,
+          customIntents: {
+            query: ["custom-player-query"],
+          },
+        },
+        "query",
+        defaultSchema,
+        {
+          isMeta: true,
+        },
+      ),
+    ).toThrow(
+      "Invalid custom query intent 'custom-player-query' on table 'player': meta PostgresActor intents must start with 'meta-'",
+    );
+  });
+
   it("builds insert data schema as keyed variants", () => {
     const schema = getInsertDataSchemaFromTable(table, "player") as Record<
       string,
@@ -457,13 +573,13 @@ describe("DatabaseController schema and intent helpers", () => {
     ).toEqual(basePolicy);
   });
 
-  it("uses lower insert concurrency for execution observability tables", () => {
+  it("serializes generated insert tasks and keeps execution observability inserts serialized", () => {
     expect(resolveGeneratedInsertTaskConcurrency("execution_trace")).toBe(1);
     expect(resolveGeneratedInsertTaskConcurrency("routine_execution")).toBe(1);
     expect(resolveGeneratedInsertTaskConcurrency("signal_emission")).toBe(1);
     expect(resolveGeneratedInsertTaskConcurrency("inquiry")).toBe(1);
     expect(resolveGeneratedInsertTaskConcurrency("task_execution")).toBe(1);
-    expect(resolveGeneratedInsertTaskConcurrency("telemetry")).toBe(200);
+    expect(resolveGeneratedInsertTaskConcurrency("telemetry")).toBe(1);
   });
 
   it("shares execution observability insert tags by trace lineage", () => {
