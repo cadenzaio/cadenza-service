@@ -1,3 +1,10 @@
+## [2.21.1](https://github.com/cadenzaio/cadenza-service/compare/v2.21.0...v2.21.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* harden staged bootstrap and service routing ([ca96de1](https://github.com/cadenzaio/cadenza-service/commit/ca96de1432deedcc9656bcc0d06fff90c0543954))
+
 # [2.21.0](https://github.com/cadenzaio/cadenza-service/compare/v2.20.1...v2.21.0) (2026-04-13)
 
 
