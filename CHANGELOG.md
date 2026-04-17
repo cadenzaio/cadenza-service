@@ -1,3 +1,10 @@
+## [2.21.2](https://github.com/cadenzaio/cadenza-service/compare/v2.21.1...v2.21.2) (2026-04-17)
+
+
+### Bug Fixes
+
+* slim actor session persistence recovery state ([b574aff](https://github.com/cadenzaio/cadenza-service/commit/b574aff00ddcf20eecb53bb797e52621b7daa8cc))
+
 ## [2.21.1](https://github.com/cadenzaio/cadenza-service/compare/v2.21.0...v2.21.1) (2026-04-17)
 
 
