@@ -1879,6 +1879,7 @@ export default class ServiceRegistry {
   private authorityBootstrapHandshakeRetryIndex = 0;
   private authorityBootstrapHandshakeRetryGeneration = 0;
   private authorityBootstrapHandshakeRetryReason: string | null = null;
+  private authorityBootstrapRecoveryActive = false;
 
   handleInstanceUpdateTask: Task;
   handleTransportUpdateTask: Task;
@@ -2930,6 +2931,7 @@ export default class ServiceRegistry {
     this.authorityBootstrapHandshakeRetryIndex =
       AUTHORITY_BOOTSTRAP_HANDSHAKE_RETRY_DELAYS_MS.length;
     this.authorityBootstrapHandshakeRetryReason = null;
+    this.authorityBootstrapRecoveryActive = false;
   }
 
   private buildJitteredAuthorityBootstrapHandshakeRetryDelayMs(
@@ -3015,6 +3017,14 @@ export default class ServiceRegistry {
   }
 
   private restartAuthorityBootstrapRecovery(reason: string): boolean {
+    if (this.authorityBootstrapRecoveryActive) {
+      if (typeof reason === "string" && reason.trim()) {
+        this.authorityBootstrapHandshakeRetryReason = reason.trim();
+      }
+      return false;
+    }
+
+    this.authorityBootstrapRecoveryActive = true;
     this.invalidateAuthorityBootstrapHandshake();
     this.invalidateBootstrapFullSyncRetryState(reason);
     return this.restartAuthorityBootstrapHandshakeRetryChain(reason);
@@ -8610,6 +8620,10 @@ export default class ServiceRegistry {
           return false;
         }
 
+        if (serviceName === "CadenzaDB" && this.authorityBootstrapRecoveryActive) {
+          return false;
+        }
+
         const serviceInstances = this.instances.get(serviceName);
         const instances = serviceInstances?.filter((instance) => {
           if (serviceInstanceId && instance.uuid === serviceInstanceId) {
@@ -8998,6 +9012,10 @@ export default class ServiceRegistry {
           if (staleAuthorityInstance || staleAuthorityTransport) {
             return false;
           }
+        }
+
+        if (this.authorityBootstrapRecoveryActive) {
+          return false;
         }
 
         this.restartAuthorityBootstrapRecovery("cadenza_db_unreachable");

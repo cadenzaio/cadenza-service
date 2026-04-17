@@ -7899,6 +7899,63 @@ describe("service registry transport registration", () => {
     expect(registry.hasAuthorityBootstrapHandshakeEstablished()).toBe(true);
   });
 
+  it("does not keep restarting CadenzaDB bootstrap recovery while one recovery chain is already active", async () => {
+    vi.useFakeTimers();
+    const registry = ServiceRegistry.instance as any;
+    registry.serviceName = "ScheduledRunnerService";
+    registry.serviceInstanceId = "scheduled-runner-1";
+    registry.connectsToCadenzaDB = true;
+    registry.bootstrapFullSyncRetryJitterRatio = 0;
+    registry.seedAuthorityBootstrapRoute(
+      "http://cadenza-db-service:8080",
+      "internal",
+    );
+    registry.noteAuthorityBootstrapHandshake({
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-live-1",
+      serviceTransportId: "cadenza-db-transport-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+
+    const requestHandshakeSpy = vi
+      .spyOn(registry, "requestAuthorityBootstrapHandshake")
+      .mockReturnValue(true);
+
+    expect(
+      registry.restartAuthorityBootstrapRecovery("cadenza_db_unreachable"),
+    ).toBe(true);
+
+    const retryGenerationAfterFirst =
+      registry.authorityBootstrapHandshakeRetryGeneration;
+    const retryIndexAfterFirst = registry.authorityBootstrapHandshakeRetryIndex;
+
+    Cadenza.emit("meta.service_registry.runtime_status_unreachable", {
+      serviceName: "CadenzaDB",
+      serviceInstanceId: "cadenza-db-live-1",
+      serviceTransportId: "cadenza-db-transport-1",
+      serviceOrigin: "http://cadenza-db-service:8080",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(registry.authorityBootstrapRecoveryActive).toBe(true);
+    expect(registry.authorityBootstrapHandshakeRetryGeneration).toBe(
+      retryGenerationAfterFirst,
+    );
+    expect(registry.authorityBootstrapHandshakeRetryIndex).toBe(
+      retryIndexAfterFirst,
+    );
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(requestHandshakeSpy).toHaveBeenCalledTimes(1);
+    expect(requestHandshakeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        __reason: "cadenza_db_unreachable",
+      }),
+    );
+  });
+
   it("retries current non-authority routes after a fetch handshake failure without marking the instance non-responsive", async () => {
     const registry = ServiceRegistry.instance as any;
     registry.serviceName = "TelemetryCollectorService";
@@ -8334,7 +8391,8 @@ describe("service registry transport registration", () => {
         "CadenzaDB|internal|http://cadenza-db-service:8080",
       ),
     ).toBe(true);
-    expect(registry.hasAuthorityBootstrapHandshakeEstablished()).toBe(false);
+    expect(requestHandshakeSpy).not.toHaveBeenCalled();
+    expect(registry.hasAuthorityBootstrapHandshakeEstablished()).toBe(true);
   });
 
   it("demotes a dead route after a hard fetch delegation failure instead of keeping the stale hostname", async () => {

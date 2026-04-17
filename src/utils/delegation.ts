@@ -40,6 +40,16 @@ const DELEGATION_FAILURE_CONTEXT_KEYS = [
   "transportProtocols",
   "transportProtocol",
 ] as const;
+const ACTOR_SESSION_STATE_REMOTE_ROUTINE = "Insert actor_session_state";
+const ACTOR_SESSION_SNAPSHOT_ROOT_KEYS = [
+  "__remoteRoutineName",
+  "__serviceName",
+  "__localTaskName",
+  "__localTaskVersion",
+  "__localServiceName",
+  "__timeout",
+  ...ROOT_METADATA_PASSTHROUGH_KEYS,
+] as const;
 
 function isPlainObject(value: unknown): value is AnyObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -71,6 +81,13 @@ function cloneDelegationValue<T>(value: T): T {
 }
 
 function buildDelegationRequestSnapshot(context: AnyObject): AnyObject {
+  if (
+    typeof context.__remoteRoutineName === "string" &&
+    context.__remoteRoutineName.trim() === ACTOR_SESSION_STATE_REMOTE_ROUTINE
+  ) {
+    return buildActorSessionDelegationSnapshot(context);
+  }
+
   const snapshot: AnyObject = {};
 
   for (const [key, value] of Object.entries(context)) {
@@ -79,6 +96,26 @@ function buildDelegationRequestSnapshot(context: AnyObject): AnyObject {
     }
 
     snapshot[key] = cloneDelegationValue(value);
+  }
+
+  return snapshot;
+}
+
+function buildActorSessionDelegationSnapshot(context: AnyObject): AnyObject {
+  const snapshot: AnyObject = {};
+
+  for (const key of ACTOR_SESSION_SNAPSHOT_ROOT_KEYS) {
+    if (context[key] !== undefined) {
+      snapshot[key] = cloneDelegationValue(context[key]);
+    }
+  }
+
+  if (context.data !== undefined) {
+    snapshot.data = cloneDelegationValue(context.data);
+  }
+
+  if (context.queryData !== undefined) {
+    snapshot.queryData = cloneDelegationValue(context.queryData);
   }
 
   return snapshot;

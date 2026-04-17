@@ -83,6 +83,68 @@ describe("delegation snapshot helpers", () => {
     });
   });
 
+  it("slims actor_session_state delegation snapshots to recovery-critical payload only", () => {
+    const attached = attachDelegationRequestSnapshot({
+      __remoteRoutineName: "Insert actor_session_state",
+      __serviceName: "CadenzaDB",
+      __localTaskName: "Persist telemetry ingest session state best effort",
+      deviceId: "device-7",
+      telemetryPayload: {
+        deviceId: "device-7",
+        timestamp: "2026-04-17T12:00:00.000Z",
+        readings: {
+          temperature: 23.5,
+          humidity: 51.86,
+          battery: 85.97,
+        },
+      },
+      data: {
+        actor_name: "TelemetrySessionActor",
+        actor_key: "device-7",
+        durable_state: {
+          lastTelemetry: {
+            deviceId: "device-7",
+          },
+        },
+      },
+      queryData: {
+        data: {
+          actor_name: "TelemetrySessionActor",
+          actor_key: "device-7",
+        },
+        onConflict: {
+          target: ["actor_name", "actor_key"],
+        },
+      },
+    }) as Record<string, any>;
+
+    expect(attached.__delegationRequestContext).toEqual({
+      __remoteRoutineName: "Insert actor_session_state",
+      __serviceName: "CadenzaDB",
+      __localTaskName: "Persist telemetry ingest session state best effort",
+      data: {
+        actor_name: "TelemetrySessionActor",
+        actor_key: "device-7",
+        durable_state: {
+          lastTelemetry: {
+            deviceId: "device-7",
+          },
+        },
+      },
+      queryData: {
+        data: {
+          actor_name: "TelemetrySessionActor",
+          actor_key: "device-7",
+        },
+        onConflict: {
+          target: ["actor_name", "actor_key"],
+        },
+      },
+    });
+    expect(attached.__delegationRequestContext.deviceId).toBeUndefined();
+    expect(attached.__delegationRequestContext.telemetryPayload).toBeUndefined();
+  });
+
   it("restores a delegation snapshot from a failed inquiry envelope", () => {
     const restored = restoreDelegationRequestSnapshot({
       errored: true,
