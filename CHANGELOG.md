@@ -1,3 +1,10 @@
+## [2.21.4](https://github.com/cadenzaio/cadenza-service/compare/v2.21.3...v2.21.4) (2026-04-18)
+
+
+### Bug Fixes
+
+* restore rest signal delivery and persistence boundaries ([017fc39](https://github.com/cadenzaio/cadenza-service/commit/017fc394692f7020d9b48f2cfd89eb616abfe05e))
+
 ## [2.21.3](https://github.com/cadenzaio/cadenza-service/compare/v2.21.2...v2.21.3) (2026-04-17)
 
 
