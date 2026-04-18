@@ -229,6 +229,83 @@ describe("RestController delegation resolution", () => {
     expect(failureContext.__deputyExecId.length).toBeGreaterThan(0);
   }, 10_000);
 
+  it("emits observed signals received through the REST signal endpoint", async () => {
+    const networkConfiguredPromise = new Promise<AnyObject>((resolve) => {
+      Cadenza.createEphemeralMetaTask(
+        "Observe rest network configured for signal endpoint",
+        (ctx) => {
+          resolve(ctx);
+          return true;
+        },
+        "Observes REST network configuration during signal endpoint tests",
+        { register: false },
+      ).doOn("global.meta.rest.network_configured");
+    });
+
+    const receivedSignalPromise = new Promise<AnyObject>((resolve) => {
+      Cadenza.createEphemeralTask(
+        "Capture REST signal endpoint emission",
+        (ctx) => {
+          resolve(ctx);
+          return true;
+        },
+        "Captures signal payloads emitted by the REST signal endpoint.",
+        { register: false },
+      ).doOn("rest.signal.endpoint.test");
+    });
+
+    const observedActivityPromise = new Promise<AnyObject>((resolve) => {
+      Cadenza.createEphemeralMetaTask(
+        "Capture REST signal endpoint activity",
+        (ctx) => {
+          resolve(ctx);
+          return true;
+        },
+        "Captures service activity emitted by the REST signal endpoint.",
+        { register: false },
+      ).doOn("meta.service_registry.instance_activity_observed");
+    });
+
+    Cadenza.emit("meta.service_registry.service_inserted", {
+      __isDatabase: false,
+      __networkMode: "dev",
+      __port: 0,
+      __securityProfile: "low",
+      __serviceInstanceId: "rest-signal-endpoint-test",
+      __serviceName: "RestSignalEndpointTest",
+    });
+
+    const networkContext = await networkConfiguredPromise;
+    const port = networkContext.httpServer?.address()?.port;
+
+    const response = await fetch(`http://localhost:${port}/signal`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        __signalName: "rest.signal.endpoint.test",
+        payload: { deviceId: "device-9" },
+      }),
+    });
+
+    const responseBody = await response.json();
+    const receivedSignal = await receivedSignalPromise;
+    const observedActivity = await observedActivityPromise;
+
+    expect(response.ok).toBe(true);
+    expect(responseBody).toEqual({
+      __status: "success",
+      __signalName: "rest.signal.endpoint.test",
+    });
+    expect(receivedSignal).toMatchObject({
+      payload: { deviceId: "device-9" },
+    });
+    expect(observedActivity).toMatchObject({
+      source: "rest-signal",
+    });
+  }, 10_000);
+
   it("hoists inquiry lineage from delegation metadata onto direct REST requests", async () => {
     const networkConfiguredPromise = new Promise<AnyObject>((resolve) => {
       Cadenza.createEphemeralMetaTask(

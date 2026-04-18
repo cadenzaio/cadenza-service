@@ -115,6 +115,8 @@ describe("Signal controller metadata contracts", () => {
     Cadenza.signalBroker.addSignal("runner.tick");
     ((Cadenza.signalBroker as any).signalObservers.get("runner.tick") as AnyObject)
       .registered = true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    payloads.length = 0;
 
     Cadenza.emit("meta.signal_broker.added", {
       signalName: "runner.tick",
@@ -503,7 +505,7 @@ describe("Signal controller metadata contracts", () => {
     ).toBeUndefined();
   });
 
-  it("emits routine_execution before task-bound signal_emission when the local runner created the routine", async () => {
+  it("references the originating business routine from signal_emission without re-persisting a sub-meta routine", async () => {
     const bundles: AnyObject[] = [];
 
     resetRuntimeState();
@@ -543,53 +545,72 @@ describe("Signal controller metadata contracts", () => {
     await waitForCondition(() => bundles.length === 1);
 
     const ensures = Array.isArray(bundles[0].ensures) ? bundles[0].ensures : [];
-    const routineEvent = ensures.find(
-      (event: AnyObject) => event.entityType === "routine_execution",
-    );
     const signalEvent = ensures.find(
       (event: AnyObject) => event.entityType === "signal_emission",
     );
 
     expect(ensures.map((event: AnyObject) => event.entityType)).toEqual([
-      "routine_execution",
       "signal_emission",
     ]);
-    expect(routineEvent?.data).toMatchObject({
-      uuid: "routine-exec-1",
-      execution_trace_id: "trace-existing",
-      meta_context: {},
-      service_name: "CadenzaDB",
-    });
-    expect(typeof routineEvent?.data?.is_meta).toBe("boolean");
-    expect(
-      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "routine_version"),
-    ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "routineVersion"),
-    ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "executionTraceId"),
-    ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "metaContext"),
-    ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "isMeta"),
-    ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "serviceName"),
-    ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(routineEvent?.data ?? {}, "serviceInstanceId"),
-    ).toBe(false);
     expect(signalEvent?.data).toMatchObject({
       uuid: "signal-emission-routine-1",
       task_name: "Persist order record",
       routine_execution_id: "routine-exec-1",
       execution_trace_id: "trace-existing",
     });
-    expect(signalEvent?.deps).toEqual(
-      expect.arrayContaining(["routine_execution:routine-exec-1"]),
-    );
+    expect(signalEvent?.deps).toContain("routine_execution:routine-exec-1");
+  });
+
+  it("does not persist meta routine_execution rows while preparing business signal persistence", async () => {
+    const bundles: AnyObject[] = [];
+
+    resetRuntimeState();
+    Cadenza.bootstrap();
+    Cadenza.serviceRegistry.serviceName = "CadenzaDB";
+    Cadenza.serviceRegistry.serviceInstanceId =
+      "signal-metadata-cadenza-db-service-1";
+
+    Cadenza.createMetaTask(
+      "Capture meta routine omitted from signal persistence bundle",
+      (ctx) => {
+        bundles.push(ctx);
+        return true;
+      },
+    ).doOn(EXECUTION_PERSISTENCE_BUNDLE_SIGNAL);
+
+    SignalController.instance;
+
+    Cadenza.emit("sub_meta.signal_broker.emitting_signal", {
+      __isSubMeta: true,
+      orderId: "order-9",
+      __routineCreatedByRunner: true,
+      __routineName: "Prepare signal emission persistence",
+      __routineVersion: 1,
+      __routineCreatedAt: "2026-04-18T00:00:00.000Z",
+      __routineIsMeta: true,
+      __signalEmission: {
+        uuid: "signal-emission-meta-routine-1",
+        signalName: "orders.persisted",
+        signalTag: null,
+        taskName: "Persist order record",
+        taskVersion: 1,
+        taskExecutionId: "task-exec-9",
+        routineExecutionId: "routine-exec-meta-1",
+        executionTraceId: "trace-meta-routine-1",
+        emittedAt: "2026-04-18T00:00:01.000Z",
+        isMeta: false,
+      },
+    });
+
+    await waitForCondition(() => bundles.length === 1);
+
+    const ensures = Array.isArray(bundles[0]?.ensures)
+      ? (bundles[0].ensures as AnyObject[])
+      : [];
+
+    expect(ensures.map((event) => event.entityType)).toEqual(["signal_emission"]);
+    expect(
+      ensures.some((event) => event.entityType === "routine_execution"),
+    ).toBe(false);
   });
 });

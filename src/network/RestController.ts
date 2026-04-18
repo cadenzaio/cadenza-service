@@ -911,6 +911,17 @@ export default class RestController {
                       __status: "success",
                       __signalName: ctx.__signalName,
                     });
+
+                    Cadenza.emit("meta.service_registry.instance_activity_observed", {
+                      serviceName: Cadenza.serviceRegistry.serviceName,
+                      serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
+                      activityAt: new Date().toISOString(),
+                      source: "rest-signal",
+                    });
+                    Cadenza.emit(ctx.__signalName, {
+                      ...ctx,
+                      __receivedSignalTransmission: true,
+                    });
                   } catch (e) {
                     Cadenza.log(
                       "Error in REST signal consumption",
@@ -922,18 +933,7 @@ export default class RestController {
                       __error: e,
                     });
                     return;
-                    }
-
-                    Cadenza.emit("meta.service_registry.instance_activity_observed", {
-                      serviceName: Cadenza.serviceRegistry.serviceName,
-                      serviceInstanceId: Cadenza.serviceRegistry.serviceInstanceId,
-                      activityAt: new Date().toISOString(),
-                      source: "rest-signal",
-                    });
-                    Cadenza.emit(ctx.__signalName, {
-                      ...ctx,
-                      __receivedSignalTransmission: true,
-                  });
+                  }
                 });
 
                 app.get("/status", (req: any, res: any) => {

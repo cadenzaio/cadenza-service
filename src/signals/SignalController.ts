@@ -255,7 +255,8 @@ export default class SignalController {
         const routineExecutionRow =
           signalEmission.routineExecutionId &&
           routineMetadata.createdByRunner &&
-          routineMetadata.routineName
+          routineMetadata.routineName &&
+          traceContext.__isSubMeta !== true
             ? {
                 uuid: signalEmission.routineExecutionId,
                 name: routineMetadata.routineName,
